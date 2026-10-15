@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Self-Hub 网页批注侧边栏</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: #090a0c;
+      color: #e4e4e7;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    header {
+      padding-bottom: 12px;
+      border-bottom: 1px solid #1f2127;
+      margin-bottom: 12px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .brand-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f4f4f5;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #10b981;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+    .search-input {
+      width: 100%;
+      background: #121316;
+      border: 1px solid #27272a;
+      border-radius: 8px;
+      padding: 7px 10px;
+      color: #f4f4f5;
+      font-size: 12px;
+      outline: none;
+    }
+    .search-input:focus {
+      border-color: #10b981;
+    }
+    .stats-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-size: 11px;
+      color: #a1a1aa;
+    }
+    .btn-action {
+      background: #18191e;
+      border: 1px solid #27272a;
+      color: #e4e4e7;
+      padding: 4px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 11px;
+      transition: all 0.15s;
+    }
+    .btn-action:hover {
+      background: #27272a;
+      color: #fff;
+    }
+    .list-container {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-right: 2px;
+    }
+    .card {
+      background: #121316;
+      border: 1px solid #22242a;
+      border-radius: 10px;
+      padding: 10px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      position: relative;
+    }
+    .card:hover {
+      border-color: #3f3f46;
+      background: #16181d;
+    }
+    .card-color-stripe {
+      width: 4px;
+      position: absolute;
+      top: 10px;
+      bottom: 10px;
+      left: 0;
+      border-radius: 0 4px 4px 0;
+    }
+    .card-content {
+      padding-left: 6px;
+    }
+    .card-text {
+      font-size: 12px;
+      color: #e4e4e7;
+      line-height: 1.5;
+      margin-bottom: 6px;
+    }
+    .card-note {
+      font-size: 11px;
+      color: #10b981;
+      background: rgba(16, 185, 129, 0.08);
+      padding: 4px 8px;
+      border-radius: 6px;
+      border-left: 2px solid #10b981;
+      margin-bottom: 6px;
+      line-height: 1.4;
+    }
+    .card-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #71717a;
+      font-family: monospace;
+    }
+    .empty-state {
+      text-align: center;
+      color: #71717a;
+      padding: 40px 10px;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    footer {
+      padding-top: 10px;
+      border-top: 1px solid #1f2127;
+      display: flex;
+      gap: 8px;
+    }
+    .btn-primary {
+      flex: 1;
+      background: #10b981;
+      color: #000;
+      border: none;
+      padding: 8px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .btn-primary:hover {
+      background: #059669;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="brand-title" style="display: flex; align-items: center; gap: 6px;">
+        <img src="icon48.png" alt="Self-Hub" style="width: 20px; height: 20px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.1);" />
+        <span>Self-Hub</span>
+        <span class="badge">五彩替代引擎</span>
+      </div>
+      <button id="refresh-btn" class="btn-action" title="刷新划线列表">刷新</button>
+    </div>
+    <input type="text" id="search-input" class="search-input" placeholder="检索当前网页批注与思考..." />
+    <div class="stats-bar">
+      <span id="page-count">本页划线: 0 条</span>
+      <button id="export-md-btn" class="btn-action" title="导出为 Obsidian Markdown 格式">导出 Markdown</button>
+    </div>
+  </header>
+
+  <div id="list" class="list-container">
+    <div class="empty-state">
+      当前网页暂无划线<br>
+      在网页中选中任意文本，点击浮动工具条或按 <code>Alt+H</code> 即可划线
+    </div>
+  </div>
+
+  <footer>
+    <button id="open-hub-btn" class="btn-primary">打开 Self-Hub 主工作台</button>
+  </footer>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>新标签页 · Self-Hub</title>
+  <link rel="icon" type="image/png" href="icon48.png">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: #090a0c;
+      color: #f4f4f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 40px 24px 20px;
+      overflow-x: hidden;
+    }
+    .container {
+      max-width: 1080px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+    /* Top Bar */
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: #18191e;
+      border: 1px solid #27272a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: #10b981;
+      font-family: monospace;
+      font-size: 16px;
+    }
+    .brand-text {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .badge-hub {
+      font-size: 11px;
+      color: #a1a1aa;
+      font-family: monospace;
+      background: #121316;
+      padding: 2px 8px;
+      border-radius: 6px;
+      border: 1px solid #22242a;
+    }
+    .hub-link {
+      color: #10b981;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 8px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      transition: all 0.15s;
+    }
+    .hub-link:hover {
+      background: rgba(16, 185, 129, 0.2);
+    }
+    /* Search Section */
+    .search-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .search-engines {
+      display: flex;
+      gap: 6px;
+    }
+    .engine-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: #71717a;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .engine-btn.active {
+      background: #18191e;
+      border-color: #27272a;
+      color: #f4f4f5;
+      font-weight: 600;
+    }
+    .search-box {
+      width: 100%;
+      max-width: 680px;
+      position: relative;
+    }
+    .search-input {
+      width: 100%;
+      background: #121316;
+      border: 1px solid #22242a;
+      border-radius: 14px;
+      padding: 14px 20px;
+      font-size: 15px;
+      color: #f4f4f5;
+      outline: none;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .search-input:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15), 0 4px 25px rgba(0, 0, 0, 0.4);
+    }
+    /* Categories & Bookmarks */
+    .categories-bar {
+      display: flex;
+      gap: 8px;
+      border-b: 1px solid #1f2127;
+      padding-bottom: 10px;
+      overflow-x: auto;
+    }
+    .cat-btn {
+      background: transparent;
+      border: none;
+      color: #a1a1aa;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .cat-btn.active {
+      background: #18191e;
+      color: #fff;
+      font-weight: 600;
+    }
+    .bookmarks-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      gap: 12px;
+    }
+    .site-card {
+      background: #121316;
+      border: 1px solid #22242a;
+      border-radius: 12px;
+      padding: 14px;
+      text-decoration: none;
+      color: inherit;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: transform 0.15s, border-color 0.15s, background 0.15s;
+    }
+    .site-card:hover {
+      transform: translateY(-2px);
+      border-color: #3f3f46;
+      background: #16181d;
+    }
+    .site-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .site-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      background: #1c1d22;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: #10b981;
+    }
+    .site-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #e4e4e7;
+      truncate: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .site-desc {
+      font-size: 11px;
+      color: #71717a;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    /* Widgets Grid */
+    .widgets-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 10px;
+    }
+    @media (max-width: 768px) {
+      .widgets-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .widget-box {
+      background: #121316;
+      border: 1px solid #22242a;
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .widget-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #a1a1aa;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .quick-textarea {
+      width: 100%;
+      height: 80px;
+      background: #090a0c;
+      border: 1px solid #22242a;
+      border-radius: 8px;
+      padding: 10px;
+      color: #f4f4f5;
+      font-size: 12px;
+      font-family: inherit;
+      resize: none;
+      outline: none;
+    }
+    .quick-textarea:focus {
+      border-color: #10b981;
+    }
+    footer {
+      text-align: center;
+      font-size: 11px;
+      color: #52525b;
+      font-family: monospace;
+      padding-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Top Bar -->
+    <div class="top-bar">
+      <div class="brand">
+        <img src="icon48.png" class="brand-logo" alt="Self-Hub" style="width: 32px; height: 32px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);" />
+        <div>
+          <div class="brand-text">Self-Hub</div>
+          <div class="badge-hub">GoTab 极速替代版</div>
+        </div>
+      </div>
+      <a href="#" id="hub-main-btn" class="hub-link">
+        <span>进入全功能工作台 &rarr;</span>
+      </a>
+    </div>
+
+    <!-- Search Section -->
+    <div class="search-section">
+      <div class="search-engines" id="engines">
+        <button class="engine-btn active" data-engine="google">Google</button>
+        <button class="engine-btn" data-engine="bing">Bing</button>
+        <button class="engine-btn" data-engine="baidu">Baidu</button>
+        <button class="engine-btn" data-engine="github">GitHub</button>
+        <button class="engine-btn" data-engine="v2ex">V2EX</button>
+      </div>
+      <div class="search-box">
+        <form id="search-form">
+          <input type="text" id="search-input" class="search-input" placeholder="输入搜索内容，或直接输入网址回车跳转..." autocomplete="off" autofocus />
+        </form>
+      </div>
+    </div>
+
+    <!-- Categories & Bookmarks (GoTab Replacement) -->
+    <div>
+      <div class="categories-bar" id="cat-bar"></div>
+      <div class="bookmarks-grid" id="bookmarks-grid" style="margin-top: 14px;"></div>
+    </div>
+
+    <!-- Lower Widgets: Quick Scratchpad & Inbox Capture -->
+    <div class="widgets-grid">
+      <!-- 1. Quick Scratchpad Note -->
+      <div class="widget-box">
+        <div class="widget-title">
+          <span>⚡ 快速灵感便签 (自动持久化)</span>
+          <span id="note-status" style="font-size: 10px; color: #10b981;">已保存</span>
+        </div>
+        <textarea id="quick-note" class="quick-textarea" placeholder="随手粘贴灵感、代办、命令或备忘录..."></textarea>
+      </div>
+
+      <!-- 2. Fast Inbox Capture -->
+      <div class="widget-box">
+        <div class="widget-title">
+          <span>📥 统一收件箱快捕 (回车快速存入)</span>
+          <span style="font-size: 10px; color: #71717a;">Ctrl+Enter 存入</span>
+        </div>
+        <input type="text" id="inbox-input" class="search-input" style="padding: 10px 14px; font-size: 13px;" placeholder="粘贴待阅网址或技术词条，按回车保存..." />
+        <div id="inbox-msg" style="font-size: 11px; color: #10b981; min-height: 16px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Self-Hub · GoTab & Wucai Replacement · 离线零依赖 · 隐私零泄露
+  </footer>
+
+  <script src="newtab.js"></script>
+</body>
+</html>

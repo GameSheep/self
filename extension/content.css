@@ -1,0 +1,157 @@
+/* Self-Hub Content Script Styles (Wucai Replacement Engine) */
+
+/* Highlights on Web Pages */
+mark.selfhub-highlight {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 1px 2px;
+  transition: all 0.15s ease-in-out;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+mark.selfhub-highlight:hover {
+  filter: brightness(0.92);
+  outline: 2px solid rgba(0, 0, 0, 0.15);
+}
+
+mark.selfhub-hl-yellow {
+  background-color: rgba(254, 240, 138, 0.75) !important;
+  color: inherit !important;
+}
+
+mark.selfhub-hl-green {
+  background-color: rgba(187, 247, 208, 0.75) !important;
+  color: inherit !important;
+}
+
+mark.selfhub-hl-blue {
+  background-color: rgba(186, 230, 253, 0.75) !important;
+  color: inherit !important;
+}
+
+mark.selfhub-hl-purple {
+  background-color: rgba(233, 213, 255, 0.75) !important;
+  color: inherit !important;
+}
+
+mark.selfhub-hl-red {
+  background-color: rgba(254, 205, 211, 0.75) !important;
+  color: inherit !important;
+}
+
+/* Floating Toolbar Container */
+#selfhub-floating-toolbar {
+  position: absolute;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #18191e;
+  border: 1px solid #2e3039;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+  color: #f4f4f5;
+  user-select: none;
+  animation: selfhub-pop 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes selfhub-pop {
+  0% { transform: scale(0.9); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.selfhub-color-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+.selfhub-color-dot:hover {
+  transform: scale(1.25);
+  border-color: #ffffff;
+}
+
+.selfhub-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #27272a;
+  color: #e4e4e7;
+  border: 1px solid #3f3f46;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.selfhub-btn:hover {
+  background: #3f3f46;
+  color: #ffffff;
+}
+
+.selfhub-divider {
+  width: 1px;
+  height: 16px;
+  background: #3f3f46;
+  margin: 0 2px;
+}
+
+/* Annotation Edit Popover */
+#selfhub-annotation-popover {
+  position: absolute;
+  z-index: 2147483647;
+  width: 320px;
+  padding: 12px;
+  background: #121316;
+  border: 1px solid #27272a;
+  border-radius: 14px;
+  box-shadow: 0 20px 35px -5px rgba(0, 0, 0, 0.6);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+  color: #f4f4f5;
+  animation: selfhub-pop 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#selfhub-annotation-popover textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #18191e;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  padding: 8px;
+  color: #f4f4f5;
+  font-size: 12px;
+  resize: vertical;
+  min-height: 60px;
+  outline: none;
+}
+
+#selfhub-annotation-popover textarea:focus {
+  border-color: #10b981;
+}
+
+/* Toast Message */
+#selfhub-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  background: #18191e;
+  border: 1px solid #10b981;
+  color: #10b981;
+  padding: 8px 16px;
+  border-radius: 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  animation: selfhub-pop 0.2s ease;
+}
