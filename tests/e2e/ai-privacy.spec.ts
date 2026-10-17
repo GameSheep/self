@@ -237,3 +237,70 @@ test.describe('云端 AI 的密钥遮蔽', () => {
     await expect(page.getByTestId('mask-report')).toHaveCount(0);
   });
 });
+
+test.describe('无标签裸 token 的熵值识别', () => {
+  test.beforeEach(async ({ page }) => {
+    page.on('dialog', (d) => d.accept());
+  });
+
+  async function capture(page: any) {
+    const bodies: string[] = [];
+    await page.route('**/*', async (route) => {
+      const req = route.request();
+      if (!AI_HOSTS.some((h) => req.url().includes(h))) return route.continue();
+      bodies.push(req.postData() || '');
+      await route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify({ sites: [], servers: [], secrets: [], notes: [] }) }] } }]
+        })
+      });
+    });
+    return bodies;
+  }
+
+  test('没有任何标签的随机串也会被遮蔽', async ({ page }) => {
+    const bodies = await capture(page);
+    await seedState(
+      page,
+      state({ provider: 'gemini', apiKey: 'k', model: 'gemini-2.5-flash', cloudAiEnabled: true })
+    );
+    await page.goto('/');
+    await openIngest(page);
+
+    const naked = 'a8Fk29dLq0Pz7Xc4Vb1Nm6Ts';
+    await page.locator('textarea').fill(`这是我在某处记下的一串东西：${naked} 其余的记不清了`);
+    await page.locator('button', { hasText: '开始高精准识别' }).click();
+    await page.waitForTimeout(3000);
+
+    expect(bodies.length).toBeGreaterThan(0);
+    expect(bodies.join('\n')).not.toContain(naked);
+    const report = page.getByTestId('mask-report');
+    await expect(report).toBeVisible();
+    await expect(report).toContainText('疑似令牌');
+  });
+
+  test('普通长句、网址与模型名不会被误伤', async ({ page }) => {
+    const bodies = await capture(page);
+    await seedState(
+      page,
+      state({ provider: 'gemini', apiKey: 'k', model: 'gemini-2.5-flash', cloudAiEnabled: true })
+    );
+    await page.goto('/');
+    await openIngest(page);
+
+    const prose = 'ThisIsAnOrdinarySentenceWithoutDigitsThatShouldSurvive';
+    const url = 'https://kurio.infini-cloud.net/dav/selfhub_sync/state.json';
+    const model = 'gemini-2.5-flash';
+    await page.locator('textarea').fill(`${prose}\n${url}\n模型用的是 ${model}`);
+    await page.locator('button', { hasText: '开始高精准识别' }).click();
+    await page.waitForTimeout(3000);
+
+    const sent = bodies.join('\n');
+    expect(sent).toContain(prose);
+    expect(sent).toContain(url);
+    expect(sent).toContain(model);
+    await expect(page.getByTestId('mask-report')).toHaveCount(0);
+  });
+});
