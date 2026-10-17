@@ -147,3 +147,48 @@ src/components/OssTree.tsx  目录树（可折叠、分页、搜索，含内容�
 
 真实桶回归（扩展环境）：建目录 → 上传图片 → 刷新计数 → 重命名 → 删除目录 → 清理，最终对象总数回到 1951，确认无残留、无数据丢失。
 
+---
+
+## 11. 追加：数据安全（2026-10-17 第三轮）
+
+产品复核后，剩余风险里最重的是**不可逆**的两项，本轮补齐：
+
+### 11.1 保存冲突检测
+
+场景：桌面 Obsidian 通过 Remotely Save 写回同一文件，网页端此时保存会**静默覆盖**对方的版本。
+
+实现：
+
+- 打开笔记时记录云端「冲突令牌」：`lastModified`（列表的 `LastModified`）+ `etag`（列表的 `ETag`）。
+- 保存前先 `HEAD`，若云端 `Last-Modified` 比基线新（容差 1.5s），或 ETag 变化，则**中止写入**并返回 `conflict`。
+- UI 弹出三选一对话框：**重新加载云端版本** / **仍然用我的版本覆盖**（显式 `force`）/ **先不保存**。未做选择前不写入任何字节。
+- ETag 兜底：CORS 只暴露了 `ETag` 而未暴露 `Last-Modified` 时（网页版常见），仍能检测冲突。
+
+### 11.2 回收站
+
+- 删除不再直接抹掉：文件/目录被**复制到 `.trash/<原路径>`**（保留目录结构），复制成功后才删除原对象。
+- `.trash/` 内的条目提供「从回收站恢复」动作（服务端复制回原路径 + 清理回收站副本），恢复失败不会动原文件。
+- `.trash/` 内的再次删除才是永久删除，确认文案会明确区分。
+- 目录删除同样两段式：先全部复制成功，再删源。
+
+### 11.3 真实桶回归（扩展环境）
+
+```json
+{ "baseline_objects": 1951, "probe_created": 200, "probe_visible": true,
+  "loaded_content": true, "external_write": 200,
+  "conflict_dialog": true,
+  "after_force_save_has_local_content": true,
+  "original_after_delete": 404, "trash_has_copy": 200,
+  "restore_button_visible": true, "restored_to_original": 200,
+  "final_objects": 1951, "baseline_restored": true }
+```
+
+即：外部改写后保存**确实被拦截**；强制覆盖后内容正确；删除后原对象 404 而 `.trash/` 有副本；恢复后原路径 200；对象总数回到基线。
+
+### 11.4 本轮回归测试
+
+`tests/e2e/trash-conflict.spec.ts`（7 条）：删除进回收站、回收站恢复、冲突拦截且不写入、强制覆盖、无冲突正常保存、重新加载云端版本、ETag 兜底。
+
+顺带修复：目录树展开此前是"根下仅一个目录才自动展开"的启发式，`.trash/` 出现后失效；改为按配置前缀显式展开。
+
+

@@ -157,6 +157,14 @@ export interface OssObject {
   key: string;
   size: number;
   lastModified: number;
+  /** ETag from the listing; used as a conflict token that CORS always exposes. */
+  etag?: string;
+}
+
+/** Normalise an ETag: OSS returns it quoted in XML but unquoted in headers. */
+export function normalizeEtag(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  return value.replace(/^"+|"+$/g, '');
 }
 
 export interface OssListResult {
@@ -257,7 +265,8 @@ export async function listOssObjects(
         objects.push({
           key,
           size: Number.isFinite(size) ? size : 0,
-          lastModified: parseLastModified(rawMod)
+          lastModified: parseLastModified(rawMod),
+          etag: normalizeEtag(contents[c].getElementsByTagName('ETag')[0]?.textContent)
         });
       }
 
@@ -310,6 +319,8 @@ export interface OssTreeNode {
   isDir: boolean;
   size: number;
   lastModified: number;
+  /** Conflict token carried from the listing (files only). */
+  etag?: string;
   children: OssTreeNode[];
 }
 
@@ -361,6 +372,7 @@ export function buildOssTree(objects: OssObject[]): OssTreeNode {
       isDir: false,
       size: obj.size,
       lastModified: obj.lastModified,
+      etag: obj.etag,
       children: []
     });
   }
@@ -423,7 +435,84 @@ export function countTreeFiles(nodes: OssTreeNode[]): { files: number; dirs: num
   return { files, dirs };
 }
 
-/** Insert a freshly uploaded file into an existing tree without a full re-list. */
+/** Objects deleted from the vault move here instead of disappearing. */
+export const TRASH_PREFIX = '.trash/';
+
+export function isTrashed(key: string): boolean {
+  return key.startsWith(TRASH_PREFIX);
+}
+
+/** Where a vault key lives once trashed (keeps the original folder structure). */
+export function trashKeyFor(key: string): string {
+  return `${TRASH_PREFIX}${key.replace(/^\/+/, '')}`;
+}
+
+/** Inverse of trashKeyFor: the path a trashed object returns to. */
+export function restoreKeyFor(key: string): string {
+  return isTrashed(key) ? key.slice(TRASH_PREFIX.length) : key;
+}
+
+export interface OssHeadResult {
+  exists: boolean;
+  /** Server-side last-modified in ms, when the browser exposes the header. */
+  lastModified?: number;
+  etag?: string;
+  error?: string;
+}
+
+/**
+ * HEAD an object to learn whether the cloud copy changed since we loaded it.
+ * Some browsers hide Last-Modified on cross-origin responses unless the bucket
+ * exposes it; callers must treat `lastModified === undefined` as "unknown".
+ */
+export async function headOssObject(config: ObsidianConfig, key: string): Promise<OssHeadResult> {
+  if (!hasRealOssKeys(config)) return { exists: false, error: '未配置 OSS AccessKey' };
+  try {
+    const cleanKey = key.replace(/^\/+/, '');
+    const headers = await generateOssAuthHeaders(
+      'HEAD',
+      config.bucket,
+      cleanKey,
+      '',
+      config.accessKeyId,
+      config.accessKeySecret
+    );
+    const res = await fetch(ossObjectUrl(config, cleanKey), { method: 'HEAD', headers, mode: 'cors' });
+    if (res.status === 404) return { exists: false };
+    if (!res.ok) return { exists: false, error: await describeOssError(res) };
+
+    const rawLastModified = res.headers.get('last-modified') || res.headers.get('Last-Modified');
+    const parsed = rawLastModified ? new Date(rawLastModified).getTime() : NaN;
+    return {
+      exists: true,
+      lastModified: Number.isFinite(parsed) ? parsed : undefined,
+      etag: normalizeEtag(res.headers.get('etag') || res.headers.get('ETag'))
+    };
+  } catch (err: any) {
+    return { exists: false, error: err?.message || '网络或 CORS 错误' };
+  }
+}
+
+/** Move a single object into the trash (copy first, so nothing is lost). */
+export async function trashOssObject(
+  config: ObsidianConfig,
+  key: string
+): Promise<{ success: boolean; trashedTo?: string; error?: string }> {
+  const target = trashKeyFor(key);
+  const moved = await moveOssObject(config, key, target);
+  return moved.success ? { success: true, trashedTo: target } : { success: false, error: moved.error };
+}
+
+/** Move a whole folder into the trash. */
+export async function trashOssFolder(
+  config: ObsidianConfig,
+  prefix: string
+): Promise<{ success: boolean; moved: number; failed: number; error?: string }> {
+  const clean = prefix.replace(/^\/+/, '').replace(/\/+$/, '');
+  if (!clean) return { success: false, moved: 0, failed: 0, error: '目录路径无效' };
+  return moveOssFolder(config, `${clean}/`, `${TRASH_PREFIX}${clean}`);
+}
+
 export function addTreeNode(root: OssTreeNode, key: string, size: number, lastModified = Date.now()): OssTreeNode {
   const segments = key.split('/');
   const fileName = segments.pop() || key;
@@ -851,15 +940,49 @@ export async function fetchObsidianNoteContent(config: ObsidianConfig, key: stri
   return null;
 }
 
+export interface SaveOptions {
+  /** Last-modified of the copy we loaded. When the cloud is newer, we refuse. */
+  expectedLastModified?: number;
+  /**
+   * ETag of the copy we loaded. Used when Last-Modified is not exposed by CORS
+   * (the web build), so conflict detection also works outside the extension.
+   */
+  expectedEtag?: string;
+  /** Skip the conflict check (user chose "overwrite anyway"). */
+  force?: boolean;
+}
+
+export interface SaveResult {
+  success: boolean;
+  notes: ObsidianNote[];
+  message: string;
+  realOss: boolean;
+  /** Set when the cloud copy changed since we loaded it; nothing was written. */
+  conflict?: boolean;
+  cloudLastModified?: number;
+  /** Last-modified reported after a successful write, for the next save. */
+  lastModified?: number;
+}
+
+/** Tolerate clock/rounding differences of up to a second. */
+const CONFLICT_TOLERANCE_MS = 1500;
+
 /**
- * Save / Update an existing note in Aliyun OSS & local state
+ * Save / Update an existing note in Aliyun OSS & local state.
+ *
+ * Before writing, the cloud object's Last-Modified is compared with the value
+ * recorded when the note was loaded. If another client (Obsidian desktop via
+ * Remotely Save, another browser tab) wrote in between, the write is refused and
+ * a `conflict` result is returned so the user can decide instead of silently
+ * losing the other version.
  */
 export async function saveObsidianNote(
   config: ObsidianConfig,
   key: string,
   content: string,
-  currentNotes: ObsidianNote[]
-): Promise<{ success: boolean; notes: ObsidianNote[]; message: string; realOss: boolean }> {
+  currentNotes: ObsidianNote[],
+  options: SaveOptions = {}
+): Promise<SaveResult> {
   const noteIndex = currentNotes.findIndex((n) => n.key === key);
   const now = Date.now();
   const title = key.split('/').pop()?.replace('.md', '') || key;
@@ -870,6 +993,41 @@ export async function saveObsidianNote(
 
   if (hasRealKeys) {
     try {
+      // 1. Conflict check (skipped when the caller explicitly forces a write).
+      let cloudLastModified: number | undefined;
+      const wantsCheck =
+        !options.force && (options.expectedLastModified !== undefined || options.expectedEtag !== undefined);
+      if (wantsCheck) {
+        const head = await headOssObject(config, key);
+        if (head.exists) {
+          cloudLastModified = head.lastModified;
+
+          const mtimeChanged =
+            head.lastModified !== undefined &&
+            options.expectedLastModified !== undefined &&
+            head.lastModified > options.expectedLastModified + CONFLICT_TOLERANCE_MS;
+
+          // ETag is the fallback when Last-Modified is hidden by CORS.
+          const etagChanged =
+            head.lastModified === undefined &&
+            options.expectedEtag !== undefined &&
+            head.etag !== undefined &&
+            head.etag !== options.expectedEtag;
+
+          if (mtimeChanged || etagChanged) {
+            return {
+              success: false,
+              conflict: true,
+              cloudLastModified: head.lastModified,
+              notes: currentNotes,
+              message: '云端文件已被其他客户端修改，本次保存已中止',
+              realOss: false
+            };
+          }
+        }
+      }
+
+      // 2. Write.
       const cleanKey = key.replace(/^\/+/, '');
       const headers = await generateOssAuthHeaders(
         'PUT',
@@ -890,8 +1048,32 @@ export async function saveObsidianNote(
 
       if (res.ok) {
         ossSynced = true;
+        // Record the new cloud mtime so the next save compares against it.
+        cloudLastModified = Date.now();
       } else {
         ossError = await describeOssError(res);
+      }
+
+      if (ossSynced) {
+        const updatedNote: ObsidianNote = {
+          key,
+          title,
+          path: key,
+          size: new Blob([content]).size,
+          lastModified: now,
+          content
+        };
+        const newNotes =
+          noteIndex >= 0
+            ? currentNotes.map((n, idx) => (idx === noteIndex ? updatedNote : n))
+            : [updatedNote, ...currentNotes];
+        return {
+          success: true,
+          notes: newNotes,
+          message: `已直接推送到阿里云 OSS 真实存储桶 (${config.bucket})`,
+          realOss: true,
+          lastModified: cloudLastModified
+        };
       }
     } catch (e: any) {
       ossError = e?.message || '网络或 CORS 错误';
@@ -914,9 +1096,7 @@ export async function saveObsidianNote(
     newNotes = [updatedNote, ...currentNotes];
   }
 
-  const msg = ossSynced
-    ? `已直接推送到阿里云 OSS 真实存储桶 (${config.bucket})`
-    : hasRealKeys
+  const msg = hasRealKeys
     ? `⚠️ 未能推送到 OSS（${ossError || 'CORS 未放行'}），内容只保存在本地缓存，尚未上云`
     : `已保存至本地安全缓存 (待填写真实 AccessKey 即可直推 OSS)`;
 
@@ -979,6 +1159,7 @@ export async function deleteObsidianNote(
 
   return { success: !configured || remoteDeleted, notes: newNotes, message };
 }
+
 
 
 

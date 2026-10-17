@@ -42,6 +42,10 @@ import {
   createOssFolder,
   addTreeNode,
   deleteOssObject,
+  trashOssObject,
+  trashOssFolder,
+  isTrashed,
+  restoreKeyFor,
   listOssObjects,
   buildOssTree,
   countTreeFiles,
@@ -53,7 +57,7 @@ import { OssTree, isEditableFile, isImageFile } from '../OssTree';
 import { Markdown } from '../Markdown';
 import { MarkdownEditor, type EditorMode } from '../MarkdownEditor';
 import { toggleTaskInSource, type MarkdownContext, type MarkdownHeading } from '../../lib/markdown/render';
-import { ListTree, FolderPlus, UploadCloud, History, X, Image as ImageIcon, FolderInput } from 'lucide-react';
+import { ListTree, FolderPlus, UploadCloud, History, X, Image as ImageIcon, FolderInput, AlertTriangle } from 'lucide-react';
 import { formatWucaiToObsidianMarkdown } from '../../lib/wucaiClient';
 import { formatYoudaoToObsidianMarkdown } from '../../lib/youdaoClient';
 
@@ -352,7 +356,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
           return;
         }
         setEditObsidianContent(body);
-        ossSnapshotRef.current[node.path] = body;
+        ossSnapshotRef.current[node.path] = { content: body, lastModified: node.lastModified, etag: node.etag };
         const list = latestRef.current.obsidianNotes;
         onUpdateObsidianNotes(
           (list.some((n) => n.key === node.path)
@@ -461,14 +465,69 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   };
 
   const handleDeleteNode = async (node: OssTreeNode) => {
+    const trashed = isTrashed(node.path);
+
     if (node.isDir) {
-      if (!confirm(`确定删除目录「${node.path}」及其下 ${node.children.length} 项吗？此操作不可撤销。`)) return;
-      const result = await deleteOssFolder(obsidianConfig, node.path);
-      showToast(result.success ? `🗑️ 已删除目录（${result.deleted} 个对象）` : `⚠️ ${result.error}`);
+      if (
+        !confirm(
+          trashed
+            ? `确定永久删除目录「${node.path}」及其下 ${node.children.length} 项吗？回收站中的内容不可恢复。`
+            : `确定把目录「${node.path}」及其下 ${node.children.length} 项移入回收站吗？可从 .trash/ 恢复。`
+        )
+      ) {
+        return;
+      }
+      if (trashed) {
+        const result = await deleteOssFolder(obsidianConfig, node.path);
+        showToast(result.success ? `🗑️ 已永久删除（${result.deleted} 个对象）` : `⚠️ ${result.error}`);
+      } else {
+        const result = await trashOssFolder(obsidianConfig, node.path);
+        showToast(
+          result.success
+            ? `🗑️ 已移入回收站（${result.moved} 个对象），可在 .trash/ 中恢复`
+            : `⚠️ 移入回收站未全部成功：${result.error || `${result.failed} 个失败`}`
+        );
+      }
     } else {
-      if (!confirm(`确定从阿里云 OSS 删除该文件吗？\n\n${node.path}`)) return;
-      const result = await deleteOssNote(node);
-      showToast(result);
+      if (
+        !confirm(
+          trashed
+            ? `确定永久删除该文件吗？\n\n${node.path}`
+            : `确定把该文件移入回收站吗？（可在 .trash/ 中恢复）\n\n${node.path}`
+        )
+      ) {
+        return;
+      }
+      if (trashed) {
+        showToast(await deleteOssNote(node));
+      } else {
+        const result = await trashOssObject(obsidianConfig, node.path);
+        if (result.success) {
+          onUpdateObsidianNotes(latestRef.current.obsidianNotes.filter((n) => n.key !== node.path));
+          setOssTree((prev) => (prev ? removeTreeNode(prev, node.path) : prev));
+          showToast(`🗑️ 已移入回收站：${result.trashedTo}`);
+        } else {
+          showToast(`⚠️ 移入回收站失败：${result.error}`);
+        }
+      }
+    }
+    await handleRefreshOssNotes();
+  };
+
+  /** Restore a trashed object/prefix back to its original path. */
+  const handleRestoreNode = async (node: OssTreeNode) => {
+    const restoreFrom = node.isDir ? node.path.replace(/\/+$/, '') : node.path;
+    const target = restoreKeyFor(restoreFrom);
+    if (!target) {
+      showToast('⚠️ 无法判断该对象的原始位置');
+      return;
+    }
+    if (node.isDir) {
+      const result = await moveOssFolder(obsidianConfig, restoreFrom, target);
+      showToast(result.success ? `♻️ 已恢复目录到 ${target}` : `⚠️ 恢复失败：${result.error || '未知错误'}`);
+    } else {
+      const result = await moveOssObject(obsidianConfig, restoreFrom, target);
+      showToast(result.success ? `♻️ 已恢复到 ${target}` : `⚠️ 恢复失败：${result.error}`);
     }
     await handleRefreshOssNotes();
   };
@@ -584,15 +643,34 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
     return hits;
   }, [obsidianSearch, obsidianNotes]);
 
-  // First time a note becomes current, treat its current text as the baseline.
-  // Later local edits (typing, ticking a task) then count as unsaved.
+  // Track the cloud's conflict token for the current note.
+  // Seeds on first view, then keeps mtime/ETag in sync with the listing as long
+  // as the user has not edited (otherwise we would hide a pending change).
   React.useEffect(() => {
     const key = currentObsidianNote?.key;
-    if (!key) return;
-    if (ossSnapshotRef.current[key] === undefined && currentObsidianNote?.content !== undefined) {
-      ossSnapshotRef.current[key] = currentObsidianNote.content;
+    if (!key || currentObsidianNote?.content === undefined) return;
+    const fromListing = ossListMeta?.objects.find((o) => o.key === key);
+    const baseline = ossSnapshotRef.current[key];
+
+    if (!baseline) {
+      ossSnapshotRef.current[key] = {
+        content: currentObsidianNote.content,
+        lastModified: fromListing?.lastModified ?? currentObsidianNote.lastModified,
+        etag: fromListing?.etag
+      };
+      return;
     }
-  }, [currentObsidianNote?.key, currentObsidianNote?.content]);
+
+    // The listing arrived after the note was opened: enrich the token.
+    const untouched = baseline.content === currentObsidianNote.content;
+    if (untouched && fromListing && (baseline.etag !== fromListing.etag || baseline.lastModified !== fromListing.lastModified)) {
+      ossSnapshotRef.current[key] = {
+        ...baseline,
+        lastModified: fromListing.lastModified,
+        etag: fromListing.etag
+      };
+    }
+  }, [currentObsidianNote?.key, currentObsidianNote?.content, ossListMeta]);
 
   const markdownCtx = React.useMemo<MarkdownContext>(
     () => ({
@@ -607,11 +685,12 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   );
 
   /**
-   * Content as last known to be on OSS. Local edits (typing, ticking a task)
-   * never touch this, so "dirty" means "differs from the cloud copy" rather than
-   * "differs from the local cache".
+   * Content as last known to be on OSS, plus the cloud mtime at that moment.
+   * Local edits (typing, ticking a task) never touch this, so "dirty" means
+   * "differs from the cloud copy" rather than "differs from the local cache".
+   * The mtime is what makes overwrite detection possible.
    */
-  const ossSnapshotRef = React.useRef<Record<string, string>>({});
+  const ossSnapshotRef = React.useRef<Record<string, { content: string; lastModified?: number; etag?: string }>>({});
 
   const isDirty = React.useMemo(() => {
     const key = currentObsidianNote?.key;
@@ -619,8 +698,15 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
     const live = isEditingObsidian ? editObsidianContent : currentObsidianNote?.content || '';
     const baseline = ossSnapshotRef.current[key];
     if (baseline === undefined) return false;
-    return live !== baseline;
+    return live !== baseline.content;
   }, [currentObsidianNote?.key, currentObsidianNote?.content, isEditingObsidian, editObsidianContent]);
+
+  /** Set when a save was refused because the cloud copy changed underneath us. */
+  const [conflictState, setConflictState] = useState<{
+    key: string;
+    cloudLastModified?: number;
+    content: string;
+  } | null>(null);
 
   // Load the bucket tree once on mount so the panel is not empty on first visit.
   const didAutoLoadRef = React.useRef(false);
@@ -633,15 +719,35 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSaveObsidian = async () => {
+  const handleSaveObsidian = async (options: { force?: boolean } = {}) => {
     if (!currentObsidianNote) return;
     setIsSavingObsidian(true);
     try {
-      const res = await saveObsidianNote(obsidianConfig, currentObsidianNote.key, editObsidianContent, obsidianNotes);
+      const key = currentObsidianNote.key;
+      const res = await saveObsidianNote(obsidianConfig, key, editObsidianContent, obsidianNotes, {
+        expectedLastModified: ossSnapshotRef.current[key]?.lastModified,
+        expectedEtag: ossSnapshotRef.current[key]?.etag,
+        force: options.force
+      });
+
+      if (res.conflict) {
+        // Nothing was written: ask the user which version wins.
+        setConflictState({
+          key,
+          cloudLastModified: res.cloudLastModified,
+          content: editObsidianContent
+        });
+        return;
+      }
+
       onUpdateObsidianNotes(res.notes);
       if (res.realOss) {
         // Cloud copy now matches: reset the dirty baseline.
-        ossSnapshotRef.current[currentObsidianNote.key] = editObsidianContent;
+        ossSnapshotRef.current[key] = {
+          content: editObsidianContent,
+          lastModified: res.lastModified ?? Date.now(),
+          etag: undefined
+        };
         setIsEditingObsidian(false);
         showToast(`✅ ${res.message}`);
       } else {
@@ -1258,6 +1364,9 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   onRename={(node) => openPathModal('rename', node)}
                   onMove={(node) => openPathModal('move', node)}
                   onDelete={handleDeleteNode}
+                  onRestore={handleRestoreNode}
+                  canRestore={(node) => isTrashed(node.path)}
+                  initialExpanded={obsidianConfig.prefix ? [obsidianConfig.prefix] : []}
                 />
               ) : obsidianNotes.length > 0 ? (
                 // Fallback: notes restored from a previous session
@@ -1395,7 +1504,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
 
                     {(isEditingObsidian || isDirty) && (
                       <button
-                        onClick={handleSaveObsidian}
+                        onClick={() => void handleSaveObsidian()}
                         disabled={isSavingObsidian}
                         className="px-3 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
                       >
@@ -1428,7 +1537,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                       <MarkdownEditor
                         value={editObsidianContent}
                         onChange={setEditObsidianContent}
-                        onSave={handleSaveObsidian}
+                        onSave={() => void handleSaveObsidian()}
                         mode={mdMode}
                         onModeChange={setMdMode}
                         previewCtx={markdownCtx}
@@ -1991,6 +2100,81 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       )}
 
       {/* ========================================================================= */}
+      {/* MODAL: 保存冲突（云端已被其他客户端修改） */}
+      {/* ========================================================================= */}
+      {conflictState && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-[#121316] border border-amber-800/60 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="flex items-center gap-2 p-4 border-b border-zinc-800">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <h3 className="text-sm font-semibold text-zinc-100">云端文件已被修改</h3>
+            </div>
+
+            <div className="p-4 space-y-3 text-xs text-zinc-300 leading-relaxed">
+              <p>
+                这篇笔记在你打开之后<b className="text-amber-300">被其他客户端改过</b>
+                （例如桌面 Obsidian 通过 Remotely Save 写回）。为避免覆盖对方的修改，本次保存已中止，
+                <b className="text-zinc-100">你的改动仍保留在编辑器里</b>。
+              </p>
+              <p className="font-mono text-[11px] text-zinc-500 break-all">{conflictState.key}</p>
+              {conflictState.cloudLastModified && (
+                <p className="font-mono text-[11px] text-zinc-500">
+                  云端最后修改：{new Date(conflictState.cloudLastModified).toLocaleString()}
+                </p>
+              )}
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-2">
+                <button
+                  onClick={async () => {
+                    const state = conflictState;
+                    setConflictState(null);
+                    // Re-read the cloud copy on top of the editor, discarding local edits.
+                    await handleOpenOssFile({
+                      name: state.key.split('/').pop() || state.key,
+                      path: state.key,
+                      isDir: false,
+                      size: 0,
+                      lastModified: Date.now(),
+                      children: []
+                    });
+                    showToast('已重新加载云端版本');
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-medium"
+                >
+                  重新加载云端版本
+                  <span className="block text-[11px] font-normal text-zinc-400 mt-0.5">
+                    放弃我这次的改动，以云端为准（推荐先复制需要保留的内容）
+                  </span>
+                </button>
+                <button
+                  onClick={async () => {
+                    const state = conflictState;
+                    setConflictState(null);
+                    setEditObsidianContent(state.content);
+                    await handleSaveObsidian({ force: true });
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-lg bg-amber-950/60 border border-amber-800/60 hover:bg-amber-900/50 text-amber-200 font-medium"
+                >
+                  仍然用我的版本覆盖
+                  <span className="block text-[11px] font-normal text-amber-300/80 mt-0.5">
+                    云端的其他改动会丢失
+                  </span>
+                </button>
+                <button
+                  onClick={() => setConflictState(null)}
+                  className="w-full text-left px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 font-medium"
+                >
+                  先不保存
+                  <span className="block text-[11px] font-normal text-zinc-500 mt-0.5">
+                    关掉这个提示，回去手动比对后再决定
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* MODAL 0: 重命名 / 移动 / 新建目录 */}
       {/* ========================================================================= */}
       {pathModal && (
@@ -2373,3 +2557,5 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
     </div>
   );
 };
+
+

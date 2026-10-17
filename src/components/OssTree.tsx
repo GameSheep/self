@@ -9,7 +9,8 @@ import {
   Image as ImageIcon,
   Pencil,
   FolderInput,
-  Trash2
+  Trash2,
+  RotateCcw
 } from 'lucide-react';
 import { OssTreeNode, filterOssTree, collectDirPaths } from '../lib/s3Client';
 
@@ -26,6 +27,12 @@ interface OssTreeProps {
   onRename?: (node: OssTreeNode) => void;
   onMove?: (node: OssTreeNode) => void;
   onDelete?: (node: OssTreeNode) => void;
+  /** Restore an object that lives in the trash back to its original path. */
+  onRestore?: (node: OssTreeNode) => void;
+  /** Which nodes offer the restore action. */
+  canRestore?: (node: OssTreeNode) => boolean;
+  /** Directory paths to expand on load (e.g. the configured vault prefix). */
+  initialExpanded?: string[];
 }
 
 const EDITABLE_EXT = ['.md', '.markdown', '.txt'];
@@ -69,7 +76,10 @@ export const OssTree: React.FC<OssTreeProps> = ({
   extraMatchKeys,
   onRename,
   onMove,
-  onDelete
+  onDelete,
+  onRestore,
+  canRestore,
+  initialExpanded
 }) => {
   const searching = searchTerm.trim().length > 0;
 
@@ -88,14 +98,22 @@ export const OssTree: React.FC<OssTreeProps> = ({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']));
   const [limits, setLimits] = useState<Record<string, number>>({});
 
-  // When the listing is wrapped in a single root folder (e.g. the prefix is
-  // "vault/"), expand it so the user sees content instead of one closed folder.
+  // Expand the vault prefix (and a lone root folder) so the user lands on
+  // content instead of a closed folder. Explicit paths beat guessing: once a
+  // `.trash/` folder exists there are two roots and a heuristic fails.
   React.useEffect(() => {
-    if (root.children.length === 1 && root.children[0].isDir) {
-      const only = root.children[0].path;
-      setExpanded((prev) => (prev.has(only) ? prev : new Set([...prev, only])));
-    }
-  }, [root]);
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      for (const path of initialExpanded || []) {
+        const normalized = path.endsWith('/') ? path : `${path}/`;
+        if (normalized) next.add(normalized);
+      }
+      if (root.children.length === 1 && root.children[0].isDir) {
+        next.add(root.children[0].path);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [root, initialExpanded]);
 
   const isExpanded = (path: string) => (searching ? true : expanded.has(path));
 
@@ -113,10 +131,24 @@ export const OssTree: React.FC<OssTreeProps> = ({
 
     /** Hover actions shared by files and folders. */
     const rowActions = (node: OssTreeNode) => {
-      if (!onRename && !onMove && !onDelete) return null;
+      const restorable = Boolean(onRestore && canRestore?.(node));
+      if (!onRename && !onMove && !onDelete && !restorable) return null;
       return (
         <span className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity shrink-0 bg-zinc-800/90 rounded-md px-0.5">
-          {onRename && (
+          {restorable && (
+            <button
+              type="button"
+              title="从回收站恢复"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRestore?.(node);
+              }}
+              className="p-0.5 rounded hover:bg-zinc-700 text-emerald-400 hover:text-emerald-300"
+            >
+              <RotateCcw className="w-3 h-3" />
+            </button>
+          )}
+          {!restorable && onRename && (
             <button
               type="button"
               title={node.isDir ? '重命名目录' : '重命名'}
@@ -129,7 +161,7 @@ export const OssTree: React.FC<OssTreeProps> = ({
               <Pencil className="w-3 h-3" />
             </button>
           )}
-          {onMove && (
+          {!restorable && onMove && (
             <button
               type="button"
               title={node.isDir ? '移动目录' : '移动到…'}
