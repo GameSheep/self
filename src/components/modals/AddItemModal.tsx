@@ -44,6 +44,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   const [serverEnv, setServerEnv] = useState<'prod' | 'test' | 'dev'>('prod');
   const [serverUser, setServerUser] = useState('root');
   const [serverNotes, setServerNotes] = useState('');
+  const [serverHealthUrl, setServerHealthUrl] = useState('');
 
   // Secret form
   const [secretName, setSecretName] = useState('');
@@ -78,6 +79,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
       setServerEnv('prod');
       setServerUser('root');
       setServerNotes('');
+      setServerHealthUrl('');
       setSecretName('');
       setSecretRaw('');
       setSecretDesc('');
@@ -141,7 +143,8 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
         sshUser: serverUser,
         sshCommand: `ssh ${serverUser}@${serverIp}${Number(serverPort) && Number(serverPort) !== 22 ? ` -p ${serverPort}` : ''}`,
         notes: serverNotes,
-        status: 'online',
+        healthUrl: serverHealthUrl.trim() || undefined,
+        status: 'unknown',
         createdAt: Date.now()
       });
       onClose();
@@ -395,6 +398,21 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                   className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
                 />
               </div>
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1">
+                  健康检查 URL (可选，用于真实在线检测)
+                </label>
+                <input
+                  type="text"
+                  value={serverHealthUrl}
+                  onChange={(e) => setServerHealthUrl(e.target.value)}
+                  placeholder="https://api.example.com/health"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
+                />
+                <p className="mt-1 text-[10px] text-zinc-500 leading-relaxed">
+                  浏览器无法直连 SSH 端口；填写一个可访问的 HTTP 地址（或绑定域名）后，「检测」才能给出真实的在线状态。
+                </p>
+              </div>
             </>
           )}
 
@@ -543,3 +561,4 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
     </div>
   );
 };
+

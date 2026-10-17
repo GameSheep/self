@@ -24,7 +24,8 @@ import { MasterKeyModal } from './components/modals/MasterKeyModal';
 import { AddItemModal } from './components/modals/AddItemModal';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { executeCheckIn } from './lib/automation';
-import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X } from 'lucide-react';
+import { checkServerHealth, checkServersHealth } from './lib/serverHealth';
+import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X, Activity } from 'lucide-react';
 
 export function App() {
   const [state, setState] = useState<HubState>(() => loadHubState());
@@ -163,6 +164,55 @@ export function App() {
     updateState((prev) => ({
       ...prev,
       servers: prev.servers.filter((s) => s.id !== id)
+    }));
+  };
+
+  /** Probe one server and store the real result (never assume "online"). */
+  const handleCheckServer = async (id: string) => {
+    const server = state.servers.find((s) => s.id === id);
+    if (!server) return;
+    updateState((prev) => ({
+      ...prev,
+      servers: prev.servers.map((s) => (s.id === id ? { ...s, status: 'checking' } : s))
+    }));
+    const result = await checkServerHealth(server);
+    updateState((prev) => ({
+      ...prev,
+      servers: prev.servers.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              status: result.state,
+              lastCheckedAt: result.checkedAt,
+              lastCheckMessage: result.message,
+              lastLatencyMs: result.latencyMs
+            }
+          : s
+      )
+    }));
+  };
+
+  const handleCheckAllServers = async () => {
+    const targets = state.servers;
+    if (targets.length === 0) return;
+    updateState((prev) => ({
+      ...prev,
+      servers: prev.servers.map((s) => ({ ...s, status: 'checking' }))
+    }));
+    const results = await checkServersHealth(targets);
+    updateState((prev) => ({
+      ...prev,
+      servers: prev.servers.map((s) => {
+        const r = results[s.id];
+        if (!r) return s;
+        return {
+          ...s,
+          status: r.state,
+          lastCheckedAt: r.checkedAt,
+          lastCheckMessage: r.message,
+          lastLatencyMs: r.latencyMs
+        };
+      })
     }));
   };
 
@@ -573,18 +623,34 @@ export function App() {
                   </h2>
                   <p className="text-xs text-zinc-400 mt-0.5">监控健康状态、公网IP/端口与一键快速唤起 SSH 连接</p>
                 </div>
-                <button
-                  onClick={() => setIsAddModalOpen(true)}
-                  className="px-3 py-1.5 rounded-xl bg-zinc-100 text-zinc-900 font-semibold text-xs flex items-center gap-1.5 shadow-sm hover:bg-white"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>添加服务</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => void handleCheckAllServers()}
+                    disabled={state.servers.length === 0}
+                    className="px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white text-xs flex items-center gap-1.5 disabled:opacity-40"
+                    title="逐个探测所有服务器的健康检查地址"
+                  >
+                    <Activity className="w-3.5 h-3.5" />
+                    <span>全部检测</span>
+                  </button>
+                  <button
+                    onClick={() => setIsAddModalOpen(true)}
+                    className="px-3 py-1.5 rounded-xl bg-zinc-100 text-zinc-900 font-semibold text-xs flex items-center gap-1.5 shadow-sm hover:bg-white"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>添加服务</span>
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
                 {state.servers.map((server) => (
-                  <ServerCard key={server.id} server={server} onDelete={handleDeleteServer} />
+                  <ServerCard
+                    key={server.id}
+                    server={server}
+                    onDelete={handleDeleteServer}
+                    onCheck={(id) => void handleCheckServer(id)}
+                  />
                 ))}
               </div>
             </div>

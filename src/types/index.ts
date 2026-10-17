@@ -28,7 +28,12 @@ export interface ServerDeployment {
   sshCommand?: string;
   deployPath?: string;
   healthUrl?: string;
-  status?: 'online' | 'offline' | 'checking';
+  /** 'unknown' means "never probed" — the UI must not claim it is running. */
+  status?: 'online' | 'offline' | 'checking' | 'unknown';
+  /** Last probe result, shown on the card. */
+  lastCheckedAt?: number;
+  lastCheckMessage?: string;
+  lastLatencyMs?: number;
   notes?: string;
   expiresAt?: number; // VPS expiration / renewal timestamp
   renewalCost?: string; // e.g. "¥199 / 年"

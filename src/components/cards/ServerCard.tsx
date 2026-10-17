@@ -1,23 +1,42 @@
 import React, { useState } from 'react';
-import { Terminal, Copy, Check, ExternalLink, Server, Trash2 } from 'lucide-react';
+import { Terminal, Copy, Check, ExternalLink, Server, Trash2, Activity, RefreshCw } from 'lucide-react';
 import { ServerDeployment } from '../../types';
+import { healthPresentation, probeUrlFor } from '../../lib/serverHealth';
 
 interface ServerCardProps {
   server: ServerDeployment;
   onDelete: (id: string) => void;
+  /** Trigger a fresh health probe for this server. */
+  onCheck?: (id: string) => void;
 }
 
-export const ServerCard: React.FC<ServerCardProps> = ({ server, onDelete }) => {
+export const ServerCard: React.FC<ServerCardProps> = ({ server, onDelete, onCheck }) => {
   const [copied, setCopied] = useState(false);
 
   const sshCommand = server.sshCommand || `ssh -p ${server.sshPort || 22} ${server.sshUser || 'root'}@${server.publicIp}`;
 
-  const handleCopySsh = (e: React.MouseEvent) => {
+  const handleCopySsh = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(sshCommand);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(sshCommand);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      alert('复制失败：浏览器拒绝了剪贴板访问，请手动选择复制。');
+    }
   };
+
+  const state = (server.status || 'unknown') as 'online' | 'offline' | 'checking' | 'unknown';
+  const presentation = healthPresentation(state);
+  const probeTarget = probeUrlFor(server);
+  const toneClass =
+    presentation.tone === 'ok'
+      ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/50'
+      : presentation.tone === 'bad'
+      ? 'bg-rose-950/60 text-rose-400 border-rose-800/50'
+      : presentation.tone === 'busy'
+      ? 'bg-sky-950/60 text-sky-400 border-sky-800/50'
+      : 'bg-zinc-800 text-zinc-400 border-zinc-700/50';
 
   const getEnvBadge = (env: string) => {
     switch (env) {
@@ -70,6 +89,45 @@ export const ServerCard: React.FC<ServerCardProps> = ({ server, onDelete }) => {
             title="删除"
           >
             <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Real health status (never claimed without a probe) */}
+        <div className="flex items-center justify-between gap-2 mb-2.5">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span
+              data-server-status={state}
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-mono whitespace-nowrap ${toneClass}`}
+              title={server.lastCheckMessage || presentation.label}
+            >
+              {state === 'checking' ? (
+                <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+              ) : (
+                <span className="w-1.5 h-1.5 rounded-full bg-current" />
+              )}
+              {presentation.label}
+            </span>
+            <span className="text-[10px] text-zinc-500 font-mono truncate" title={server.lastCheckMessage || ''}>
+              {server.lastCheckedAt
+                ? `${new Date(server.lastCheckedAt).toLocaleTimeString()} · ${server.lastCheckMessage || ''}`
+                : probeTarget
+                ? '尚未检测'
+                : '缺少可探测地址'}
+            </span>
+          </div>
+
+          <button
+            onClick={() => onCheck?.(server.id)}
+            disabled={!onCheck || state === 'checking'}
+            className="shrink-0 px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 text-[10px] flex items-center gap-1 disabled:opacity-40"
+            title={
+              probeTarget
+                ? `探测 ${probeTarget.url}`
+                : '浏览器无法直连 SSH 端口，请填写「健康检查 URL」或绑定域名后再检测'
+            }
+          >
+            <Activity className="w-2.5 h-2.5" />
+            <span>检测</span>
           </button>
         </div>
 

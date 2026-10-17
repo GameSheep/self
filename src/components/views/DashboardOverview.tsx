@@ -82,6 +82,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     .slice(0, 8);
 
   const onlineServers = state.servers.filter(s => s.status === 'online').length;
+  const unprobedServers = state.servers.filter(s => !s.status || s.status === 'unknown').length;
   const completedCheckIns = state.checkIns.filter(c => c.lastStatus === 'success').length;
 
   const urgentReminders = (state.reminders || [])
@@ -191,8 +192,16 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 </div>
                 <h3 className="text-xs font-semibold text-zinc-100">基础设施与部署监控</h3>
                 <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-950/60 text-emerald-400 border border-emerald-800/40">
-                  {onlineServers}/{state.servers.length} 运行中
+                  {onlineServers}/{state.servers.length} 在线
                 </span>
+                {unprobedServers > 0 && (
+                  <span
+                    className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/50"
+                    title="从未检测过，状态未知（不是“离线”）"
+                  >
+                    {unprobedServers} 未探测
+                  </span>
+                )}
               </div>
               <button
                 onClick={() => onNavigateTab('servers')}

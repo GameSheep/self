@@ -253,7 +253,7 @@ export function parseTextLocally(rawText: string): ParsedEntities {
         sshUser: user,
         sshCommand: `ssh ${user}@${ip}`,
         notes: line,
-        status: 'online',
+        status: 'unknown',
         createdAt: Date.now()
       });
       processedLines.add(idx);
@@ -408,3 +408,4 @@ ${rawText}
     return parseTextLocally(rawText);
   }
 }
+

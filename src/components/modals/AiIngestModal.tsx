@@ -124,7 +124,7 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
       sshUser: srv.sshUser || 'root',
       sshCommand: srv.sshCommand || `ssh ${srv.sshUser || 'root'}@${srv.publicIp || '127.0.0.1'}`,
       notes: srv.notes || '',
-      status: 'online',
+      status: 'unknown',
       createdAt: Date.now()
     }));
 
@@ -464,3 +464,4 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
     </div>
   );
 };
+
