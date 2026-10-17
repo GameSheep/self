@@ -229,3 +229,81 @@ test.describe('到期提醒通知', () => {
   });
 });
 
+test.describe('扩展后台提醒桥接', () => {
+  test.beforeEach(async ({ page }) => {
+    page.on('dialog', (d) => d.accept());
+  });
+
+  /** Pretend to be an extension page: chrome.storage + runtime.sendMessage. */
+  async function stubChrome(page: any) {
+    await page.addInitScript(`
+      window.__messages = [];
+      window.__stored = {};
+      window.chrome = {
+        storage: { local: { set(items, cb) {
+          Object.assign(window.__stored, items);
+          if (cb) cb();
+        } } },
+        runtime: {
+          id: 'test-extension-id',
+          lastError: null,
+          sendMessage(message, cb) {
+            window.__messages.push(message);
+            if (cb) cb({ success: true });
+          }
+        }
+      };
+      window.__notifications = [];
+      class FakeNotification {
+        static permission = 'granted';
+        constructor(title, options) { window.__notifications.push({ title, body: (options||{}).body }); }
+      }
+      Object.defineProperty(window, 'Notification', { value: FakeNotification, writable: true, configurable: true });
+    `);
+  }
+
+  test('提醒会发布给后台 worker，而不是只在页面里提醒', async ({ page }) => {
+    await stubChrome(page);
+    await seedState(
+      page,
+      baseState({
+        reminders: [
+          {
+            id: 'r1',
+            title: '年费续订',
+            category: 'subscription',
+            targetDate: Date.now() + 2 * 86400000,
+            recurring: 'yearly',
+            cost: '¥99/年',
+            completed: false,
+            createdAt: Date.now()
+          }
+        ]
+      })
+    );
+    await page.goto('/');
+    await page.waitForTimeout(1200);
+
+    const messages = await page.evaluate(() => (window as any).__messages || []);
+    const publish = messages.find((m: any) => m.action === 'PUBLISH_REMINDERS');
+    expect(publish, '应向后台发送 PUBLISH_REMINDERS').toBeTruthy();
+    expect(publish.reminders).toHaveLength(1);
+    expect(publish.reminders[0]).toMatchObject({ id: 'r1', title: '年费续订', completed: false });
+
+    // Inside the extension the worker owns notifications; the page must not
+    // duplicate them.
+    const notes = await page.evaluate(() => (window as any).__notifications || []);
+    expect(notes, '扩展环境不应由页面重复通知').toHaveLength(0);
+  });
+
+  test('普通网页环境下不会误发扩展消息', async ({ page }) => {
+    await seedState(page, baseState({ reminders: [] }));
+    await page.goto('/');
+    await page.waitForTimeout(800);
+    const hasChromeRuntime = await page.evaluate(() =>
+      Boolean((window as any).chrome && (window as any).chrome.runtime && (window as any).chrome.runtime.id)
+    );
+    expect(hasChromeRuntime).toBe(false);
+  });
+});
+

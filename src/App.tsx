@@ -3,7 +3,7 @@ import { HubState, NavSite, ServerDeployment, SecretItem, CheckInTask, QuickNote
 import { loadHubState, saveHubState, normalizeHubState, getStorageKey } from './lib/storage';
 import { clearTrustedSession, restoreTrustedSession } from './lib/crypto';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { mirrorStateToExtension } from './lib/extensionBridge';
+import { mirrorStateToExtension, isExtensionContext, publishRemindersToExtension } from './lib/extensionBridge';
 import { Sidebar } from './components/Sidebar';
 import { Navbar } from './components/Navbar';
 import { DashboardOverview } from './components/views/DashboardOverview';
@@ -62,11 +62,19 @@ export function App() {
     };
   }, []);
 
+  // Publish reminders to the extension worker so alarms can fire with no tab open.
+  useEffect(() => {
+    publishRemindersToExtension(state.reminders || []);
+  }, [state.reminders]);
+
   // Fire due-reminder notifications while the app is open (once per reminder per day).
   const remindersRef = useRef<ReminderItem[]>(state.reminders || []);
   remindersRef.current = state.reminders || [];
   useEffect(() => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
+    // Inside the extension the service worker owns notifications (it also runs
+    // when no tab is open); running both would double-notify.
+    if (isExtensionContext()) return;
     const tick = () => {
       if (Notification.permission !== 'granted') return;
       try {

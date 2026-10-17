@@ -9,7 +9,9 @@
     "unlimitedStorage",
     "sidePanel",
     "scripting",
-    "contextMenus"
+    "contextMenus",
+    "alarms",
+    "notifications"
   ],
   "host_permissions": [
     "http://*/*",

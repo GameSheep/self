@@ -308,6 +308,48 @@ UI：卡片上显示真实状态徽标（在线 / 不可达 / 未探测）+ 检�
 
 `tests/e2e/checkin-and-reminders.spec.ts`（7 条）：同日重复签到不累加、14 天记录反映真实状态、昨天签过今天没签仍算连续、授权后推送、同日刷新不重复、未授权给入口、已完成/远期不通知。
 
+---
+
+## 16. 追加：扩展内真实后台提醒（2026-10-17 第八轮）
+
+### 16.1 问题
+
+上一轮的提醒只能"页面打开时"生效——用户关掉标签页就再也没有提醒。而"提醒"这个词的承诺恰恰是**不需要盯着页面**。
+
+### 16.2 方案
+
+浏览器页面无法后台运行，但**扩展的 Service Worker 可以**（浏览器启动期间）。因此：
+
+- `manifest.json` 增加 `alarms` 与 `notifications` 权限。
+- `extension/background.js`：
+  - `chrome.alarms.create('selfhub_reminder_check', { periodInMinutes: 30, delayInMinutes: 1 })`，在 `onInstalled` / 模块加载 / `onStartup` 时确保存在（浏览器重启会清空 alarm）。
+  - 到期判定：未完成、`targetDate` 在未来 3 天内或已过期。
+  - 每项**每个本地日期只通知一次**，账本存 `chrome.storage.local['selfhub_reminder_notified']`，并清理 30 天前的记录。
+  - 点击通知打开应用页。
+- `src/lib/extensionBridge.ts`：`publishRemindersToExtension()` 把提醒推给 worker（`PUBLISH_REMINDERS`），worker 收到后**立即检查一次**，不必等 30 分钟；`requestReminderCheck()` 供改期后手动触发。
+- **避免重复通知**：在扩展环境内，页面侧的 `notifyDueReminders` 直接跳过，通知权归 worker。
+
+### 16.3 真实扩展实测
+
+```
+alarms: ["selfhub_reminder_check"]
+PUBLISH_REMINDERS → { success: true, due: 1, notified: 1, skipped: 0 }
+notifications: 1（仅过期项；远期与已完成均未通知）
+ledger: ["r-due_2026-10-17"]
+同日再次 publish → { due: 1, notified: 0, skipped: 1 }
+```
+
+即：alarm 已注册、按需即时通知、只通知该通知的、当天不重复。
+
+### 16.4 测试
+
+`tests/e2e/checkin-and-reminders.spec.ts` 增加 2 条（共 9 条）：提醒会发布给后台 worker 且扩展内不重复通知、普通网页环境不会误发扩展消息。
+
+### 16.5 过程中的一次失误（记录在案）
+
+写 `extensionBridge.ts` 时我直接 `write` 覆盖了文件，而它**原本已存在**（负责把站点/批注镜像到 `chrome.storage.local`），等于删掉了一个正在工作的功能。构建前的 `tsc` 立刻报出 `Cannot find name 'mirrorStateToExtension'`，随后从 git 取回原实现并把提醒发布逻辑合并进去。教训：写文件前先确认是否已存在。
+
+
 
 
 

@@ -10,14 +10,22 @@
  *
  * This mirrors the bookmarks and annotations one way (app -> extension) on every
  * persisted change, and is a no-op in a normal browser tab.
+ *
+ * It also hands reminders to the background worker, which schedules alarms so
+ * due reminders notify even when no app tab is open.
  */
-import { HubState } from '../types';
+import { HubState, ReminderItem } from '../types';
 
 interface ChromeStorageLike {
   storage?: {
     local?: {
       set: (items: Record<string, unknown>, cb?: () => void) => void;
     };
+  };
+  runtime?: {
+    id?: string;
+    sendMessage?: (message: unknown, cb?: (response: unknown) => void) => void;
+    lastError?: unknown;
   };
 }
 
@@ -82,4 +90,47 @@ export function mirrorStateToExtension(state: HubState): void {
   } catch (err) {
     console.warn('[Self-Hub] extension mirror failed', err);
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Background reminders                                                        */
+/* -------------------------------------------------------------------------- */
+
+function sendToWorker(message: unknown): boolean {
+  const chromeApi = getChrome();
+  if (!chromeApi?.runtime?.id || !chromeApi.runtime.sendMessage) return false;
+  try {
+    chromeApi.runtime.sendMessage(message, () => {
+      // Reading lastError prevents "Unchecked runtime.lastError" noise when the
+      // worker is asleep and the message has no receiver.
+      void chromeApi.runtime?.lastError;
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Only the fields the worker needs to decide whether something is due. */
+function reminderPayload(reminders: ReminderItem[]) {
+  return reminders.map((r) => ({
+    id: r.id,
+    title: r.title,
+    targetDate: r.targetDate,
+    completed: !!r.completed,
+    cost: r.cost
+  }));
+}
+
+/**
+ * Publish reminders to the worker (stored + checked immediately).
+ * Returns false outside the extension, where callers use the in-page notifier.
+ */
+export function publishRemindersToExtension(reminders: ReminderItem[]): boolean {
+  return sendToWorker({ action: 'PUBLISH_REMINDERS', reminders: reminderPayload(reminders) });
+}
+
+/** Ask the worker to re-check now (e.g. right after a due date is edited). */
+export function requestReminderCheck(): boolean {
+  return sendToWorker({ action: 'CHECK_REMINDERS_NOW' });
 }
