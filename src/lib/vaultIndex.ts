@@ -1,0 +1,404 @@
+/**
+ * Full-vault content index.
+ *
+ * The tree only knows file names, so with ~1700 notes there was no way to answer
+ * "which note mentions Redis?". OSS has no full-text search, so we keep a local
+ * index of note bodies in IndexedDB and search that.
+ *
+ * Lives in its own database (`self_hub_vault_index`) so bumping its schema can
+ * never disturb the main app data.
+ */
+import { ObsidianConfig, ObsidianNote } from '../types';
+import { fetchObsidianNoteContent } from './s3Client';
+
+const DB_NAME = 'self_hub_vault_index';
+const DB_VERSION = 1;
+const STORE = 'docs';
+
+export interface IndexedDoc {
+  key: string;
+  title: string;
+  /** Body text as stored in the bucket (used for snippets). */
+  text: string;
+  tags: string[];
+  /** Wikilink targets found in the body (normalised, no alias/heading). */
+  links: string[];
+  /** Cloud last-modified at the time this body was fetched. */
+  lastModified: number;
+  size: number;
+  indexedAt: number;
+}
+
+export interface BuildProgress {
+  done: number;
+  total: number;
+  fetched: number;
+  skipped: number;
+  failed: number;
+  currentKey?: string;
+}
+
+export interface BuildResult {
+  records: IndexedDoc[];
+  fetched: number;
+  skipped: number;
+  failed: number;
+  errors: string[];
+}
+
+let cachedDb: IDBDatabase | null = null;
+
+function openDb(): Promise<IDBDatabase> {
+  if (cachedDb) return Promise.resolve(cachedDb);
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        db.createObjectStore(STORE, { keyPath: 'key' });
+      }
+    };
+    request.onsuccess = () => {
+      cachedDb = request.result;
+      resolve(request.result);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/** Read every indexed document (used on startup; a few MB at most). */
+export async function loadIndex(): Promise<IndexedDoc[]> {
+  try {
+    const db = await openDb();
+    return await new Promise<IndexedDoc[]>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).getAll();
+      req.onsuccess = () => resolve((req.result as IndexedDoc[]) || []);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (err) {
+    console.warn('[Self-Hub] vault index read failed', err);
+    return [];
+  }
+}
+
+export async function putDocs(docs: IndexedDoc[]): Promise<void> {
+  if (docs.length === 0) return;
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      docs.forEach((doc) => store.put(doc));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (err) {
+    console.warn('[Self-Hub] vault index write failed', err);
+  }
+}
+
+export async function clearIndex(): Promise<void> {
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {
+    // ignore
+  }
+}
+
+/* -------------------------------------------------------------- extraction */
+
+const TAG_RE = /(^|[\s(（[【>])#([\p{L}\p{N}_\-/]{1,64})/gu;
+const WIKILINK_RE = /\[\[([^\]\n]+?)\]\]/g;
+
+/** Tags declared in frontmatter plus inline `#tag` occurrences. */
+export function extractTags(content: string): string[] {
+  const tags = new Set<string>();
+
+  const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+  if (fm) {
+    const tagLine = /^tags:\s*(.+)$/m.exec(fm[1]);
+    if (tagLine) {
+      tagLine[1]
+        .replace(/^\[|\]$/g, '')
+        .split(',')
+        .map((t) => t.trim().replace(/^["']|["']$/g, '').replace(/^#/, ''))
+        .filter(Boolean)
+        .forEach((t) => tags.add(t));
+    }
+    // `tags:\n  - a\n  - b`
+    const block = /^tags:\s*\r?\n((?:\s*-\s*.+\r?\n?)+)/m.exec(fm[1]);
+    if (block) {
+      block[1]
+        .split('\n')
+        .map((line) => line.replace(/^\s*-\s*/, '').trim().replace(/^#/, ''))
+        .filter(Boolean)
+        .forEach((t) => tags.add(t));
+    }
+  }
+
+  // Inline tags: skip fenced code blocks to avoid `#include <stdio.h>` noise.
+  const withoutCode = content.replace(/```[\s\S]*?```/g, '');
+  for (const match of withoutCode.matchAll(TAG_RE)) {
+    tags.add(match[2]);
+  }
+  return [...tags];
+}
+
+/** Wikilink targets, normalised to the same form used for resolution. */
+export function extractWikilinks(content: string): string[] {
+  const out = new Set<string>();
+  const withoutCode = content.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '');
+  for (const match of withoutCode.matchAll(WIKILINK_RE)) {
+    const target = match[1].split('|')[0].split('#')[0].trim();
+    if (target) out.add(target);
+  }
+  return [...out];
+}
+
+/* --------------------------------------------------------------- building */
+
+/** Fetch bodies for new/changed notes and upsert them. Skips unchanged ones. */
+export async function buildIndex(
+  config: ObsidianConfig,
+  notes: ObsidianNote[],
+  existing: IndexedDoc[],
+  onProgress?: (p: BuildProgress) => void,
+  concurrency = 4
+): Promise<BuildResult> {
+  const byKey = new Map(existing.map((d) => [d.key, d]));
+  const targets = notes.filter((n) => n.key.toLowerCase().endsWith('.md'));
+
+  const pending: ObsidianNote[] = [];
+  let skipped = 0;
+  for (const note of targets) {
+    const prev = byKey.get(note.key);
+    const unchanged = prev && prev.lastModified === note.lastModified && prev.size === note.size;
+    if (unchanged) skipped++;
+    else pending.push(note);
+  }
+
+  const progress: BuildProgress = {
+    done: 0,
+    total: pending.length,
+    fetched: 0,
+    skipped,
+    failed: 0
+  };
+
+  const fresh: IndexedDoc[] = [];
+  const errors: string[] = [];
+  let cursor = 0;
+
+  const worker = async () => {
+    while (cursor < pending.length) {
+      const note = pending[cursor++];
+      progress.currentKey = note.key;
+      try {
+        const content = await fetchObsidianNoteContent(config, note.key);
+        if (content === null) {
+          progress.failed++;
+          if (errors.length < 5) errors.push(`${note.key}: 读取失败`);
+        } else {
+          fresh.push({
+            key: note.key,
+            title: note.title,
+            text: content,
+            tags: extractTags(content),
+            links: extractWikilinks(content),
+            lastModified: note.lastModified,
+            size: note.size,
+            indexedAt: Date.now()
+          });
+          progress.fetched++;
+        }
+      } catch (err: any) {
+        progress.failed++;
+        if (errors.length < 5) errors.push(`${note.key}: ${err?.message || '读取异常'}`);
+      }
+      progress.done++;
+      onProgress?.({ ...progress });
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
+
+  // Persist in batches to keep transactions short.
+  for (let i = 0; i < fresh.length; i += 100) {
+    await putDocs(fresh.slice(i, i + 100));
+  }
+
+  // Drop entries for notes that no longer exist in the bucket.
+  const liveKeys = new Set(targets.map((n) => n.key));
+  const stale = existing.filter((d) => !liveKeys.has(d.key)).map((d) => d.key);
+  if (stale.length > 0) {
+    try {
+      const db = await openDb();
+      await new Promise<void>((resolve) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        const store = tx.objectStore(STORE);
+        stale.forEach((key) => store.delete(key));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  const merged = new Map(byKey);
+  fresh.forEach((doc) => merged.set(doc.key, doc));
+  stale.forEach((key) => merged.delete(key));
+
+  return {
+    records: [...merged.values()],
+    fetched: progress.fetched,
+    skipped,
+    failed: progress.failed,
+    errors
+  };
+}
+
+/* --------------------------------------------------------------- searching */
+
+export interface SearchHit {
+  key: string;
+  title: string;
+  /** Which field matched. */
+  field: 'title' | 'content' | 'tag' | 'link';
+  /** Context around the match, for the result row. */
+  snippet: string;
+  /** Offset of the match inside `snippet` (for highlighting). */
+  matchIndex: number;
+  matchLength: number;
+}
+
+function makeSnippet(text: string, index: number, length: number, radius = 48): { snippet: string; matchIndex: number } {
+  const start = Math.max(0, index - radius);
+  const end = Math.min(text.length, index + length + radius);
+  const prefix = start > 0 ? '…' : '';
+  const suffix = end < text.length ? '…' : '';
+  const snippet = `${prefix}${text.slice(start, end).replace(/\s+/g, ' ')}${suffix}`;
+
+  // Whitespace collapsing shifts offsets, so re-locate the match inside the
+  // final snippet instead of doing arithmetic on the original index.
+  const matched = text.slice(index, index + length).replace(/\s+/g, ' ');
+  const found = matched ? snippet.toLowerCase().indexOf(matched.toLowerCase()) : -1;
+  return { snippet, matchIndex: found >= 0 ? found : 0 };
+}
+
+/**
+ * Search indexed bodies. Case-insensitive substring match over title, body, tags
+ * and wikilink targets. `#tag` queries match tags exactly.
+ */
+export function searchIndex(records: IndexedDoc[], query: string, limit = 80): SearchHit[] {
+  const raw = query.trim();
+  if (!raw) return [];
+
+  const tagQuery = raw.startsWith('#') ? raw.slice(1).toLowerCase() : null;
+  const needle = raw.toLowerCase();
+  const hits: SearchHit[] = [];
+
+  for (const doc of records) {
+    if (tagQuery) {
+      const hit = doc.tags.find((t) => t.toLowerCase() === tagQuery);
+      if (hit) {
+        hits.push({
+          key: doc.key,
+          title: doc.title,
+          field: 'tag',
+          snippet: `#${hit}`,
+          matchIndex: 0,
+          matchLength: hit.length + 1
+        });
+        if (hits.length >= limit) break;
+        continue;
+      }
+    }
+
+    const titleIndex = doc.title.toLowerCase().indexOf(needle);
+    if (titleIndex >= 0) {
+      hits.push({
+        key: doc.key,
+        title: doc.title,
+        field: 'title',
+        snippet: doc.title,
+        matchIndex: titleIndex,
+        matchLength: needle.length
+      });
+      if (hits.length >= limit) break;
+      continue;
+    }
+
+    const bodyIndex = doc.text.toLowerCase().indexOf(needle);
+    if (bodyIndex >= 0) {
+      const { snippet, matchIndex } = makeSnippet(doc.text, bodyIndex, needle.length);
+      hits.push({
+        key: doc.key,
+        title: doc.title,
+        field: 'content',
+        snippet,
+        matchIndex,
+        matchLength: needle.length
+      });
+      if (hits.length >= limit) break;
+      continue;
+    }
+
+    const linkHit = doc.links.find((l) => l.toLowerCase().includes(needle));
+    if (linkHit) {
+      hits.push({
+        key: doc.key,
+        title: doc.title,
+        field: 'link',
+        snippet: `[[${linkHit}]]`,
+        matchIndex: 2,
+        matchLength: linkHit.length
+      });
+      if (hits.length >= limit) break;
+    }
+  }
+
+  return hits;
+}
+
+/** Notes that link to `targetKey` (resolved by file name). */
+export function findBacklinks(records: IndexedDoc[], targetKey: string): SearchHit[] {
+  const base = (targetKey.split('/').pop() || targetKey).replace(/\.md$/i, '').toLowerCase();
+  const out: SearchHit[] = [];
+  for (const doc of records) {
+    if (doc.key === targetKey) continue;
+    const hit = doc.links.find((l) => {
+      const target = (l.split('/').pop() || l).replace(/\.md$/i, '').toLowerCase();
+      return target === base;
+    });
+    if (hit) {
+      out.push({
+        key: doc.key,
+        title: doc.title,
+        field: 'link',
+        snippet: `[[${hit}]]`,
+        matchIndex: 2,
+        matchLength: hit.length
+      });
+    }
+  }
+  return out;
+}
+
+/** Aggregate stats for the index panel. */
+export function indexStats(records: IndexedDoc[]) {
+  let chars = 0;
+  let withTags = 0;
+  for (const doc of records) {
+    chars += doc.text.length;
+    if (doc.tags.length > 0) withTags++;
+  }
+  return { docs: records.length, chars, withTags };
+}

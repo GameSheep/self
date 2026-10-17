@@ -54,10 +54,32 @@ import {
   OssTreeNode
 } from '../../lib/s3Client';
 import { OssTree, isEditableFile, isImageFile } from '../OssTree';
+import { VaultSearchResults } from '../VaultSearchResults';
+import {
+  buildIndex,
+  findBacklinks,
+  indexStats,
+  loadIndex,
+  searchIndex,
+  type BuildProgress,
+  type IndexedDoc
+} from '../../lib/vaultIndex';
 import { Markdown } from '../Markdown';
 import { MarkdownEditor, type EditorMode } from '../MarkdownEditor';
 import { toggleTaskInSource, type MarkdownContext, type MarkdownHeading } from '../../lib/markdown/render';
-import { ListTree, FolderPlus, UploadCloud, History, X, Image as ImageIcon, FolderInput, AlertTriangle } from 'lucide-react';
+import {
+  Link2,
+  ChevronUp,
+  ChevronDown,
+  ListTree,
+  FolderPlus,
+  UploadCloud,
+  History,
+  X,
+  Image as ImageIcon,
+  FolderInput,
+  AlertTriangle
+} from 'lucide-react';
 import { formatWucaiToObsidianMarkdown } from '../../lib/wucaiClient';
 import { formatYoudaoToObsidianMarkdown } from '../../lib/youdaoClient';
 
@@ -105,6 +127,12 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   // -------------------------------------------------------------
   const [selectedObsidianKey, setSelectedObsidianKey] = useState<string>(obsidianNotes[0]?.key || '');
   const [obsidianSearch, setObsidianSearch] = useState('');
+  /** 'name' filters the tree by path; 'full' searches indexed note bodies. */
+  const [searchScope, setSearchScope] = useState<'name' | 'full'>('name');
+  const [indexRecords, setIndexRecords] = useState<IndexedDoc[]>([]);
+  const [isIndexing, setIsIndexing] = useState(false);
+  const [indexProgress, setIndexProgress] = useState<BuildProgress | null>(null);
+  const [showBacklinks, setShowBacklinks] = useState(true);
   const [isEditingObsidian, setIsEditingObsidian] = useState(false);
   const [editObsidianContent, setEditObsidianContent] = useState(obsidianNotes[0]?.content || '');
   const [isSavingObsidian, setIsSavingObsidian] = useState(false);
@@ -622,7 +650,77 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   /** Tag click → filter the tree by that tag (content matches for loaded notes). */
   const handleTagClick = React.useCallback((tag: string) => {
     setObsidianSearch(`#${tag}`);
+    setSearchScope('full');
   }, []);
+
+  /* ---------------------------------------------------------- full-text index */
+
+  // Load the persisted index once so search works without re-crawling the vault.
+  React.useEffect(() => {
+    let alive = true;
+    loadIndex().then((docs) => {
+      if (alive && docs.length > 0) setIndexRecords(docs);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const handleBuildIndex = React.useCallback(async () => {
+    if (isIndexing) return;
+    const notes = latestRef.current.obsidianNotes;
+    if (notes.length === 0) {
+      showToast('⚠️ 请先刷新目录，让笔记列表加载完成');
+      return;
+    }
+    setIsIndexing(true);
+    setIndexProgress({ done: 0, total: 0, fetched: 0, skipped: 0, failed: 0 });
+    try {
+      const result = await buildIndex(obsidianConfig, notes, indexRecords, setIndexProgress);
+      setIndexRecords(result.records);
+      const { docs, chars } = indexStats(result.records);
+      showToast(
+        `📚 索引完成：${docs} 篇（${(chars / 1024 / 1024).toFixed(1)} MB）` +
+          (result.fetched > 0 ? `，本次抓取 ${result.fetched} 篇` : '') +
+          (result.failed > 0 ? `，${result.failed} 篇失败` : '')
+      );
+      if (result.errors.length > 0) console.warn('[Self-Hub] index errors', result.errors);
+    } finally {
+      setIsIndexing(false);
+      setIndexProgress(null);
+    }
+  }, [indexRecords, isIndexing, obsidianConfig]);
+
+  /** Query the index (deferred so typing stays responsive on a large vault). */
+  const deferredSearch = React.useDeferredValue(obsidianSearch);
+  const vaultHits = React.useMemo(() => {
+    if (searchScope !== 'full') return [];
+    return searchIndex(indexRecords, deferredSearch);
+  }, [searchScope, indexRecords, deferredSearch]);
+
+  const backlinks = React.useMemo(() => {
+    const key = currentObsidianNote?.key;
+    if (!key || indexRecords.length === 0) return [];
+    return findBacklinks(indexRecords, key);
+  }, [indexRecords, currentObsidianNote?.key]);
+
+  const openNoteByKey = React.useCallback(
+    (key: string) => {
+      if (isDirtyRef.current && key !== latestRef.current.selectedObsidianKey && !confirm('当前笔记有未保存的修改，确定切换吗？')) {
+        return;
+      }
+      void handleOpenOssFile({
+        name: key.split('/').pop() || key,
+        path: key,
+        isDir: false,
+        size: 0,
+        lastModified: Date.now(),
+        children: []
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [handleOpenOssFile]
+  );
 
   /**
    * Note on performance: the reading view renders content live (no deferral) so
@@ -700,6 +798,10 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
     if (baseline === undefined) return false;
     return live !== baseline.content;
   }, [currentObsidianNote?.key, currentObsidianNote?.content, isEditingObsidian, editObsidianContent]);
+
+  // Stable mirror of isDirty for callbacks that must not change identity.
+  const isDirtyRef = React.useRef(false);
+  isDirtyRef.current = isDirty;
 
   /** Set when a save was refused because the cloud copy changed underneath us. */
   const [conflictState, setConflictState] = useState<{
@@ -1266,16 +1368,71 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
               </div>
             )}
 
-            <div className="relative my-3">
+            <div className="relative mt-3">
               <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-2.5" />
               <input
                 type="text"
+                data-testid="vault-search-input"
                 value={obsidianSearch}
                 onChange={(e) => setObsidianSearch(e.target.value)}
-                placeholder="在整棵目录树中搜索文件或文件夹..."
+                placeholder={
+                  searchScope === 'full'
+                    ? '搜索笔记正文、标签、双链…'
+                    : '在整棵目录树中搜索文件或文件夹...'
+                }
                 className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-purple-600"
               />
             </div>
+
+            {/* Search scope + index status */}
+            <div className="mt-2 mb-2 flex items-center justify-between gap-2 text-[10px]">
+              <div className="flex items-center p-0.5 rounded-lg bg-zinc-900 border border-zinc-800">
+                <button
+                  onClick={() => setSearchScope('name')}
+                  className={`px-2 py-0.5 rounded-md ${
+                    searchScope === 'name' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  文件名
+                </button>
+                <button
+                  onClick={() => setSearchScope('full')}
+                  className={`px-2 py-0.5 rounded-md ${
+                    searchScope === 'full' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                  title="搜索笔记正文、标签与双链（需先建立索引）"
+                >
+                  全文
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 font-mono text-zinc-500">
+                {isIndexing ? (
+                  <span className="text-sky-400">
+                    索引中 {indexProgress?.done ?? 0}/{indexProgress?.total ?? 0}
+                  </span>
+                ) : (
+                  <span>已索引 {indexRecords.length}</span>
+                )}
+                <button
+                  onClick={() => void handleBuildIndex()}
+                  disabled={isIndexing}
+                  className="px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 disabled:opacity-50"
+                  title="抓取所有笔记正文建立本地全文索引（只抓取新增或云端已变化的）"
+                >
+                  {isIndexing ? '索引中…' : indexRecords.length > 0 ? '更新索引' : '建立索引'}
+                </button>
+              </div>
+            </div>
+
+            {isIndexing && indexProgress && indexProgress.total > 0 && (
+              <div className="mb-2 h-1 rounded bg-zinc-800 overflow-hidden">
+                <div
+                  className="h-full bg-sky-500 transition-all"
+                  style={{ width: `${Math.round((indexProgress.done / indexProgress.total) * 100)}%` }}
+                />
+              </div>
+            )}
 
             {/* Bucket tree summary */}
             {ossListMeta && ossListMeta.source === 'oss' && (
@@ -1347,9 +1504,18 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
               </div>
             )}
 
-            {/* Bucket tree (all levels) */}
+            {/* Bucket tree (all levels) or full-text results */}
             <div className="flex-1 overflow-y-auto pr-1 min-h-[200px]">
-              {ossTree ? (
+              {searchScope === 'full' && obsidianSearch.trim() ? (
+                <VaultSearchResults
+                  hits={vaultHits}
+                  query={obsidianSearch}
+                  indexEmpty={indexRecords.length === 0}
+                  onCreateIndex={() => void handleBuildIndex()}
+                  onOpen={openNoteByKey}
+                  totalNoteCount={obsidianNotes.length}
+                />
+              ) : ossTree ? (
                 <OssTree
                   root={ossTree}
                   searchTerm={obsidianSearch}
@@ -1522,6 +1688,38 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                     </button>
                   </div>
                 </div>
+
+                {/* Backlinks (from the local full-text index) */}
+                {backlinks.length > 0 && (
+                  <div className="border-b border-[#1e2026] bg-[#0d0e11]">
+                    <button
+                      onClick={() => setShowBacklinks((v) => !v)}
+                      className="w-full flex items-center justify-between px-4 py-1.5 text-[11px] text-zinc-400 hover:text-zinc-200"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Link2 className="w-3 h-3 text-amber-400" />
+                        反向链接 ({backlinks.length})
+                        <span className="text-zinc-600">· 有这些笔记引用了本篇</span>
+                      </span>
+                      {showBacklinks ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+                    {showBacklinks && (
+                      <div className="px-3 pb-2 flex flex-wrap gap-1">
+                        {backlinks.map((hit) => (
+                          <button
+                            key={hit.key}
+                            onClick={() => openNoteByKey(hit.key)}
+                            title={hit.key}
+                            data-backlink={hit.key}
+                            className="max-w-[48%] truncate px-2 py-0.5 rounded-md text-[11px] bg-amber-950/40 border border-amber-900/50 text-amber-200 hover:bg-amber-900/40"
+                          >
+                            {hit.title}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Markdown workspace: editor + optional outline */}
                 <div className="flex-1 flex min-h-0">

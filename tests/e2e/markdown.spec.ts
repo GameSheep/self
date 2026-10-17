@@ -60,7 +60,7 @@ test.describe('Markdown 阅读视图', () => {
     await expect(tag).toBeVisible();
     await tag.click();
     // Clicking a tag drives the vault search.
-    await expect(page.locator('input[placeholder*="在整棵目录树中搜索"]')).toHaveValue('#标签');
+    await expect(page.getByTestId('vault-search-input')).toHaveValue('#标签');
   });
 
   test('标注块：普通与可折叠', async ({ page }) => {
@@ -193,4 +193,5 @@ test.describe('Markdown 阅读视图', () => {
     await expect(outline.first()).toHaveText('一级标题');
   });
 });
+
 
