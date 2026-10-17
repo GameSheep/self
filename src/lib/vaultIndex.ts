@@ -48,6 +48,83 @@ export interface BuildResult {
 
 let cachedDb: IDBDatabase | null = null;
 
+const META_KEY = 'selfhub_index_meta';
+
+export interface IndexMeta {
+  /** When the index was last built/updated (ms). */
+  lastBuiltAt?: number;
+  /** Docs written in the most recent build. */
+  docs?: number;
+}
+
+export function readIndexMeta(): IndexMeta {
+  try {
+    const raw = localStorage.getItem(META_KEY);
+    return raw ? (JSON.parse(raw) as IndexMeta) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function writeIndexMeta(meta: IndexMeta): void {
+  try {
+    localStorage.setItem(META_KEY, JSON.stringify(meta));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+/**
+ * Empty the index. Prefers `clear()` over deleting the database: deleting it can
+ * be blocked by an open connection (another tab, a pending transaction), and a
+ * blocked delete that we treat as success leaves writes going to a database that
+ * is about to disappear.
+ */
+export async function resetIndexDatabase(): Promise<void> {
+  let cleared = false;
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    cleared = true;
+  } catch {
+    cleared = false;
+  }
+
+  if (!cleared) {
+    // The store itself is unusable (older/foreign schema): drop the database.
+    try {
+      cachedDb?.close();
+    } catch {
+      // ignore
+    }
+    cachedDb = null;
+    await new Promise<void>((resolve) => {
+      try {
+        const request = indexedDB.deleteDatabase(DB_NAME);
+        request.onsuccess = () => resolve();
+        request.onerror = () => resolve();
+        // Resolve on unblock too, otherwise a stuck connection hangs the UI.
+        request.onblocked = () => resolve();
+        setTimeout(resolve, 3000);
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  try {
+    localStorage.removeItem(META_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 function openDb(): Promise<IDBDatabase> {
   if (cachedDb) return Promise.resolve(cachedDb);
   return new Promise((resolve, reject) => {
@@ -66,20 +143,36 @@ function openDb(): Promise<IDBDatabase> {
   });
 }
 
-/** Read every indexed document (used on startup; a few MB at most). */
+/**
+ * Read every indexed document (used on startup; a few MB at most).
+ *
+ * If the database is unusable (older schema, corrupted, store missing) it is
+ * deleted and the index starts empty rather than leaving search permanently
+ * broken with no way back.
+ */
 export async function loadIndex(): Promise<IndexedDoc[]> {
   try {
-    const db = await openDb();
-    return await new Promise<IndexedDoc[]>((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readonly');
-      const req = tx.objectStore(STORE).getAll();
-      req.onsuccess = () => resolve((req.result as IndexedDoc[]) || []);
-      req.onerror = () => reject(req.error);
-    });
+    return await readAllDocs();
   } catch (err) {
-    console.warn('[Self-Hub] vault index read failed', err);
-    return [];
+    console.warn('[Self-Hub] vault index unreadable, resetting it', err);
+    await resetIndexDatabase();
+    try {
+      return await readAllDocs();
+    } catch {
+      return [];
+    }
   }
+}
+
+async function readAllDocs(): Promise<IndexedDoc[]> {
+  const db = await openDb();
+  return await new Promise<IndexedDoc[]>((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).getAll();
+    req.onsuccess = () => resolve((req.result as IndexedDoc[]) || []);
+    req.onerror = () => reject(req.error);
+    tx.onabort = () => reject(tx.error);
+  });
 }
 
 export async function putDocs(docs: IndexedDoc[]): Promise<void> {
@@ -99,17 +192,7 @@ export async function putDocs(docs: IndexedDoc[]): Promise<void> {
 }
 
 export async function clearIndex(): Promise<void> {
-  try {
-    const db = await openDb();
-    await new Promise<void>((resolve) => {
-      const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).clear();
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-    });
-  } catch {
-    // ignore
-  }
+  await resetIndexDatabase();
 }
 
 /* -------------------------------------------------------------- extraction */
@@ -256,6 +339,8 @@ export async function buildIndex(
   fresh.forEach((doc) => merged.set(doc.key, doc));
   stale.forEach((key) => merged.delete(key));
 
+  writeIndexMeta({ lastBuiltAt: Date.now(), docs: merged.size });
+
   return {
     records: [...merged.values()],
     fetched: progress.fetched,
@@ -395,10 +480,42 @@ export function findBacklinks(records: IndexedDoc[], targetKey: string): SearchH
 /** Aggregate stats for the index panel. */
 export function indexStats(records: IndexedDoc[]) {
   let chars = 0;
+  let bytes = 0;
   let withTags = 0;
   for (const doc of records) {
     chars += doc.text.length;
+    // The cloud object size is the UTF-8 byte count — a far better estimate of
+    // what we store than counting JS characters.
+    bytes += doc.size || 0;
     if (doc.tags.length > 0) withTags++;
   }
-  return { docs: records.length, chars, withTags };
+  return { docs: records.length, chars, bytes, withTags };
+}
+
+export interface StorageEstimate {
+  usageBytes?: number;
+  quotaBytes?: number;
+}
+
+/** Device-level storage usage for this origin, when the browser reports it. */
+export async function estimateOriginStorage(): Promise<StorageEstimate> {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.storage?.estimate) return {};
+    const { usage, quota } = await navigator.storage.estimate();
+    return { usageBytes: usage, quotaBytes: quota };
+  } catch {
+    return {};
+  }
+}
+
+export function formatBytes(bytes?: number): string {
+  if (!bytes || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
 }

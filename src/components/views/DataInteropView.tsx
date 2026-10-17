@@ -60,14 +60,20 @@ import {
   findBacklinks,
   indexStats,
   loadIndex,
+  readIndexMeta,
+  resetIndexDatabase,
   searchIndex,
+  estimateOriginStorage,
+  formatBytes,
   type BuildProgress,
+  type IndexMeta,
   type IndexedDoc
 } from '../../lib/vaultIndex';
 import { Markdown } from '../Markdown';
 import { MarkdownEditor, type EditorMode } from '../MarkdownEditor';
 import { toggleTaskInSource, type MarkdownContext, type MarkdownHeading } from '../../lib/markdown/render';
 import {
+  Database,
   Link2,
   ChevronUp,
   ChevronDown,
@@ -137,6 +143,9 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   const [indexRecords, setIndexRecords] = useState<IndexedDoc[]>([]);
   const [isIndexing, setIsIndexing] = useState(false);
   const [indexProgress, setIndexProgress] = useState<BuildProgress | null>(null);
+  const [showIndexPanel, setShowIndexPanel] = useState(false);
+  const [indexMeta, setIndexMeta] = useState<IndexMeta>({});
+  const [originStorage, setOriginStorage] = useState<{ usageBytes?: number; quotaBytes?: number }>({});
   const [showBacklinks, setShowBacklinks] = useState(true);
 
   // Mirrors for async callbacks (avoid stale closures without changing identity).
@@ -687,37 +696,68 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   React.useEffect(() => {
     let alive = true;
     loadIndex().then((docs) => {
-      if (alive && docs.length > 0) setIndexRecords(docs);
+      if (!alive) return;
+      if (docs.length > 0) setIndexRecords(docs);
+      setIndexMeta(readIndexMeta());
     });
     return () => {
       alive = false;
     };
   }, []);
 
-  const handleBuildIndex = React.useCallback(async () => {
-    if (isIndexing) return;
-    const notes = latestRef.current.obsidianNotes;
-    if (notes.length === 0) {
-      showToast('⚠️ 请先刷新目录，让笔记列表加载完成');
-      return;
-    }
-    setIsIndexing(true);
-    setIndexProgress({ done: 0, total: 0, fetched: 0, skipped: 0, failed: 0 });
-    try {
-      const result = await buildIndex(obsidianConfig, notes, indexRecords, setIndexProgress);
-      setIndexRecords(result.records);
-      const { docs, chars } = indexStats(result.records);
-      showToast(
-        `📚 索引完成：${docs} 篇（${(chars / 1024 / 1024).toFixed(1)} MB）` +
-          (result.fetched > 0 ? `，本次抓取 ${result.fetched} 篇` : '') +
-          (result.failed > 0 ? `，${result.failed} 篇失败` : '')
-      );
-      if (result.errors.length > 0) console.warn('[Self-Hub] index errors', result.errors);
-    } finally {
-      setIsIndexing(false);
-      setIndexProgress(null);
-    }
-  }, [indexRecords, isIndexing, obsidianConfig]);
+  // Storage numbers are only needed while the panel is open.
+  React.useEffect(() => {
+    if (!showIndexPanel) return;
+    setIndexMeta(readIndexMeta());
+    void estimateOriginStorage().then(setOriginStorage);
+  }, [showIndexPanel]);
+
+  const handleBuildIndex = React.useCallback(
+    async (existingOverride?: IndexedDoc[]) => {
+      if (isIndexing) return;
+      const notes = latestRef.current.obsidianNotes;
+      if (notes.length === 0) {
+        showToast('⚠️ 请先刷新目录，让笔记列表加载完成');
+        return;
+      }
+      const existing = existingOverride ?? indexRecords;
+      setIsIndexing(true);
+      setIndexProgress({ done: 0, total: 0, fetched: 0, skipped: 0, failed: 0 });
+      try {
+        const result = await buildIndex(obsidianConfig, notes, existing, setIndexProgress);
+        setIndexRecords(result.records);
+        setIndexMeta(readIndexMeta());
+        const { docs, chars } = indexStats(result.records);
+        showToast(
+          `📚 索引完成：${docs} 篇（${(chars / 1024 / 1024).toFixed(1)} MB）` +
+            (result.fetched > 0 ? `，本次抓取 ${result.fetched} 篇` : '') +
+            (result.failed > 0 ? `，${result.failed} 篇失败` : '')
+        );
+        if (result.errors.length > 0) console.warn('[Self-Hub] index errors', result.errors);
+      } finally {
+        setIsIndexing(false);
+        setIndexProgress(null);
+      }
+    },
+    [indexRecords, isIndexing, obsidianConfig]
+  );
+
+  const handleClearIndex = React.useCallback(async () => {
+    if (!confirm('清除全文索引？\n\n只删除本机缓存的笔记正文副本，云端笔记不受影响。之后可重新建立索引。')) return;
+    await resetIndexDatabase();
+    setIndexRecords([]);
+    setIndexMeta({});
+    setShowIndexPanel(false);
+    showToast('🧹 已清除全文索引（云端笔记未受影响）');
+  }, []);
+
+  const handleRebuildIndex = React.useCallback(async () => {
+    if (!confirm('重建全文索引？\n\n会丢弃本机索引并重新抓取所有笔记正文，笔记数量多时需要一点时间。')) return;
+    await resetIndexDatabase();
+    setIndexRecords([]);
+    setShowIndexPanel(false);
+    await handleBuildIndex([]);
+  }, [handleBuildIndex]);
 
   /** Query the index (deferred so typing stays responsive on a large vault). */
   const deferredSearch = React.useDeferredValue(obsidianSearch);
@@ -1459,7 +1499,14 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                     索引中 {indexProgress?.done ?? 0}/{indexProgress?.total ?? 0}
                   </span>
                 ) : (
-                  <span>已索引 {indexRecords.length}</span>
+                  <button
+                    onClick={() => setShowIndexPanel(true)}
+                    className="hover:text-zinc-200 underline decoration-dotted underline-offset-2"
+                    title="查看索引详情 / 清除 / 重建"
+                    data-testid="index-status"
+                  >
+                    已索引 {indexRecords.length}
+                  </button>
                 )}
                 <button
                   onClick={() => void handleBuildIndex()}
@@ -2345,6 +2392,103 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       )}
 
       {/* ========================================================================= */}
+      {/* MODAL: 全文索引管理 */}
+      {/* ========================================================================= */}
+      {showIndexPanel && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          onClick={() => setShowIndexPanel(false)}
+        >
+          <div
+            className="w-full max-w-md bg-[#121316] border border-[#22242a] rounded-2xl shadow-2xl overflow-hidden"
+            data-testid="index-panel"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4 text-sky-400" />
+                <h3 className="text-sm font-semibold text-zinc-100">全文索引</h3>
+              </div>
+              <button onClick={() => setShowIndexPanel(false)} className="p-1 rounded hover:bg-zinc-800 text-zinc-500">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 text-xs">
+              <p className="text-[11px] text-zinc-500 leading-relaxed">
+                全文索引把笔记正文缓存到<b className="text-zinc-300">本机 IndexedDB</b>，
+                只用于「全文搜索」和「反向链接」。清除它不会影响云端任何笔记。
+              </p>
+
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-1.5 font-mono text-[11px]">
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">已索引笔记</span>
+                  <span className="text-zinc-200" data-testid="index-doc-count">
+                    {indexRecords.length} 篇
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">缓存正文字数</span>
+                  <span className="text-zinc-200" data-testid="index-size">
+                    {indexStats(indexRecords).chars >= 10000
+                      ? `${(indexStats(indexRecords).chars / 10000).toFixed(1)} 万字`
+                      : `${indexStats(indexRecords).chars} 字`}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">含标签</span>
+                  <span className="text-zinc-200">{indexStats(indexRecords).withTags} 篇</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">最后更新</span>
+                  <span className="text-zinc-200" data-testid="index-last-built">
+                    {indexMeta.lastBuiltAt ? new Date(indexMeta.lastBuiltAt).toLocaleString() : '从未建立'}
+                  </span>
+                </div>
+                {originStorage.usageBytes !== undefined && (
+                  <div className="flex justify-between border-t border-zinc-800 pt-1.5">
+                    <span className="text-zinc-500">本站已用存储</span>
+                    <span className="text-zinc-400">
+                      {formatBytes(originStorage.usageBytes)}
+                      {originStorage.quotaBytes ? ` / ${formatBytes(originStorage.quotaBytes)}` : ''}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  onClick={() => {
+                    setShowIndexPanel(false);
+                    void handleBuildIndex();
+                  }}
+                  disabled={isIndexing}
+                  className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[11px] font-semibold disabled:opacity-50"
+                >
+                  更新索引
+                </button>
+                <button
+                  onClick={() => void handleRebuildIndex()}
+                  disabled={isIndexing}
+                  className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] disabled:opacity-50"
+                >
+                  重建索引
+                </button>
+                <button
+                  onClick={() => void handleClearIndex()}
+                  disabled={isIndexing || indexRecords.length === 0}
+                  className="px-3 py-1.5 rounded-lg bg-rose-950/60 border border-rose-900/60 text-rose-300 hover:bg-rose-900/50 text-[11px] disabled:opacity-40"
+                  data-testid="index-clear"
+                >
+                  清除索引
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* MODAL: 保存冲突（云端已被其他客户端修改） */}
       {/* ========================================================================= */}
       {conflictState && (
@@ -2802,5 +2946,6 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
     </div>
   );
 };
+
 
 
