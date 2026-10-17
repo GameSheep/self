@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Check, X, Globe, Server, Key, FileText, AlertCircle, Clock, Folder, Edit2 } from 'lucide-react';
+import { Sparkles, Check, X, Globe, Server, Key, FileText, AlertCircle, Clock, Folder, Edit2, ShieldCheck } from 'lucide-react';
 import { AiConfig, NavSite, ServerDeployment, SecretItem, QuickNote, ReminderItem } from '../../types';
 import { parseTextWithLLM, ParsedEntities } from '../../lib/aiParser';
+import { maskSecrets, rehydrateValue, describeFindings, type MaskResult } from '../../lib/secretMask';
 import { encryptText, createMaskedPreview } from '../../lib/crypto';
 
 interface AiIngestModalProps {
@@ -32,6 +33,7 @@ export const AiIngestModal: React.FC<AiIngestModalProps> = ({
   const [rawText, setRawText] = useState('');
   const [loading, setLoading] = useState(false);
   const [parsedResult, setParsedResult] = useState<ParsedEntities | null>(null);
+  const [maskInfo, setMaskInfo] = useState<MaskResult | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [importing, setImporting] = useState(false);
 
@@ -83,8 +85,26 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
     if (!rawText.trim()) return;
     setLoading(true);
     setErrorMsg('');
+    setMaskInfo(null);
     try {
-      const result = await parseTextWithLLM(rawText, aiConfig);
+      const cloudOn = Boolean(aiConfig.apiKey && aiConfig.cloudAiEnabled === true);
+
+      // Cloud path: mask credentials before anything leaves the device, then put
+      // the real values back locally if the model echoed our placeholders.
+      // Local path: use the original text — it never leaves the browser and the
+      // engine needs the real values in order to encrypt and store them.
+      const mask = cloudOn ? maskSecrets(rawText) : null;
+      setMaskInfo(mask && mask.findings.length > 0 ? mask : null);
+
+      const result = await parseTextWithLLM(mask ? mask.masked : rawText, aiConfig);
+
+      if (mask) {
+        result.secrets = (result.secrets || []).map((s) => ({
+          ...s,
+          rawValue: rehydrateValue(s.rawValue, mask.values) ?? s.rawValue
+        }));
+      }
+
       setParsedResult(result);
     } catch (err: any) {
       setErrorMsg(err.message || '解析失败，请检查输入或重试');
@@ -311,6 +331,29 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                   </span>
                 </div>
               )}
+
+              {/* What the masker removed before sending. */}
+              {maskInfo && maskInfo.findings.length > 0 && (
+                <div
+                  className="mt-3 rounded-xl border border-emerald-900/60 bg-emerald-950/25 px-3 py-2 text-[11px] text-emerald-300 leading-relaxed"
+                  data-testid="mask-report"
+                >
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 shrink-0" />
+                    <span>{describeFindings(maskInfo.findings)}，发送前已替换为占位符。</span>
+                  </div>
+                  <ul className="mt-2 space-y-0.5 font-mono text-[10px] text-emerald-200/80">
+                    {maskInfo.findings.map((f, i) => (
+                      <li key={i} data-mask-kind={f.kind}>
+                        {f.kind}：{f.preview}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-[10px] text-emerald-200/70">
+                    原始值只在本机保存；若模型原样保留占位符，入库时会自动还原为真实值。
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
             /* Review & Destination Selector Screen */
@@ -326,6 +369,30 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                   重新输入
                 </button>
               </div>
+
+              {/* Keep the masking notice visible on the result screen too — the user
+                  should still be able to see what was withheld from the provider. */}
+              {maskInfo && maskInfo.findings.length > 0 && (
+                <div
+                  className="rounded-xl border border-emerald-900/60 bg-emerald-950/25 px-3 py-2 text-[11px] text-emerald-300 leading-relaxed"
+                  data-testid="mask-report"
+                >
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 shrink-0" />
+                    <span>{describeFindings(maskInfo.findings)}，发送前已替换为占位符。</span>
+                  </div>
+                  <ul className="mt-2 space-y-0.5 font-mono text-[10px] text-emerald-200/80">
+                    {maskInfo.findings.map((f, i) => (
+                      <li key={i} data-mask-kind={f.kind}>
+                        {f.kind}：{f.preview}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-[10px] text-emerald-200/70">
+                    原始值只在本机保存；入库时会自动还原为真实值。
+                  </p>
+                </div>
+              )}
 
               {/* Sites with Destination Category Selector */}
               {parsedResult.sites.length > 0 && (
@@ -481,4 +548,6 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
     </div>
   );
 };
+
+
 
