@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { CheckCircle2, Clock, AlertCircle, Play, ExternalLink, Flame, Trash2, Code2, Copy, Check, X } from 'lucide-react';
 import { CheckInTask } from '../../types';
 import { generateUserScript } from '../../lib/automation';
+import { hasRunToday, recentDays, computeStreak } from '../../lib/checkInHistory';
 
 interface CheckInCardProps {
   task: CheckInTask;
@@ -24,6 +25,11 @@ export const CheckInCard: React.FC<CheckInCardProps> = ({ task, onRun, onDelete 
   };
 
   const scriptCode = generateUserScript(task);
+  const cells = recentDays(task.history || [], 14);
+  const today = hasRunToday(task);
+  // Derive from history when present: a stored counter can be stale (imported
+  // data, or records written by an older version).
+  const streak = task.history && task.history.length > 0 ? computeStreak(task.history) : task.streakDays || 0;
 
   const handleCopyScript = () => {
     navigator.clipboard.writeText(scriptCode);
@@ -98,13 +104,42 @@ export const CheckInCard: React.FC<CheckInCardProps> = ({ task, onRun, onDelete 
             {task.lastMessage}
           </div>
         )}
+
+        {/* Last 14 days: honest per-day record instead of a bare counter */}
+        {cells.length > 0 && (
+          <div className="flex items-center gap-1 my-2" data-testid="checkin-history">
+            <span className="text-[10px] text-zinc-500 font-mono mr-1 shrink-0">近 14 天</span>
+            {cells.map((cell) => (
+              <span
+                key={cell.date}
+                title={`${cell.date} · ${
+                  cell.status === 'success' ? '已签到' : cell.status === 'failed' ? '失败' : '未签到'
+                }`}
+                data-day={cell.date}
+                data-status={cell.status}
+                className={`w-2.5 h-2.5 rounded-sm shrink-0 ${
+                  cell.status === 'success'
+                    ? 'bg-emerald-500'
+                    : cell.status === 'failed'
+                    ? 'bg-rose-500/80'
+                    : 'bg-zinc-800 border border-zinc-700'
+                } ${cell.isToday ? 'ring-1 ring-offset-1 ring-offset-[#121316] ring-zinc-500' : ''}`}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Footer & Actions */}
       <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60 mt-2 text-[11px] text-zinc-500">
         <div className="flex items-center gap-1.5 font-mono whitespace-nowrap">
           <Flame className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-          <span className="text-[10px] sm:text-[11px]">连续 {task.streakDays || 1} 天</span>
+          <span className="text-[10px] sm:text-[11px]" data-testid="checkin-streak">
+            连续 {streak} 天
+          </span>
+          {today.done && (
+            <span className="text-[10px] text-emerald-400 font-sans">今日已签</span>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">

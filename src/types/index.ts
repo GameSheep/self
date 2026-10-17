@@ -54,6 +54,15 @@ export interface SecretItem {
   updatedAt: number;
 }
 
+export interface CheckInRun {
+  /** Local date, YYYY-MM-DD. One entry per day. */
+  date: string;
+  /** Exact run timestamp. */
+  at: number;
+  status: 'success' | 'failed';
+  message: string;
+}
+
 export interface CheckInTask {
   id: string;
   name: string;
@@ -65,7 +74,10 @@ export interface CheckInTask {
   lastRun?: number;
   lastStatus?: 'success' | 'failed' | 'pending';
   lastMessage?: string;
+  /** Derived from `history`; kept for display compatibility. */
   streakDays?: number;
+  /** Per-day run log (source of truth for the streak). */
+  history?: CheckInRun[];
   createdAt: number;
 }
 

@@ -24,6 +24,8 @@ import { MasterKeyModal } from './components/modals/MasterKeyModal';
 import { AddItemModal } from './components/modals/AddItemModal';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { executeCheckIn } from './lib/automation';
+import { recordRun } from './lib/checkInHistory';
+import { notifyDueReminders } from './lib/reminderNotifier';
 import { checkServerHealth, checkServersHealth } from './lib/serverHealth';
 import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X, Activity } from 'lucide-react';
 
@@ -58,6 +60,24 @@ export function App() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Fire due-reminder notifications while the app is open (once per reminder per day).
+  const remindersRef = useRef<ReminderItem[]>(state.reminders || []);
+  remindersRef.current = state.reminders || [];
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    const tick = () => {
+      if (Notification.permission !== 'granted') return;
+      try {
+        notifyDueReminders(remindersRef.current);
+      } catch (err) {
+        console.warn('[Self-Hub] reminder notification failed', err);
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 60_000);
+    return () => clearInterval(timer);
   }, []);
 
   // Sync theme class to document root
@@ -249,19 +269,13 @@ export function App() {
     if (!task) return;
 
     const result = await executeCheckIn(task);
-    const countsAsCheckIn = result.success && result.verified !== false;
 
     updateState((prev) => ({
       ...prev,
       checkIns: prev.checkIns.map((c) =>
         c.id === id
-          ? {
-              ...c,
-              lastRun: Date.now(),
-              lastStatus: result.success ? 'success' : 'failed',
-              lastMessage: result.message,
-              streakDays: countsAsCheckIn ? (c.streakDays || 0) + 1 : c.streakDays
-            }
+          ? // History is per local day: running twice cannot inflate the streak.
+            recordRun(c, result)
           : c
       )
     }));

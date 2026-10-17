@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import { ReminderItem } from '../../types';
 import { daysUntil, parseDateInputValue, toDateInputValue, advanceRecurringDate, nextRenewal } from '../../lib/dates';
+import { requestNotificationPermission } from '../../lib/reminderNotifier';
+import { Bell } from 'lucide-react';
 
 interface RemindersViewProps {
   reminders: ReminderItem[];
@@ -243,6 +245,9 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
           <span>新建提醒事项</span>
         </button>
       </div>
+
+      {/* Browser notification permission (honest about the page-open limitation) */}
+      <NotificationBanner />
 
       {/* Filter Tabs */}
       <div className="flex items-center gap-1.5 bg-[#121316] p-1.5 rounded-xl border border-[#22242a] text-xs">
@@ -710,6 +715,72 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
         </div>
       )}
 
+    </div>
+  );
+};
+
+/**
+ * Browser notification permission strip.
+ *
+ * Deliberately states the limitation: a web page can only notify while it is
+ * open, so we do not promise background alarms.
+ */
+const NotificationBanner: React.FC = () => {
+  const [permission, setPermission] = useState<string>(() =>
+    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported'
+  );
+  const [busy, setBusy] = useState(false);
+
+  if (permission === 'granted') {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-emerald-900/50 bg-emerald-950/25 px-3 py-2 text-[11px] text-emerald-300">
+        <Bell className="w-3.5 h-3.5 shrink-0" />
+        <span>
+          到期提醒已开启：到期前 3 天内、以及已过期的未完成提醒，会在页面打开时推送一次系统通知（每天每项最多一次）。
+        </span>
+      </div>
+    );
+  }
+
+  if (permission === 'denied') {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-amber-900/50 bg-amber-950/25 px-3 py-2 text-[11px] text-amber-300">
+        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+        <span>浏览器已拒绝通知权限，请到地址栏左侧的站点设置里重新允许「通知」。</span>
+      </div>
+    );
+  }
+
+  if (permission === 'unsupported') {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-[11px] text-zinc-400">
+        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+        <span>当前环境不支持系统通知，到期项只会在本页显示。</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-900/50 bg-sky-950/25 px-3 py-2 text-[11px] text-sky-300">
+      <span className="flex items-center gap-2">
+        <Bell className="w-3.5 h-3.5 shrink-0" />
+        开启浏览器提醒后，到期与逾期项会在页面打开时推送系统通知（浏览器限制：关闭页面后无法提醒）。
+      </span>
+      <button
+        onClick={async () => {
+          setBusy(true);
+          try {
+            const result = await requestNotificationPermission();
+            setPermission(result);
+          } finally {
+            setBusy(false);
+          }
+        }}
+        disabled={busy}
+        className="shrink-0 px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-[11px] disabled:opacity-50"
+      >
+        {busy ? '请求中…' : '开启到期提醒'}
+      </button>
     </div>
   );
 };
