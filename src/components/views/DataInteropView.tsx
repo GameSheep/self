@@ -983,7 +983,6 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   const [editingWucaiId, setEditingWucaiId] = useState<string | null>(null);
   const [editWucaiNote, setEditWucaiNote] = useState('');
   const [isWucaiTokenModalOpen, setIsWucaiTokenModalOpen] = useState(false);
-  const [wucaiTokenInput, setWucaiTokenInput] = useState(wucaiConfig.token || '');
 
   // Add highlight modal
   const [isAddWucaiModalOpen, setIsAddWucaiModalOpen] = useState(false);
@@ -1044,15 +1043,6 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
     showToast('📥 已转存至个人知识文档');
   };
 
-  const handleSaveWucaiToken = () => {
-    onUpdateWucaiConfig({
-      ...wucaiConfig,
-      enabled: true,
-      token: wucaiTokenInput
-    });
-    setIsWucaiTokenModalOpen(false);
-    showToast('✅ 五彩 OpenAPI 访问令牌已更新');
-  };
 
   const handleCreateWucaiHighlight = () => {
     if (!newWucaiText.trim()) return;
@@ -2838,33 +2828,26 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
               <button onClick={() => setIsWucaiTokenModalOpen(false)} className="text-zinc-500 hover:text-white">✕</button>
             </div>
 
-            <p className="text-xs text-zinc-400">
-              在五彩插件个人中心（doc.wucai.site / wucai.site）设置中复制个人访问令牌，配置后可直接跨端调取与双向修改划词。
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              所有外部连接的配置统一收在「系统设置 → 内容来源」里，这里不再单独维护一份 Token，
+              避免两处配置互相覆盖。
             </p>
-
-            <div>
-              <label className="block text-xs text-zinc-400 font-mono mb-1">OpenAPI Token</label>
-              <input
-                type="password"
-                value={wucaiTokenInput}
-                onChange={(e) => setWucaiTokenInput(e.target.value)}
-                placeholder="wc_pat_••••••••"
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-amber-600"
-              />
-            </div>
 
             <div className="flex justify-end gap-2 pt-2">
               <button
                 onClick={() => setIsWucaiTokenModalOpen(false)}
                 className="px-3.5 py-1.5 rounded-xl bg-zinc-800 text-zinc-300 text-xs"
               >
-                取消
+                关闭
               </button>
               <button
-                onClick={handleSaveWucaiToken}
+                onClick={() => {
+                  setIsWucaiTokenModalOpen(false);
+                  onOpenSettings();
+                }}
                 className="px-4 py-1.5 rounded-xl bg-amber-500 text-zinc-950 font-semibold text-xs shadow-sm"
               >
-                保存令牌
+                前往系统设置
               </button>
             </div>
           </div>
@@ -2946,6 +2929,8 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
     </div>
   );
 };
+
+
 
 
 

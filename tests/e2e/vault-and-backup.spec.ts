@@ -113,7 +113,7 @@ test.describe('备份与恢复', () => {
     page.on('pageerror', (e) => errors.push(String(e)));
 
     await page.locator('aside button[title*="系统设置"]').click();
-    await page.locator('button', { hasText: '备份与恢复' }).click();
+    await page.locator('[data-settings-nav="data"]').click();
     await page.setInputFiles('input[type="file"]', {
       name: 'partial-backup.json',
       mimeType: 'application/json',
@@ -138,7 +138,7 @@ test.describe('备份与恢复', () => {
 
   test('导出明文 JSON 备份可以下载', async ({ page }) => {
     await page.locator('aside button[title*="系统设置"]').click();
-    await page.locator('button', { hasText: '备份与恢复' }).click();
+    await page.locator('[data-settings-nav="data"]').click();
     const [download] = await Promise.all([
       page.waitForEvent('download'),
       page.locator('button', { hasText: '导出明文' }).click()
@@ -161,7 +161,7 @@ test.describe('备份与恢复', () => {
     expect(before).toContain('self_hub_idb');
 
     await page.locator('aside button[title*="系统设置"]').click();
-    await page.locator('button', { hasText: '备份与恢复' }).click();
+    await page.locator('[data-settings-nav="data"]').click();
     await page.locator('button', { hasText: '重置所有数据' }).click();
     await page.waitForTimeout(3500);
 
@@ -182,3 +182,4 @@ test.describe('备份与恢复', () => {
     expect(after).not.toContain('IDB-标记');
   });
 });
+

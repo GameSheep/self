@@ -16,7 +16,7 @@ function state(overrides: Record<string, unknown> = {}) {
 async function openBackupTab(page: any) {
   await page.locator('aside button[title*="系统设置"]').click();
   await expect(page.getByText('系统与服务集成设置')).toBeVisible();
-  await page.locator('button', { hasText: '备份与恢复' }).first().click();
+  await page.locator('[data-settings-nav="storage"]').click();
   await expect(page.getByTestId('webdav-section')).toBeVisible();
 }
 
@@ -235,3 +235,4 @@ test.describe('WebDAV 连接测试', () => {
     expect(puts.some((u) => u.endsWith('/selfhub_sync/state.json'))).toBe(false);
   });
 });
+

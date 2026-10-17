@@ -953,6 +953,7 @@ export function App() {
         onUpdateObsidian={(cfg) => updateState((prev) => ({ ...prev, obsidianConfig: cfg }))}
         aiConfig={state.aiConfig}
         onUpdateAi={(cfg) => updateState((prev) => ({ ...prev, aiConfig: cfg }))}
+        onUpdateWucai={(cfg) => updateState((prev) => ({ ...prev, wucaiConfig: cfg }))}
         state={state}
         onRestoreState={handleRestoreState}
         masterPassword={masterPassword}

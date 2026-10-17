@@ -107,7 +107,7 @@ function state() {
 async function openBackupTab(page: any) {
   await page.locator('aside button[title*="系统设置"]').click();
   await expect(page.getByText('系统与服务集成设置')).toBeVisible();
-  await page.locator('button', { hasText: '备份与恢复' }).first().click();
+  await page.locator('[data-settings-nav="storage"]').click();
   await page.waitForTimeout(300);
 }
 
@@ -243,5 +243,6 @@ test.describe('全量数据云备份', () => {
     expect(captured.filter((c) => c.key.includes('.selfhub'))).toHaveLength(0);
   });
 });
+
 
 

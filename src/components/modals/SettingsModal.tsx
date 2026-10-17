@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, HardDrive, Sparkles, Download, Upload, Shield, Check, Globe, AlertTriangle, Lock, Key, Database, RefreshCw, RotateCcw
+import { X, Settings, HardDrive, Sparkles, Download, Upload, Shield, Check, Globe, AlertTriangle, Lock, Key, Database, RefreshCw, RotateCcw, BookOpen
 } from 'lucide-react';
-import { ObsidianConfig, AiConfig, HubState, WebdavSyncConfig } from '../../types';
+import { ObsidianConfig, AiConfig, HubState, WebdavSyncConfig, WucaiConfig } from '../../types';
 import { exportBackup, importBackup, INITIAL_STATE, saveHubState, snapshotForRollback, restoreRollbackSnapshot, hasRollbackSnapshot } from '../../lib/storage';
 import { exportEncryptedBackup, importEncryptedBackup, getTrustedSession } from '../../lib/crypto';
 import { deleteAllDatabases } from '../../lib/indexedDb';
 import { backupKeyFor, describeBackupAge, readStateBackup, readStateBackupFromWebdav } from '../../lib/stateBackup';
+import { isExtensionContext } from '../../lib/extensionBridge';
 import { testWebdav, describeWebdavTarget } from '../../lib/webdavClient';
 import { estimateStorageQuota } from '../../lib/indexedDb';
 
@@ -25,6 +26,8 @@ interface SettingsModalProps {
   onBackupNow?: (force?: boolean) => Promise<{ ok: boolean; conflict?: boolean; error?: string }>;
   webdavConfig?: WebdavSyncConfig;
   onUpdateWebdav?: (config: WebdavSyncConfig) => void;
+  /** Content sources (五彩 etc.) used to live inside the data page. */
+  onUpdateWucai?: (config: WucaiConfig) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -40,15 +43,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   backupStatus,
   onBackupNow,
   webdavConfig,
-  onUpdateWebdav
+  onUpdateWebdav,
+  onUpdateWucai
 }) => {
-  const [activeTab, setActiveTab] = useState<'oss' | 'ai' | 'backup' | 'cloudflare'>('cloudflare');
+  type SettingsSection = 'overview' | 'storage' | 'sync' | 'content' | 'ai' | 'data';
+  const [activeTab, setActiveTab] = useState<SettingsSection>('overview');
   const [wd, setWd] = useState<WebdavSyncConfig>(
     webdavConfig || { enabled: false, url: '', username: '', password: '', pathPrefix: 'selfhub_sync' }
   );
   const [wdTest, setWdTest] = useState<{ ok: boolean; message: string } | null>(null);
   const [wdTesting, setWdTesting] = useState(false);
   const [wdSaved, setWdSaved] = useState(false);
+  const [wucaiToken, setWucaiToken] = useState(state.wucaiConfig?.token || '');
+  const [wucaiSaved, setWucaiSaved] = useState(false);
   useEffect(() => {
     if (isOpen && webdavConfig) setWd(webdavConfig);
   }, [isOpen, webdavConfig]);
@@ -277,49 +284,174 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
         </div>
 
-        {/* Tab switcher */}
-        <div className="flex border-b border-zinc-800 bg-zinc-900/60 p-1">
-          <button
-            onClick={() => setActiveTab('cloudflare')}
-            className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-              activeTab === 'cloudflare' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            Cloudflare 门禁
-          </button>
-          <button
-            onClick={() => setActiveTab('oss')}
-            className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-              activeTab === 'oss' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <HardDrive className="w-3.5 h-3.5" />
-            阿里云 OSS (Obsidian)
-          </button>
-          <button
-            onClick={() => setActiveTab('ai')}
-            className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-              activeTab === 'ai' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            AI 模型配置
-          </button>
-          <button
-            onClick={() => setActiveTab('backup')}
-            className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-              activeTab === 'backup' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Download className="w-3.5 h-3.5" />
-            备份与恢复
-          </button>
-        </div>
+        {/* Section nav + content */}
+        <div className="flex min-h-0">
+          <nav className="w-32 sm:w-40 shrink-0 border-r border-zinc-800 bg-zinc-900/40 p-2 space-y-0.5">
+            {(
+              [
+                { id: 'overview', label: '概览', icon: Shield },
+                { id: 'storage', label: '存储与备份', icon: HardDrive },
+                { id: 'sync', label: '同步', icon: RefreshCw },
+                { id: 'content', label: '内容来源', icon: BookOpen },
+                { id: 'ai', label: 'AI 模型', icon: Sparkles },
+                { id: 'data', label: '数据与维护', icon: Database }
+              ] as const
+            ).map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id)}
+                  data-settings-nav={item.id}
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-xs transition-colors ${
+                    activeTab === item.id
+                      ? 'bg-zinc-800 text-white font-medium'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
 
-        {/* Content */}
-        <div className="p-5 space-y-4 overflow-y-auto max-h-[65vh]">
-          {activeTab === 'cloudflare' && (
+          <div className="flex-1 min-w-0 p-5 space-y-4 overflow-y-auto max-h-[65vh]">
+          {/* ============ 概览：所有外部连接一屏看清 ============ */}
+          {activeTab === 'overview' && (
+            <div className="space-y-3" data-testid="settings-overview">
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                这里汇总所有外部连接的状态。配置项统一收敛在本设置里，不再分散在各个业务页面。
+              </p>
+
+              {[
+                {
+                  key: 'oss',
+                  name: '阿里云 OSS（Obsidian 笔记库）',
+                  configured: Boolean(obsidianConfig.enabled && obsidianConfig.bucket && obsidianConfig.accessKeyId),
+                  detail: obsidianConfig.bucket
+                    ? `${obsidianConfig.bucket} · 前缀「${obsidianConfig.prefix || '整桶'}」`
+                    : '未填写 Bucket',
+                  section: 'storage' as SettingsSection
+                },
+                {
+                  key: 'webdav',
+                  name: 'WebDAV 备份',
+                  configured: Boolean(
+                    webdavConfig?.enabled && webdavConfig.url && webdavConfig.username && webdavConfig.password
+                  ),
+                  detail: webdavConfig?.url ? describeWebdavTarget(webdavConfig) : '未配置',
+                  section: 'storage' as SettingsSection
+                },
+                {
+                  key: 'backup',
+                  name: '全量备份',
+                  configured: Boolean(backupStatus?.lastAt),
+                  detail: describeBackupAge(backupStatus?.lastAt),
+                  section: 'storage' as SettingsSection
+                },
+                {
+                  key: 'extension',
+                  name: '浏览器扩展内置同步',
+                  configured: isExtensionContext(),
+                  detail: isExtensionContext() ? '当前运行在扩展环境' : '当前是普通网页，扩展同步不可用',
+                  section: 'sync' as SettingsSection
+                },
+                {
+                  key: 'wucai',
+                  name: '五彩划词高亮',
+                  configured: Boolean(state.wucaiConfig?.token),
+                  detail: state.wucaiConfig?.token ? '已填写 Token' : '未填写 Token',
+                  section: 'content' as SettingsSection
+                },
+                {
+                  key: 'ai',
+                  name: 'AI 模型',
+                  configured: Boolean(aiConfig.apiKey),
+                  detail: aiConfig.apiKey ? `${aiConfig.provider} · ${aiConfig.model || '默认模型'}` : '未填写 API Key',
+                  section: 'ai' as SettingsSection
+                },
+                {
+                  key: 'index',
+                  name: '全文索引',
+                  configured: true,
+                  detail: '在「数据与维护」中查看用量、清除或重建',
+                  section: 'data' as SettingsSection
+                }
+              ].map((row) => (
+                <div
+                  key={row.key}
+                  data-overview-item={row.key}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                          row.configured ? 'bg-emerald-400' : 'bg-zinc-600'
+                        }`}
+                      />
+                      <span className="text-xs text-zinc-200 truncate">{row.name}</span>
+                    </div>
+                    <p className="text-[10px] text-zinc-500 font-mono truncate mt-0.5 pl-3.5">{row.detail}</p>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab(row.section)}
+                    className="shrink-0 text-[11px] px-2 py-0.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+                  >
+                    配置
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ============ 内容来源（从数据互通页收回） ============ */}
+          {activeTab === 'content' && (
+            <div className="space-y-3" data-testid="settings-content">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
+                <h4 className="text-xs font-semibold text-zinc-200">五彩（Wucai）划词高亮</h4>
+                <p className="text-[11px] text-zinc-500 leading-relaxed">
+                  填入五彩的 API Token 后，可拉取划词高亮并在「多平台数据互通」里检索。
+                </p>
+                <div>
+                  <label className="block text-[11px] text-zinc-400 mb-1">API Token</label>
+                  <input
+                    type="password"
+                    data-testid="wucai-token"
+                    value={wucaiToken}
+                    onChange={(e) => setWucaiToken(e.target.value)}
+                    placeholder="wc_pat_••••••••"
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      onUpdateWucai?.({ ...state.wucaiConfig, token: wucaiToken.trim(), enabled: Boolean(wucaiToken.trim()) });
+                      setWucaiSaved(true);
+                      setTimeout(() => setWucaiSaved(false), 2000);
+                    }}
+                    disabled={!onUpdateWucai}
+                    className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] disabled:opacity-50"
+                    data-testid="wucai-save"
+                  >
+                    {wucaiSaved ? '已保存' : '保存 Token'}
+                  </button>
+                  <a
+                    href="https://www.dotalk.cn/s/APIPermission"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11px] text-sky-400 hover:underline"
+                  >
+                    去五彩获取 Token
+                  </a>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'sync' && (
             <div className="space-y-3">
               <div className="p-3.5 rounded-xl bg-zinc-900/80 border border-zinc-800 text-xs text-zinc-300 leading-relaxed">
                 <div className="font-semibold text-zinc-100 flex items-center gap-1.5 mb-1.5">
@@ -338,7 +470,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {activeTab === 'oss' && (
+          {activeTab === 'storage' && (
             <div className="space-y-3">
               <p className="text-xs text-zinc-400">
                 配置您存放 Obsidian Markdown 库的阿里云 OSS Bucket 信息（建议配置只读 AccessKey）：
@@ -445,7 +577,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {activeTab === 'backup' && (
+          {activeTab === 'data' && (
             <div className="space-y-4">
               {/* Storage Quota Overview (N04) */}
               <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800 space-y-2">
@@ -588,7 +720,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
           {/* ---- 全量数据云备份 ---- */}
-          {activeTab === 'backup' && (
+          {activeTab === 'storage' && (
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3" data-testid="cloud-backup-section">
               <div>
                 <h4 className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
@@ -675,7 +807,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
           {/* ---- WebDAV 连接（替代 OSS 的备份目标） ---- */}
-          {activeTab === 'backup' && (
+          {activeTab === 'storage' && (
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3" data-testid="webdav-section">
               <div>
                 <h4 className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
@@ -787,6 +919,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               )}
             </div>
           )}
+          </div>
         </div>
 
         {/* Footer */}
@@ -810,6 +943,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 };
+
+
+
+
 
 
 
