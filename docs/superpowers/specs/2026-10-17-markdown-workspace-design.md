@@ -424,6 +424,61 @@ UI：设置 →「备份与恢复」页新增一块：上次备份时间、当�
 
 `tests/e2e/state-backup.spec.ts`（5 条）：状态变化自动备份、手动立即备份、云端更新时另存冲突副本而不覆盖、从云端恢复、未配置 OSS 时不发请求。
 
+---
+
+## 19. 追加：WebDAV 备份目标（2026-10-17 第十一轮）
+
+### 19.1 起因
+
+用户想用 InfiniCLOUD（原 TeraCloud）作为备份位置，一直连不上。排查过程本身就是一节"如何诚实报错"的课：
+
+| 探测 | 结果 |
+| --- | --- |
+| `OPTIONS /dav/` | 200，`DAV: 1,2`（服务器活着） |
+| `PROPFIND` 带三组不同密码 | **全部 401**（连错误密码也是 401，无法区分原因） |
+| 跨域预检 | 200 但**没有任何 `Access-Control-Allow-Origin`** |
+| 换用账号真实节点 `kurio.infini-cloud.net` | **207，读到 3 个条目** ✅ |
+
+结论：403/401 时"密码错了"只是可能性之一——**URL 指向的节点不对**才是真因。旧地址 `toi.teracloud.jp` 是共享节点，账号实际在 `kurio.infini-cloud.net`。
+
+### 19.2 实现
+
+`src/lib/webdavClient.ts`：
+
+- `testWebdav()` 用 PROPFIND 探测，把状态码翻译成可执行结论：401 →「应用密码 / 外部应用连接」，404 →「URL 是否以 /dav/ 结尾」，403 →「账号被禁止外部访问」，网络异常 →「可能是 CORS（普通网页会被拦截，需扩展环境）」。
+- `putWebdavFile()` / `getWebdavFile()`，写入前逐级 `MKCOL`（405/409 视为已存在）。
+- 全部请求带 Basic Auth，UTF-8 用户名用 TextEncoder 转 Base64（`btoa` 直接传非 Latin1 会抛错）。
+
+接入备份体系：
+
+- `backupStateToWebdav()` / `readStateBackupFromWebdav()` 复用同一套信封格式。
+- WebDAV 没有可靠的响应头 mtime，冲突检测改为比较信封里的 `updatedAt` 与上次备份时间；更新则另存 `conflicts/` 不覆盖。
+- `webdavConfig.enabled` 为真时**备份自动改走 WebDAV**，否则用 OSS。
+
+### 19.3 真实账号实测
+
+```
+测试连接：✅ 连接成功，1052ms
+保存配置：webdavConfig.enabled = true
+立即备份：刚刚备份
+主题 dark → 切成 light → 从云端恢复 → dark ✅
+
+服务器侧：/dav/selfhub_sync/state.json 4258 字节
+内容：{"version":1,"deviceId":"dev-8dlog6b8mk","state":{...theme:"dark"...}}  sites=6
+清理后根目录只剩 2 个 welcome pdf
+```
+
+### 19.4 发现的冲突点（待决策）
+
+探测时发现 `/dav/self/` 下有 `sites.json`(128 个站点) / `annotations.json` / `inbox.json` / `manifest.json`，`lastSyncTime` 与探测同一分钟——这是**用户自己浏览器里的扩展**（`pathPrefix = "self"`）在同步，不是本次代码所写，因此未删除。
+
+于是现在存在两套并行同步：扩展的 SyncManager（`self/`，站点/批注/收件箱）与本应用的备份（`selfhub_sync/`，全量状态）。两者尚未打通，后续需要统一路径与数据边界。
+
+### 19.5 测试
+
+`tests/e2e/webdav.spec.ts`（8 条）：207 成功、401 归因、网络失败归因、缺字段不发请求、配置持久化、目标路径预览、启用后备份改走 WebDAV、云端更新时另存冲突副本。
+
+
 
 
 

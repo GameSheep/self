@@ -135,6 +135,13 @@ export const INITIAL_STATE: HubState = {
     syncKey: '',
     autoSync: false
   },
+  webdavConfig: {
+    enabled: false,
+    url: '',
+    username: '',
+    password: '',
+    pathPrefix: 'selfhub_sync'
+  },
   inbox: [],
   projects: [],
   annotations: [],
@@ -206,6 +213,7 @@ export function normalizeHubState(raw: unknown): HubState {
     youdaoConfig: mergeObject(INITIAL_STATE.youdaoConfig as YoudaoConfig, base.youdaoConfig),
     aiConfig: mergeObject(INITIAL_STATE.aiConfig, base.aiConfig),
     cloudflareSync: mergeObject(INITIAL_STATE.cloudflareSync, base.cloudflareSync),
+    webdavConfig: mergeObject(INITIAL_STATE.webdavConfig, base.webdavConfig),
     gotabPrefs: mergeObject(INITIAL_STATE.gotabPrefs as GoTabPreferences, base.gotabPrefs)
   };
 }

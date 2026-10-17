@@ -247,7 +247,8 @@ export async function loadStateFromIndexedDb(): Promise<HubState | null> {
       handwritings: [],
       obsidianConfig: { enabled: false, bucket: '', endpoint: '', region: '', accessKeyId: '', accessKeySecret: '', prefix: '' },
       aiConfig: { provider: 'gemini', apiKey: '', baseUrl: '', model: '' },
-      cloudflareSync: { enabled: false, workerUrl: '', syncKey: '', autoSync: false }
+      cloudflareSync: { enabled: false, workerUrl: '', syncKey: '', autoSync: false },
+      webdavConfig: { enabled: false, url: '', username: '', password: '', pathPrefix: 'selfhub_sync' }
     };
   } catch (err) {
     console.warn('Failed to load state from IndexedDB', err);

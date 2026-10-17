@@ -261,6 +261,17 @@ export interface CloudflareSyncConfig {
   lastSyncTime?: number;
 }
 
+export interface WebdavSyncConfig {
+  enabled: boolean;
+  /** e.g. https://toi.teracloud.jp/dav/ */
+  url: string;
+  username: string;
+  password: string;
+  /** Directory inside the WebDAV root for Self-Hub files. */
+  pathPrefix: string;
+  lastBackupAt?: number;
+}
+
 export interface HubState {
   schemaVersion?: number;
   theme: 'dark' | 'light';
@@ -283,6 +294,7 @@ export interface HubState {
   youdaoNotes?: YoudaoNote[];
   aiConfig: AiConfig;
   cloudflareSync: CloudflareSyncConfig;
+  webdavConfig: WebdavSyncConfig;
   categories: string[];
 }
 

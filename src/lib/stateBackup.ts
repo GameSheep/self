@@ -11,9 +11,10 @@
  * `.selfhub/conflicts/` and the caller is told to resolve it.
  */
 import { HubState } from '../types';
-import { ObsidianConfig } from '../types';
+import { ObsidianConfig, WebdavSyncConfig } from '../types';
 import { headOssObject, putOssObject, fetchOssObjectBlob, hasRealOssKeys } from './s3Client';
 import { validateHubState } from './storage';
+import { getWebdavFile, putWebdavFile } from './webdavClient';
 
 export const BACKUP_VERSION = 1;
 const DEVICE_KEY = 'selfhub_device_id';
@@ -184,9 +185,76 @@ export async function readStateBackup(config: ObsidianConfig): Promise<{ ok: boo
   return { ok: true, backup: { envelope, key, lastModified: head.lastModified } };
 }
 
+/* -------------------------------------------------------------------------- */
+/* WebDAV provider                                                             */
+/* -------------------------------------------------------------------------- */
+
+const WEBDAV_FILE = 'state.json';
+
+function webdavReady(config?: WebdavSyncConfig): boolean {
+  return Boolean(config && config.url && config.username && config.password);
+}
+
+/**
+ * Upload the whole state over WebDAV.
+ *
+ * WebDAV exposes no reliable server-side mtime through a plain GET, so conflict
+ * detection compares the snapshot's own `updatedAt` against our last backup time.
+ * A newer remote snapshot is not overwritten; ours is parked under `conflicts/`.
+ */
+export async function backupStateToWebdav(
+  config: WebdavSyncConfig,
+  state: HubState,
+  force = false
+): Promise<BackupResult> {
+  if (!webdavReady(config)) return { ok: false, error: '未配置 WebDAV' };
+
+  const payload = JSON.stringify(envelopeFor(state));
+
+  if (!force) {
+    const existing = await getWebdavFile(config, WEBDAV_FILE);
+    if (existing.ok && existing.text) {
+      const remote = parseEnvelope(existing.text);
+      const base = readLastBackupAt();
+      if (remote && base !== undefined && remote.updatedAt > base + 1500) {
+        const prefix = (config.pathPrefix || '').replace(/^\/+|\/+$/g, '');
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const conflictName = `${prefix ? `${prefix}/` : ''}conflicts/state-${stamp}-${getDeviceId()}.json`;
+        const parked = await putWebdavFile(config, conflictName, payload);
+        return {
+          ok: false,
+          conflict: true,
+          key: existing.path,
+          conflictKey: parked.ok ? conflictName : undefined,
+          remoteLastModified: remote.updatedAt,
+          error: '云端备份比本机新，已把本地快照另存到 conflicts 目录'
+        };
+      }
+    }
+  }
+
+  const result = await putWebdavFile(config, WEBDAV_FILE, payload);
+  if (!result.ok) return { ok: false, key: result.path, error: result.message };
+  rememberBackup(undefined);
+  return { ok: true, key: result.path };
+}
+
+/** Download and validate a snapshot stored over WebDAV. */
+export async function readStateBackupFromWebdav(
+  config: WebdavSyncConfig
+): Promise<{ ok: boolean; backup?: RemoteBackup; error?: string }> {
+  if (!webdavReady(config)) return { ok: false, error: '未配置 WebDAV' };
+  const result = await getWebdavFile(config, WEBDAV_FILE);
+  if (!result.ok || !result.text) return { ok: false, error: result.message };
+  const envelope = parseEnvelope(result.text);
+  if (!envelope) return { ok: false, error: '云端备份格式无法识别' };
+  return { ok: true, backup: { envelope, key: result.path } };
+}
+
+export { webdavReady };
+
 /** Summary line for the settings panel. */
-export function describeBackupAge(lastAt?: number): string {
-  if (!lastAt) return '尚未自动备份';
+export function describeBackupAge(lastAt?: number): string {  if (!lastAt) return '尚未自动备份';
   const diff = Date.now() - lastAt;
   if (diff < 60_000) return '刚刚备份';
   if (diff < 3_600_000) return `${Math.round(diff / 60_000)} 分钟前备份`;

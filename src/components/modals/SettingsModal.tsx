@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { X, Settings, HardDrive, Sparkles, Download, Upload, Shield, Check, Globe, AlertTriangle, Lock, Key, Database, RefreshCw, RotateCcw
 } from 'lucide-react';
-import { ObsidianConfig, AiConfig, HubState } from '../../types';
+import { ObsidianConfig, AiConfig, HubState, WebdavSyncConfig } from '../../types';
 import { exportBackup, importBackup, INITIAL_STATE, saveHubState, snapshotForRollback, restoreRollbackSnapshot, hasRollbackSnapshot } from '../../lib/storage';
 import { exportEncryptedBackup, importEncryptedBackup, getTrustedSession } from '../../lib/crypto';
 import { deleteAllDatabases } from '../../lib/indexedDb';
-import { backupKeyFor, describeBackupAge, readStateBackup } from '../../lib/stateBackup';
+import { backupKeyFor, describeBackupAge, readStateBackup, readStateBackupFromWebdav } from '../../lib/stateBackup';
+import { testWebdav, describeWebdavTarget } from '../../lib/webdavClient';
 import { estimateStorageQuota } from '../../lib/indexedDb';
 
 interface SettingsModalProps {
@@ -22,6 +23,8 @@ interface SettingsModalProps {
   backupStatus?: { status: 'idle' | 'saving' | 'error' | 'conflict'; lastAt?: number; message?: string };
   /** Force a backup now (skips the debounce). */
   onBackupNow?: (force?: boolean) => Promise<{ ok: boolean; conflict?: boolean; error?: string }>;
+  webdavConfig?: WebdavSyncConfig;
+  onUpdateWebdav?: (config: WebdavSyncConfig) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -35,9 +38,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onRestoreState,
   masterPassword,
   backupStatus,
-  onBackupNow
+  onBackupNow,
+  webdavConfig,
+  onUpdateWebdav
 }) => {
   const [activeTab, setActiveTab] = useState<'oss' | 'ai' | 'backup' | 'cloudflare'>('cloudflare');
+  const [wd, setWd] = useState<WebdavSyncConfig>(
+    webdavConfig || { enabled: false, url: '', username: '', password: '', pathPrefix: 'selfhub_sync' }
+  );
+  const [wdTest, setWdTest] = useState<{ ok: boolean; message: string } | null>(null);
+  const [wdTesting, setWdTesting] = useState(false);
+  const [wdSaved, setWdSaved] = useState(false);
+  useEffect(() => {
+    if (isOpen && webdavConfig) setWd(webdavConfig);
+  }, [isOpen, webdavConfig]);
 
   // OSS state
   const [ossBucket, setOssBucket] = useState(obsidianConfig.bucket);
@@ -627,7 +641,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 <button
                   onClick={async () => {
-                    const res = await readStateBackup(obsidianConfig);
+                    // Restore from whichever provider is active.
+                    const useWd = Boolean(
+                      webdavConfig?.enabled && webdavConfig.url && webdavConfig.username && webdavConfig.password
+                    );
+                    const res = useWd
+                      ? await readStateBackupFromWebdav(webdavConfig!)
+                      : await readStateBackup(obsidianConfig);
                     if (!res.ok || !res.backup) {
                       alert(`⚠️ 无法读取云端备份：${res.error || '未知原因'}`);
                       return;
@@ -653,6 +673,120 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             </div>
           )}
+
+          {/* ---- WebDAV 连接（替代 OSS 的备份目标） ---- */}
+          {activeTab === 'backup' && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3" data-testid="webdav-section">
+              <div>
+                <h4 className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-teal-400" />
+                  WebDAV 连接（可选）
+                </h4>
+                <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
+                  用 WebDAV 网盘（InfiniCLOUD / TeraCloud / Nextcloud 等）作为备份位置。
+                  注意：多数 WebDAV 服务器不返回 CORS 头，
+                  <b className="text-zinc-400">必须在浏览器扩展环境里使用</b>，普通网页标签会被浏览器拦截。
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <label className="block sm:col-span-2">
+                  <span className="block text-[11px] text-zinc-400 mb-1">服务器地址</span>
+                  <input
+                    type="text"
+                    data-testid="webdav-url"
+                    value={wd.url}
+                    onChange={(e) => setWd({ ...wd, url: e.target.value })}
+                    placeholder="https://toi.teracloud.jp/dav/"
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
+                  />
+                </label>
+                <label className="block">
+                  <span className="block text-[11px] text-zinc-400 mb-1">连接 ID / 用户名</span>
+                  <input
+                    type="text"
+                    data-testid="webdav-user"
+                    value={wd.username}
+                    onChange={(e) => setWd({ ...wd, username: e.target.value })}
+                    placeholder="your-account-id"
+                    autoComplete="off"
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
+                  />
+                </label>
+                <label className="block">
+                  <span className="block text-[11px] text-zinc-400 mb-1">应用密码</span>
+                  <input
+                    type="password"
+                    data-testid="webdav-pass"
+                    value={wd.password}
+                    onChange={(e) => setWd({ ...wd, password: e.target.value })}
+                    placeholder="app password"
+                    autoComplete="new-password"
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
+                  />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="block text-[11px] text-zinc-400 mb-1">目录（会自动创建）</span>
+                  <input
+                    type="text"
+                    data-testid="webdav-path"
+                    value={wd.pathPrefix}
+                    onChange={(e) => setWd({ ...wd, pathPrefix: e.target.value })}
+                    placeholder="selfhub_sync"
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
+                  />
+                </label>
+              </div>
+
+              <p className="text-[10px] font-mono text-zinc-600 break-all">目标：{describeWebdavTarget(wd)}</p>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={async () => {
+                    setWdTesting(true);
+                    setWdTest(null);
+                    try {
+                      const result = await testWebdav(wd);
+                      setWdTest({ ok: result.ok, message: result.message });
+                    } finally {
+                      setWdTesting(false);
+                    }
+                  }}
+                  disabled={wdTesting}
+                  className="px-2.5 py-1 rounded-lg bg-teal-700 hover:bg-teal-600 text-white text-[11px] font-semibold disabled:opacity-50"
+                  data-testid="webdav-test"
+                >
+                  {wdTesting ? '测试中…' : '测试连接'}
+                </button>
+                <button
+                  onClick={() => {
+                    onUpdateWebdav?.({ ...wd, enabled: true });
+                    setWdSaved(true);
+                    setTimeout(() => setWdSaved(false), 2000);
+                  }}
+                  disabled={!onUpdateWebdav}
+                  className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] disabled:opacity-50"
+                  data-testid="webdav-save"
+                >
+                  {wdSaved ? '已保存' : '保存 WebDAV'}
+                </button>
+              </div>
+
+              {wdTest && (
+                <div
+                  data-testid="webdav-test-result"
+                  className={`rounded-lg border px-3 py-2 text-[11px] leading-relaxed ${
+                    wdTest.ok
+                      ? 'border-emerald-900/60 bg-emerald-950/30 text-emerald-300'
+                      : 'border-rose-900/60 bg-rose-950/30 text-rose-300'
+                  }`}
+                >
+                  {wdTest.ok ? '✅ ' : '⚠️ '}
+                  {wdTest.message}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -676,6 +810,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 };
+
+
 
 
 

@@ -26,7 +26,7 @@ import { SettingsModal } from './components/modals/SettingsModal';
 import { executeCheckIn } from './lib/automation';
 import { recordRun } from './lib/checkInHistory';
 import { notifyDueReminders } from './lib/reminderNotifier';
-import { backupStateToOss, readLastBackupAt, type BackupResult } from './lib/stateBackup';
+import { backupStateToOss, backupStateToWebdav, readLastBackupAt, type BackupResult } from './lib/stateBackup';
 import { checkServerHealth, checkServersHealth } from './lib/serverHealth';
 import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X, Activity } from 'lucide-react';
 
@@ -100,12 +100,22 @@ export function App() {
 
   const runStateBackup = useCallback(async (force = false) => {
     const current = stateRef.current;
-    const cfg = current.obsidianConfig;
-    if (!cfg?.enabled || !cfg.bucket || !cfg.accessKeyId) {
-      return { ok: false, error: '未配置 OSS' } as BackupResult;
+    // WebDAV takes precedence when the user enabled it; otherwise use OSS.
+    const wd = current.webdavConfig;
+    const useWebdav = Boolean(wd?.enabled && wd.url && wd.username && wd.password);
+
+    if (!useWebdav) {
+      const cfg = current.obsidianConfig;
+      if (!cfg?.enabled || !cfg.bucket || !cfg.accessKeyId) {
+        return { ok: false, error: '未配置 OSS 或 WebDAV' } as BackupResult;
+      }
     }
+
     setBackupStatus((prev) => ({ ...prev, status: 'saving' }));
-    const result = await backupStateToOss(cfg, current, force);
+    const result = useWebdav
+      ? await backupStateToWebdav(wd, current, force)
+      : await backupStateToOss(current.obsidianConfig, current, force);
+
     if (result.ok) {
       setBackupStatus({ status: 'idle', lastAt: readLastBackupAt() });
     } else {
@@ -948,9 +958,12 @@ export function App() {
         masterPassword={masterPassword}
         backupStatus={backupStatus}
         onBackupNow={(force) => runStateBackup(force)}
+        webdavConfig={state.webdavConfig}
+        onUpdateWebdav={(cfg) => updateState((prev) => ({ ...prev, webdavConfig: cfg }))}
       />
     </div>
   );
 }
 
 export default App;
+
