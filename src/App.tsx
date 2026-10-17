@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { HubState, NavSite, ServerDeployment, SecretItem, CheckInTask, QuickNote, HandwritingNote, ReminderItem, InboxItem, ProjectItem } from './types';
+import { HubState } from './types';
 import { loadHubState, saveHubState, normalizeHubState, getStorageKey } from './lib/storage';
 import { clearTrustedSession, restoreTrustedSession } from './lib/crypto';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -32,6 +32,10 @@ import { useReminderNotifications } from './hooks/useReminderNotifications';
 import { useSiteActions } from './hooks/useSiteActions';
 import { useServerActions } from './hooks/useServerActions';
 import { useSecretActions, useCheckInActions } from './hooks/useSecretActions';
+import { useReminderActions } from './hooks/useReminderActions';
+import { useNoteActions, useProjectActions } from './hooks/useNoteActions';
+import { useInboxActions } from './hooks/useInboxActions';
+import { useBatchImport } from './hooks/useBatchImport';
 import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X, Activity } from 'lucide-react';
 
 export function App() {
@@ -142,183 +146,20 @@ export function App() {
   const { addSecret, deleteSecret } = useSecretActions(updateState);
   const { addCheckIn, deleteCheckIn, runCheckIn, runAllCheckIns } = useCheckInActions(state, updateState);
 
-  const handleSaveHandwriting = (note: HandwritingNote) => {
-    updateState((prev) => ({
-      ...prev,
-      handwritings: [note, ...prev.handwritings]
-    }));
-  };
-
-  const handleDeleteHandwriting = (id: string) => {
-    updateState((prev) => ({
-      ...prev,
-      handwritings: prev.handwritings.filter((h) => h.id !== id)
-    }));
-  };
-
-  const handleAddReminder = (reminder: ReminderItem) => {
-    updateState((prev) => ({
-      ...prev,
-      reminders: [reminder, ...(prev.reminders || [])]
-    }));
-  };
-
-  const handleDeleteReminder = (id: string) => {
-    updateState((prev) => ({
-      ...prev,
-      reminders: (prev.reminders || []).filter((r) => r.id !== id)
-    }));
-  };
-
-  const handleUpdateReminder = (reminder: ReminderItem) => {
-    updateState((prev) => ({
-      ...prev,
-      reminders: (prev.reminders || []).map((r) => (r.id === reminder.id ? reminder : r))
-    }));
-  };
-
-  const handleToggleReminderComplete = (id: string) => {
-    updateState((prev) => ({
-      ...prev,
-      reminders: (prev.reminders || []).map((r) =>
-        r.id === id ? { ...r, completed: !r.completed } : r
-      )
-    }));
-  };
-
-  const handleAddNote = (note: QuickNote) => {
-    updateState((prev) => ({
-      ...prev,
-      notes: [note, ...(prev.notes || [])]
-    }));
-  };
-
-  const handleUpdateNote = (note: QuickNote) => {
-    updateState((prev) => ({
-      ...prev,
-      notes: (prev.notes || []).map((n) => (n.id === note.id ? note : n))
-    }));
-  };
-
-  const handleDeleteNote = (id: string) => {
-    updateState((prev) => ({
-      ...prev,
-      notes: (prev.notes || []).filter((n) => n.id !== id)
-    }));
-  };
-
-  // Inbox Handlers (N07)
-  const handleAddInboxItem = (item: InboxItem) => {
-    updateState((prev) => ({
-      ...prev,
-      inbox: [item, ...(prev.inbox || [])]
-    }));
-  };
-
-  const handleUpdateInboxItem = (item: InboxItem) => {
-    updateState((prev) => ({
-      ...prev,
-      inbox: (prev.inbox || []).map((i) => (i.id === item.id ? item : i))
-    }));
-  };
-
-  const handleDeleteInboxItem = (id: string) => {
-    updateState((prev) => ({
-      ...prev,
-      inbox: (prev.inbox || []).filter((i) => i.id !== id)
-    }));
-  };
-
-  const handleConvertToNoteFromInbox = (item: InboxItem) => {
-    const newNote: QuickNote = {
-      id: `note-${Date.now()}`,
-      title: item.title || (item.content.length > 20 ? item.content.slice(0, 20) + '...' : item.content),
-      content: item.content + (item.url ? `\n\n来源链接: ${item.url}` : ''),
-      category: '速记',
-      tags: ['收件箱转化'],
-      updatedAt: Date.now()
-    };
-    updateState((prev) => ({
-      ...prev,
-      notes: [newNote, ...(prev.notes || [])],
-      inbox: (prev.inbox || []).map((i) => i.id === item.id ? { ...i, status: 'processed', targetType: 'note', targetId: newNote.id } : i)
-    }));
-  };
-
-  const handleConvertToSiteFromInbox = (item: InboxItem) => {
-    const targetUrl = item.url || (item.content.startsWith('http') ? item.content : `https://${item.content}`);
-    const newSite: NavSite = {
-      id: `site-${Date.now()}`,
-      title: item.title || '收件箱新存网址',
-      url: targetUrl,
-      category: '常用推荐',
-      description: item.content !== targetUrl ? item.content : '从统一收件箱快速收藏',
-      icon: 'Globe',
-      createdAt: Date.now()
-    };
-    updateState((prev) => ({
-      ...prev,
-      sites: [newSite, ...prev.sites],
-      inbox: (prev.inbox || []).map((i) => i.id === item.id ? { ...i, status: 'processed', targetType: 'site', targetId: newSite.id } : i)
-    }));
-  };
-
-  const handleAssignToProject = (itemId: string, projectId: string) => {
-    updateState((prev) => ({
-      ...prev,
-      inbox: (prev.inbox || []).map((i) => i.id === itemId ? { ...i, targetType: 'project', targetId: projectId, status: 'processed' } : i)
-    }));
-  };
-
-  // Projects Handlers (N08)
-  const handleAddProject = (project: ProjectItem) => {
-    updateState((prev) => ({
-      ...prev,
-      projects: [project, ...(prev.projects || [])]
-    }));
-  };
-
-  const handleUpdateProject = (project: ProjectItem) => {
-    updateState((prev) => ({
-      ...prev,
-      projects: (prev.projects || []).map((p) => (p.id === project.id ? project : p))
-    }));
-  };
-
-  const handleDeleteProject = (id: string) => {
-    updateState((prev) => ({
-      ...prev,
-      projects: (prev.projects || []).filter((p) => p.id !== id)
-    }));
-  };
-
-  const handleBatchImport = (data: {
-    sites: NavSite[];
-    servers: ServerDeployment[];
-    secrets: SecretItem[];
-    notes: QuickNote[];
-    reminders: ReminderItem[];
-  }) => {
-    updateState((prev) => {
-      const catSet = new Set(prev.categories || ['全部']);
-      data.sites.forEach(s => {
-        if (s.category && s.category.trim()) {
-          catSet.add(s.category.trim());
-        }
-      });
-
-      return {
-        ...prev,
-        categories: Array.from(catSet),
-        sites: [...data.sites, ...prev.sites],
-        servers: [...data.servers, ...prev.servers],
-        secrets: [...data.secrets, ...prev.secrets],
-        notes: [...data.notes, ...(prev.notes || [])],
-        reminders: [...data.reminders, ...(prev.reminders || [])]
-      };
-    });
-  };
-
+  const { addReminder, deleteReminder, updateReminder, toggleReminderComplete } = useReminderActions(updateState);
+  const { addNote, updateNote, deleteNote, saveHandwriting, deleteHandwriting } = useNoteActions(updateState);
+  const { addProject, updateProject, deleteProject } = useProjectActions(updateState);
+  // Inbox conversions need the note/site creators, so they are injected rather
+  // than reaching across domains.
+  const {
+    addInboxItem,
+    updateInboxItem,
+    deleteInboxItem,
+    convertToNote,
+    convertToSite,
+    assignToProject
+  } = useInboxActions(updateState, { addNote, addSite });
+  const batchImport = useBatchImport(updateState);
   const handleLockVault = () => {
     setMasterPassword(null);
     void clearTrustedSession();
@@ -442,13 +283,13 @@ export function App() {
           {activeTab === 'inbox' && (
             <InboxView
               inbox={state.inbox || []}
-              onAddInboxItem={handleAddInboxItem}
-              onUpdateInboxItem={handleUpdateInboxItem}
-              onDeleteInboxItem={handleDeleteInboxItem}
-              onConvertToNote={handleConvertToNoteFromInbox}
-              onConvertToSite={handleConvertToSiteFromInbox}
+              onAddInboxItem={addInboxItem}
+              onUpdateInboxItem={updateInboxItem}
+              onDeleteInboxItem={deleteInboxItem}
+              onConvertToNote={convertToNote}
+              onConvertToSite={convertToSite}
               projects={state.projects || []}
-              onAssignToProject={handleAssignToProject}
+              onAssignToProject={assignToProject}
             />
           )}
 
@@ -460,9 +301,9 @@ export function App() {
               sites={state.sites || []}
               servers={state.servers || []}
               reminders={state.reminders || []}
-              onAddProject={handleAddProject}
-              onUpdateProject={handleUpdateProject}
-              onDeleteProject={handleDeleteProject}
+              onAddProject={addProject}
+              onUpdateProject={updateProject}
+              onDeleteProject={deleteProject}
               onNavigateTab={(tab, itemId) => {
                 if (tab === 'notes' && itemId) setFocusNoteId(itemId);
                 setActiveTab(tab as any);
@@ -576,10 +417,10 @@ export function App() {
           {activeTab === 'reminders' && (
             <RemindersView
               reminders={state.reminders || []}
-              onAddReminder={handleAddReminder}
-              onUpdateReminder={handleUpdateReminder}
-              onDeleteReminder={handleDeleteReminder}
-              onToggleComplete={handleToggleReminderComplete}
+              onAddReminder={addReminder}
+              onUpdateReminder={updateReminder}
+              onDeleteReminder={deleteReminder}
+              onToggleComplete={toggleReminderComplete}
             />
           )}
 
@@ -587,9 +428,9 @@ export function App() {
           {activeTab === 'notes' && (
             <NotesView
               notes={state.notes || []}
-              onAddNote={handleAddNote}
-              onUpdateNote={handleUpdateNote}
-              onDeleteNote={handleDeleteNote}
+              onAddNote={addNote}
+              onUpdateNote={updateNote}
+              onDeleteNote={deleteNote}
               focusNoteId={focusNoteId}
               onFocusHandled={clearFocusNoteId}
             />
@@ -637,7 +478,7 @@ export function App() {
               youdaoNotes={state.youdaoNotes || []}
               onUpdateYoudaoNotes={(yd) => updateState((prev) => ({ ...prev, youdaoNotes: yd }))}
               onUpdateYoudaoConfig={(cfg) => updateState((prev) => ({ ...prev, youdaoConfig: cfg }))}
-              onAddQuickNote={handleAddNote}
+              onAddQuickNote={addNote}
               onOpenSettings={() => setIsSettingsOpen(true)}
               focusVaultKey={focusVaultKey}
               onFocusHandled={clearFocusVaultKey}
@@ -647,9 +488,9 @@ export function App() {
           {/* VIEW 7: Handwriting & Scribble Canvas */}
           {activeTab === 'handwriting' && (
             <HandwritingCard
-              onSaveNote={handleSaveHandwriting}
+              onSaveNote={saveHandwriting}
               savedNotes={state.handwritings}
-              onDeleteNote={handleDeleteHandwriting}
+              onDeleteNote={deleteHandwriting}
             />
           )}
           </ErrorBoundary>
@@ -713,7 +554,7 @@ export function App() {
         aiConfig={state.aiConfig}
         masterPassword={masterPassword}
         onRequireUnlock={() => setIsMasterKeyOpen(true)}
-        onBatchImport={handleBatchImport}
+        onBatchImport={batchImport}
       />
 
       <MasterKeyModal
@@ -756,6 +597,8 @@ export function App() {
 }
 
 export default App;
+
+
 
 
 
