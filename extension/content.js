@@ -398,16 +398,31 @@
   }
 
   function highlightTextInDocument(annotation) {
-    // Search DOM text nodes for matching string
-    const treeWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+    if (!annotation.text || !annotation.text.trim()) return;
+
+    // Search DOM text nodes with strict tag filtering to prevent script/style mutation
+    const treeWalker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: (node) => {
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          const tag = parent.tagName.toUpperCase();
+          if (['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'NOSCRIPT', 'SVG'].includes(tag)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          if (parent.classList.contains('selfhub-highlight')) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
+    );
     let node;
     while ((node = treeWalker.nextNode())) {
       const idx = node.textContent.indexOf(annotation.text);
       if (idx !== -1) {
-        // Prevent re-wrapping
-        if (node.parentElement && node.parentElement.classList.contains('selfhub-highlight')) {
-          continue;
-        }
 
         const range = document.createRange();
         range.setStart(node, idx);

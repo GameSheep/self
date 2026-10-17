@@ -9,6 +9,45 @@ const DB_VERSION = 1;
 
 let dbInstance: IDBDatabase | null = null;
 
+/** Drop the cached connection (needed before deleting/upgrading the database). */
+export function closeDb(): void {
+  if (dbInstance) {
+    try {
+      dbInstance.close();
+    } catch {}
+    dbInstance = null;
+  }
+}
+
+/**
+ * Delete every IndexedDB database owned by this origin.
+ * The reset action used to call deleteDatabase('SelfHubDB') while the real
+ * database is named 'self_hub_idb', so nothing was ever removed.
+ */
+export async function deleteAllDatabases(): Promise<string[]> {
+  closeDb();
+  if (typeof indexedDB === 'undefined' || !indexedDB.databases) return [];
+  try {
+    const dbs = await indexedDB.databases();
+    const names = dbs.map((d) => d.name).filter((n): n is string => Boolean(n));
+    await Promise.all(
+      names.map(
+        (name) =>
+          new Promise<void>((resolve) => {
+            const req = indexedDB.deleteDatabase(name);
+            req.onsuccess = () => resolve();
+            req.onerror = () => resolve();
+            // A blocked delete (another tab holding a connection) must not hang the UI.
+            req.onblocked = () => resolve();
+          })
+      )
+    );
+    return names;
+  } catch {
+    return [];
+  }
+}
+
 export async function getDb(): Promise<IDBDatabase> {
   if (dbInstance) return dbInstance;
 

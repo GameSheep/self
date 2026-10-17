@@ -1,6 +1,8 @@
+import { SyncManager } from './sync/sync-manager.js';
+
 /**
  * Self-Hub Browser Extension - Background Service Worker (Manifest V3)
- * Handles context menus, sidepanel routing, and storage synchronizations.
+ * Handles context menus, sidepanel routing, storage synchronizations, and S3/WebDAV sync.
  */
 
 // Initialize context menus on install
@@ -33,14 +35,17 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       text: info.selectionText
     });
   } else if (info.menuItemId === 'selfhub_save_page') {
+    const now = Date.now();
     const item = {
-      id: `inbox-${Date.now()}`,
+      id: `inbox-${now}`,
       content: tab.title || tab.url,
       title: tab.title,
       url: tab.url,
       type: 'url',
       status: 'inbox',
-      createdAt: Date.now()
+      createdAt: now,
+      updatedAt: now,
+      isDeleted: false
     };
 
     const res = await chrome.storage.local.get(['selfhub_inbox']);
@@ -66,8 +71,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     chrome.storage.local.get(['selfhub_annotations'], (res) => {
       const all = res.selfhub_annotations || [];
-      const filtered = all.filter((a) => a.pageUrl === url);
-      sendResponse({ annotations: filtered, allCount: all.length });
+      // Filter out tombstones (deleted items)
+      const active = all.filter((a) => !a.isDeleted);
+      const filtered = active.filter((a) => a.pageUrl === url);
+      sendResponse({ annotations: filtered, allCount: active.length });
     });
     return true;
   }
@@ -76,24 +83,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.local.get(['selfhub_annotations'], (res) => {
       const all = res.selfhub_annotations || [];
       const existingIdx = all.findIndex((a) => a.id === message.annotation.id);
+      const now = Date.now();
+      const annToSave = {
+        ...message.annotation,
+        updatedAt: now,
+        isDeleted: false
+      };
+
       if (existingIdx >= 0) {
-        all[existingIdx] = message.annotation;
+        all[existingIdx] = annToSave;
       } else {
-        all.unshift(message.annotation);
+        all.unshift(annToSave);
       }
       chrome.storage.local.set({ selfhub_annotations: all }, () => {
-        sendResponse({ success: true, count: all.length });
+        const activeCount = all.filter((a) => !a.isDeleted).length;
+        sendResponse({ success: true, count: activeCount });
       });
     });
     return true;
   }
 
+  // Tombstone soft deletion for conflict-free sync
   if (message.action === 'DELETE_ANNOTATION') {
     chrome.storage.local.get(['selfhub_annotations'], (res) => {
       const all = res.selfhub_annotations || [];
-      const updated = all.filter((a) => a.id !== message.id);
-      chrome.storage.local.set({ selfhub_annotations: updated }, () => {
-        sendResponse({ success: true, count: updated.length });
+      const existingIdx = all.findIndex((a) => a.id === message.id);
+      if (existingIdx >= 0) {
+        all[existingIdx] = {
+          ...all[existingIdx],
+          isDeleted: true,
+          updatedAt: Date.now()
+        };
+      }
+      chrome.storage.local.set({ selfhub_annotations: all }, () => {
+        const activeCount = all.filter((a) => !a.isDeleted).length;
+        sendResponse({ success: true, count: activeCount });
       });
     });
     return true;
@@ -101,7 +125,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'GET_ALL_ANNOTATIONS') {
     chrome.storage.local.get(['selfhub_annotations'], (res) => {
-      sendResponse({ annotations: res.selfhub_annotations || [] });
+      const all = res.selfhub_annotations || [];
+      const active = all.filter((a) => !a.isDeleted);
+      sendResponse({ annotations: active });
     });
     return true;
   }
@@ -110,5 +136,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender.tab && sender.tab.id && chrome.sidePanel && chrome.sidePanel.open) {
       chrome.sidePanel.open({ tabId: sender.tab.id });
     }
+    return true;
+  }
+
+  // Cloud sync trigger
+  if (message.action === 'PERFORM_SYNC') {
+    SyncManager.performSync({ force: !!message.force })
+      .then((res) => sendResponse(res))
+      .catch((err) => sendResponse({ success: false, message: err.message }));
+    return true; // Keep sendResponse open for async
   }
 });
+

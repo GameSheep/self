@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useDeferredValue } from 'react';
 import { 
   Globe, 
   Plus, 
@@ -17,6 +17,16 @@ import {
 } from 'lucide-react';
 import { NavSite } from '../../types';
 import { SiteCard } from '../cards/SiteCard';
+
+/** Normalise a URL for duplicate detection (ignore protocol, www, trailing slash). */
+function normalizeUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    return `${u.hostname.replace(/^www\./, '')}${u.pathname.replace(/\/$/, '')}${u.search}`.toLowerCase();
+  } catch {
+    return raw.trim().toLowerCase();
+  }
+}
 
 interface SitesViewProps {
   sites: NavSite[];
@@ -47,27 +57,51 @@ export const SitesView: React.FC<SitesViewProps> = ({
     setCollapsedGroups(prev => ({ ...prev, [cat]: !prev[cat] }));
   };
 
-  const handleCopy = (e: React.MouseEvent, site: NavSite) => {
+  const handleCopy = async (e: React.MouseEvent, site: NavSite) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(site.url);
-    setCopiedId(site.id);
-    setTimeout(() => setCopiedId(null), 2000);
+    try {
+      await navigator.clipboard.writeText(site.url);
+      setCopiedId(site.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch {
+      alert('复制失败：浏览器拒绝了剪贴板访问，请手动复制。');
+    }
   };
 
+  // Typing in the search box must not block on filtering thousands of bookmarks.
+  const deferredQuery = useDeferredValue(searchQuery);
+
+  // Render a page at a time: mounting 300+ cards took ~500ms of main thread,
+  // which froze the tab for imported bookmark libraries.
+  const PAGE_SIZE = 60;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  React.useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [deferredQuery, selectedCategory]);
+
   // Filtered sites
-  const filteredSites = sites.filter(s => {
-    const matchCat = selectedCategory === '全部' || s.category === selectedCategory;
-    const matchQuery = !searchQuery || 
-      s.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      s.url.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (s.description && s.description.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchCat && matchQuery;
-  });
+  const filteredSites = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase();
+    return sites.filter(s => {
+      const matchCat = selectedCategory === '全部' || s.category === selectedCategory;
+      if (!matchCat) return false;
+      if (!q) return true;
+      return (
+        (s.title || '').toLowerCase().includes(q) ||
+        (s.url || '').toLowerCase().includes(q) ||
+        (s.description ? s.description.toLowerCase().includes(q) : false)
+      );
+    });
+  }, [sites, selectedCategory, deferredQuery]);
 
   // Group by category
-  const activeCategories = selectedCategory === '全部'
-    ? Array.from(new Set(sites.map(s => s.category || '默认分类')))
-    : [selectedCategory];
+  const activeCategories = useMemo(
+    () =>
+      selectedCategory === '全部'
+        ? Array.from(new Set(sites.map(s => s.category || '默认分类')))
+        : [selectedCategory],
+    [sites, selectedCategory]
+  );
 
   // Chrome / GoTab HTML bookmarks importer
   const handleBookmarkUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -75,34 +109,55 @@ export const SitesView: React.FC<SitesViewProps> = ({
     if (!file) return;
 
     const reader = new FileReader();
+    reader.onerror = () => alert('❌ 读取书签文件失败，请确认文件完整后重试。');
     reader.onload = (event) => {
       const htmlText = event.target?.result as string;
       const parser = new DOMParser();
       const doc = parser.parseFromString(htmlText, 'text/html');
       const anchors = doc.querySelectorAll('a');
 
+      // De-duplicate against both the file itself and the existing library,
+      // otherwise importing the same export twice doubles every bookmark.
+      const existingUrls = new Set(sites.map(s => normalizeUrl(s.url)));
+      const seen = new Set<string>();
       const imported: NavSite[] = [];
+      let duplicates = 0;
+
       anchors.forEach((a, i) => {
         const href = a.getAttribute('href');
         const title = a.textContent?.trim();
-        if (href && href.startsWith('http') && title) {
-          imported.push({
-            id: `site-bm-${Date.now()}-${i}`,
-            title,
-            url: href,
-            category: '浏览器书签导入',
-            visitCount: 0,
-            createdAt: Date.now()
-          });
+        if (!href || !href.startsWith('http') || !title) return;
+        const key = normalizeUrl(href);
+        if (seen.has(key) || existingUrls.has(key)) {
+          duplicates++;
+          return;
         }
+        seen.add(key);
+        imported.push({
+          id: `site-bm-${Date.now()}-${i}`,
+          title,
+          url: href,
+          category: '浏览器书签导入',
+          visitCount: 0,
+          createdAt: Date.now()
+        });
       });
 
       if (imported.length > 0) {
         onImportBookmarks(imported);
-        alert(`✅ 成功从书签文件中解析并导入了 ${imported.length} 个常用网址！`);
+        alert(
+          `✅ 成功导入 ${imported.length} 个网址` +
+            (duplicates > 0 ? `，已自动跳过 ${duplicates} 个重复书签。` : '。')
+        );
       } else {
-        alert('未在文件中检测到有效书签超链接');
+        alert(
+          duplicates > 0
+            ? `未导入新书签：文件中的 ${duplicates} 个链接已存在于资料库中。`
+            : '未在文件中检测到有效书签超链接'
+        );
       }
+      // Allow re-selecting the same file.
+      e.target.value = '';
     };
     reader.readAsText(file);
   };
@@ -199,8 +254,14 @@ export const SitesView: React.FC<SitesViewProps> = ({
       </div>
 
       {/* Grouped Foldable Accordion Sections */}
-      {activeCategories.map((cat) => {
-        const groupSites = filteredSites.filter(s => (s.category || '默认分类') === cat);
+      {(() => {
+        let budget = visibleCount;
+        return activeCategories.map((cat) => {
+        const groupSitesAll = filteredSites.filter(s => (s.category || '默认分类') === cat);
+        if (groupSitesAll.length === 0) return null;
+
+        const groupSites = groupSitesAll.slice(0, Math.max(0, budget));
+        budget -= groupSites.length;
         if (groupSites.length === 0) return null;
 
         const isCollapsed = Boolean(collapsedGroups[cat]);
@@ -298,7 +359,22 @@ export const SitesView: React.FC<SitesViewProps> = ({
             )}
           </div>
         );
-      })}
+        });
+      })()}
+
+      {filteredSites.length > visibleCount && (
+        <div className="flex flex-col items-center gap-2 py-4">
+          <span className="text-[11px] text-zinc-500 font-mono">
+            已显示 {Math.min(visibleCount, filteredSites.length)} / {filteredSites.length} 个站点
+          </span>
+          <button
+            onClick={() => setVisibleCount((c) => c + PAGE_SIZE * 2)}
+            className="px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700 text-xs font-medium transition-colors"
+          >
+            加载更多
+          </button>
+        </div>
+      )}
 
     </div>
   );

@@ -28,7 +28,32 @@ import {
   Download
 } from 'lucide-react';
 import { ObsidianConfig, ObsidianNote, WucaiHighlight, WucaiConfig, YoudaoNote, YoudaoConfig, QuickNote } from '../../types';
-import { saveObsidianNote, createObsidianNote, deleteObsidianNote, testOssConnection, fetchObsidianNotes } from '../../lib/s3Client';
+import {
+  saveObsidianNote,
+  createObsidianNote,
+  deleteObsidianNote,
+  testOssConnection,
+  fetchObsidianNoteContent,
+  fetchOssObjectBlob,
+  putOssObject,
+  moveOssObject,
+  moveOssFolder,
+  deleteOssFolder,
+  createOssFolder,
+  addTreeNode,
+  deleteOssObject,
+  listOssObjects,
+  buildOssTree,
+  countTreeFiles,
+  removeTreeNode,
+  OssListResult,
+  OssTreeNode
+} from '../../lib/s3Client';
+import { OssTree, isEditableFile, isImageFile } from '../OssTree';
+import { Markdown } from '../Markdown';
+import { MarkdownEditor, type EditorMode } from '../MarkdownEditor';
+import { toggleTaskInSource, type MarkdownContext, type MarkdownHeading } from '../../lib/markdown/render';
+import { ListTree, FolderPlus, UploadCloud, History, X, Image as ImageIcon, FolderInput } from 'lucide-react';
 import { formatWucaiToObsidianMarkdown } from '../../lib/wucaiClient';
 import { formatYoudaoToObsidianMarkdown } from '../../lib/youdaoClient';
 
@@ -91,6 +116,96 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   const [showCorsGuide, setShowCorsGuide] = useState(false);
   const [isRefreshingOss, setIsRefreshingOss] = useState(false);
 
+  // Full bucket tree (kept in memory: 1000+ objects are not worth persisting)
+  const [ossTree, setOssTree] = useState<OssTreeNode | null>(null);
+  const [ossListMeta, setOssListMeta] = useState<OssListResult | null>(null);
+  const [isLoadingContent, setIsLoadingContent] = useState(false);
+  const [contentError, setContentError] = useState('');
+
+  // Vault file operations (rename / move / new folder) share one small dialog.
+  const [pathModal, setPathModal] = useState<{
+    mode: 'rename' | 'move' | 'newFolder';
+    node?: OssTreeNode;
+  } | null>(null);
+  const [pathInput, setPathInput] = useState('');
+  const [pathBusy, setPathBusy] = useState(false);
+
+  // Attachment preview (images and other non-text objects)
+  const [previewKey, setPreviewKey] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  // Recently opened notes (per browser, tiny list)
+  const RECENT_KEY = 'selfhub_oss_recent';
+  const [recentKeys, setRecentKeys] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(RECENT_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.slice(0, 8) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const pushRecent = React.useCallback((key: string) => {
+    setRecentKeys((prev) => {
+      const next = [key, ...prev.filter((k) => k !== key)].slice(0, 8);
+      try {
+        localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, [RECENT_KEY]);
+
+  // Markdown workspace state
+  const MD_MODE_KEY = 'selfhub_md_editor_mode';
+  const [mdMode, setMdMode] = useState<EditorMode>(() => {
+    try {
+      const saved = localStorage.getItem(MD_MODE_KEY);
+      return saved === 'edit' || saved === 'split' || saved === 'preview' ? saved : 'split';
+    } catch {
+      return 'split';
+    }
+  });
+  const [outline, setOutline] = useState<MarkdownHeading[]>([]);
+  const [showOutline, setShowOutline] = useState(true);
+  const imageUrlCache = React.useRef(new Map<string, string>());
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const previewScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const pendingHeadingRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(MD_MODE_KEY, mdMode);
+    } catch {}
+  }, [mdMode]);
+
+  // Release object URLs when leaving the page.
+  React.useEffect(() => {
+    const cache = imageUrlCache.current;
+    return () => {
+      cache.forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {}
+      });
+      cache.clear();
+    };
+  }, []);
+
+  /** Signed fetch → blob URL, cached per object key. */
+  const loadOssImage = React.useCallback(
+    async (key: string): Promise<string | null> => {
+      const cached = imageUrlCache.current.get(key);
+      if (cached) return cached;
+      const blob = await fetchOssObjectBlob(obsidianConfig, key);
+      if (!blob) return null;
+      const url = URL.createObjectURL(blob);
+      imageUrlCache.current.set(key, url);
+      return url;
+    },
+    [obsidianConfig]
+  );
+
   const handleTestOss = async () => {
     setIsTestingOss(true);
     try {
@@ -107,9 +222,56 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   const handleRefreshOssNotes = async () => {
     setIsRefreshingOss(true);
     try {
-      const notes = await fetchObsidianNotes(obsidianConfig, obsidianNotes);
-      onUpdateObsidianNotes(notes);
-      showToast(`🔄 已从阿里云 OSS 同步拉取，当前共 ${notes.length} 篇笔记`);
+      const list = await listOssObjects(obsidianConfig);
+      setOssListMeta(list);
+
+      if (list.source === 'cache') {
+        showToast('ℹ️ 尚未配置 AccessKey，正在显示本地缓存');
+        return;
+      }
+      if (list.source === 'error') {
+        showToast(`⚠️ 未能从阿里云 OSS 拉取：${list.error}`);
+        return;
+      }
+
+      const tree = buildOssTree(list.objects);
+      setOssTree(tree);
+      const { files, dirs } = countTreeFiles(tree.children);
+
+      // Persist only markdown metadata: the full listing can be thousands of
+      // objects and would bloat the single localStorage snapshot.
+      const cloudNotes: ObsidianNote[] = list.objects
+        .filter((o) => o.key.toLowerCase().endsWith('.md'))
+        .map((o) => {
+          const existing = obsidianNotes.find((n) => n.key === o.key);
+          return {
+            key: o.key,
+            title: o.key.split('/').pop()?.replace(/\.md$/i, '') || o.key,
+            path: o.key,
+            size: o.size,
+            lastModified: o.lastModified,
+            content: existing?.content
+          };
+        });
+
+      // Merge instead of replace: an empty (or prefix-filtered) listing must not
+      // wipe notes that exist only locally, including unsaved edits.
+      const cloudKeys = new Set(cloudNotes.map((n) => n.key));
+      const localOnly = obsidianNotes.filter((n) => !cloudKeys.has(n.key));
+      onUpdateObsidianNotes([...cloudNotes, ...localOnly]);
+
+      if (files === 0 && list.bucketTotalCount) {
+        showToast(
+          `⚠️ 前缀「${list.prefixUsed}」下没有匹配到对象，但桶内实际有 ${list.bucketTotalCount}+ 个对象。请把「文件前缀」留空以列出整个 Bucket。`
+        );
+      } else if (list.truncated) {
+        showToast(`⚠️ 对象过多，已加载前 ${list.objects.length} 个（达到安全上限）`);
+      } else {
+        showToast(
+          `🔄 已从阿里云 OSS 拉取 ${list.objects.length} 个对象（${dirs} 个目录 / ${files} 个文件）` +
+            (localOnly.length > 0 ? `，另有 ${localOnly.length} 篇仅在本地` : '')
+        );
+      }
     } finally {
       setIsRefreshingOss(false);
     }
@@ -117,25 +279,374 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
 
   const currentObsidianNote = obsidianNotes.find((n) => n.key === selectedObsidianKey) || obsidianNotes[0];
 
-  const filteredObsidianNotes = obsidianNotes.filter(
-    (n) => n.title.toLowerCase().includes(obsidianSearch.toLowerCase()) || n.path.toLowerCase().includes(obsidianSearch.toLowerCase())
+  /**
+   * Latest note state, readable from callbacks that must keep a stable identity.
+   * Without this, every keystroke produced a new preview context object, which
+   * busted <Markdown>'s memo and re-rendered the whole document on each key.
+   */
+  const latestRef = React.useRef({
+    obsidianNotes,
+    editObsidianContent,
+    isEditingObsidian,
+    selectedObsidianKey,
+    currentObsidianNote
+  });
+  latestRef.current = {
+    obsidianNotes,
+    editObsidianContent,
+    isEditingObsidian,
+    selectedObsidianKey,
+    currentObsidianNote
+  };
+
+  /** Load a file's body on demand (the tree lists metadata only). */
+  const handleOpenOssFile = React.useCallback(
+    async (node: OssTreeNode) => {
+      setContentError('');
+      if (!isEditableFile(node.name)) {
+        // Attachments used to be dead ends ("不是可编辑的文本文件"). Show them.
+        if (isImageFile(node.name)) {
+          setPreviewKey(node.path);
+          setPreviewUrl(null);
+          const url = await loadOssImage(node.path);
+          if (url) setPreviewUrl(url);
+          else {
+            setPreviewKey(node.path);
+            setContentError('附件读取失败（可能没有读权限，或对象已被删除）');
+          }
+          return;
+        }
+        showToast(`ℹ️ ${node.name} 不是文本文件，仅支持预览图片与在线编辑 .md/.txt`);
+        return;
+      }
+      setPreviewKey(null);
+      setPreviewUrl(null);
+      pushRecent(node.path);
+      const current = latestRef.current.obsidianNotes;
+      const existing = current.find((n) => n.key === node.path);
+      setSelectedObsidianKey(node.path);
+
+      if (existing?.content) {
+        setEditObsidianContent(existing.content);
+        return;
+      }
+      if (!existing) {
+        // A markdown file outside the currently loaded note set.
+        onUpdateObsidianNotes([
+          {
+            key: node.path,
+            title: node.name.replace(/\.md$/i, ''),
+            path: node.path,
+            size: node.size,
+            lastModified: node.lastModified
+          },
+          ...current
+        ]);
+      }
+      setEditObsidianContent('');
+      setIsLoadingContent(true);
+      try {
+        const body = await fetchObsidianNoteContent(obsidianConfig, node.path);
+        if (body === null) {
+          setContentError('未能读取该文件正文（可能没有读权限，或对象已被删除）');
+          return;
+        }
+        setEditObsidianContent(body);
+        ossSnapshotRef.current[node.path] = body;
+        const list = latestRef.current.obsidianNotes;
+        onUpdateObsidianNotes(
+          (list.some((n) => n.key === node.path)
+            ? list
+            : [
+                {
+                  key: node.path,
+                  title: node.name.replace(/\.md$/i, ''),
+                  path: node.path,
+                  size: node.size,
+                  lastModified: node.lastModified
+                },
+                ...list
+              ]
+          ).map((n) => (n.key === node.path ? { ...n, content: body } : n))
+        );
+      } finally {
+        setIsLoadingContent(false);
+      }
+    },
+    [obsidianConfig, onUpdateObsidianNotes, loadOssImage, pushRecent]
   );
 
-  const handleSelectObsidianNote = (note: ObsidianNote) => {
-    setSelectedObsidianKey(note.key);
-    setEditObsidianContent(note.content || '');
-    setIsEditingObsidian(false);
+  /* ------------------------------------------------------- vault file ops */
+
+  /** Upload a pasted/dropped file into the attachment folder and return its key. */
+  const handleUploadAttachment = React.useCallback(
+    async (file: File): Promise<string | null> => {
+      const folder = `${obsidianConfig.prefix || ''}图片位置/`.replace(/^\/+/, '');
+      const ext = (file.name.match(/\.[^.]+$/)?.[0] || (file.type.startsWith('image/') ? '.png' : '')).toLowerCase();
+      const base = file.name.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|#\s]/g, '-').slice(0, 40) || 'attachment';
+      // Timestamp without punctuation. Avoid writing the dash/colon character
+      // class literally here: Tailwind's content scanner treats it as a utility
+      // class and emits invalid CSS, which breaks the production build.
+      const stamp = new Date().toISOString().slice(0, 19).replace(/\D/g, '');
+      const key = `${folder}${base}-${stamp}${ext}`;
+
+      const result = await putOssObject(obsidianConfig, key, file, file.type || 'application/octet-stream');
+      if (!result.success) {
+        showToast(`⚠️ 附件上传失败：${result.error}`);
+        return null;
+      }
+      showToast(`✅ 已上传附件：${key}`);
+      // Reflect it in the tree immediately if we are listing this prefix.
+      setOssTree((prev) => (prev ? addTreeNode(prev, key, file.size) : prev));
+      return key;
+    },
+    [obsidianConfig]
+  );
+
+  const openPathModal = (mode: 'rename' | 'move' | 'newFolder', node?: OssTreeNode) => {
+    setPathModal({ mode, node });
+    if (mode === 'newFolder') {
+      const base = node?.isDir ? node.path : ossListMeta?.prefixUsed || '';
+      setPathInput(base);
+    } else {
+      setPathInput(node?.isDir ? node.path.replace(/\/+$/, '') : node?.path || '');
+    }
   };
+
+  const submitPathModal = async () => {
+    if (!pathModal || pathBusy) return;
+    const next = pathInput.trim().replace(/^\/+/, '');
+    if (!next) {
+      showToast('⚠️ 路径不能为空');
+      return;
+    }
+    setPathBusy(true);
+    try {
+      if (pathModal.mode === 'newFolder') {
+        const result = await createOssFolder(obsidianConfig, next);
+        showToast(result.success ? `✅ 已创建目录：${next.replace(/\/+$/, '')}/` : `⚠️ ${result.error}`);
+      } else if (pathModal.node) {
+        const node = pathModal.node;
+        const from = node.isDir ? node.path.replace(/\/+$/, '') : node.path;
+        if (next === from) {
+          setPathModal(null);
+          return;
+        }
+        if (node.isDir) {
+          const result = await moveOssFolder(obsidianConfig, from, next);
+          showToast(
+            result.success
+              ? `✅ 已移动目录（${result.moved} 个对象）`
+              : `⚠️ 目录移动未全部成功：${result.error || `${result.failed} 个失败`}`
+          );
+        } else {
+          const result = await moveOssObject(obsidianConfig, from, next);
+          if (result.success) {
+            // Keep the open note pointing at its new key.
+            if (selectedObsidianKey === from) setSelectedObsidianKey(next);
+            onUpdateObsidianNotes(
+              latestRef.current.obsidianNotes.map((n) => (n.key === from ? { ...n, key: next, path: next } : n))
+            );
+            showToast(`✅ 已移动到 ${next}`);
+          } else {
+            showToast(`⚠️ 移动失败：${result.error}`);
+          }
+        }
+      }
+      setPathModal(null);
+      await handleRefreshOssNotes();
+    } finally {
+      setPathBusy(false);
+    }
+  };
+
+  const handleDeleteNode = async (node: OssTreeNode) => {
+    if (node.isDir) {
+      if (!confirm(`确定删除目录「${node.path}」及其下 ${node.children.length} 项吗？此操作不可撤销。`)) return;
+      const result = await deleteOssFolder(obsidianConfig, node.path);
+      showToast(result.success ? `🗑️ 已删除目录（${result.deleted} 个对象）` : `⚠️ ${result.error}`);
+    } else {
+      if (!confirm(`确定从阿里云 OSS 删除该文件吗？\n\n${node.path}`)) return;
+      const result = await deleteOssNote(node);
+      showToast(result);
+    }
+    await handleRefreshOssNotes();
+  };
+
+  /** Delete a single object (file button uses this too). */
+  const deleteOssNote = async (node: OssTreeNode): Promise<string> => {
+    const result = await deleteOssObject(obsidianConfig, node.path);
+    if (result.success) {
+      onUpdateObsidianNotes(latestRef.current.obsidianNotes.filter((n) => n.key !== node.path));
+      setOssTree((prev) => (prev ? removeTreeNode(prev, node.path) : prev));
+      return '🗑️ 已从 OSS 删除';
+    }
+    return `⚠️ 删除失败：${result.error}`;
+  };
+
+  /** Clear the prefix that is hiding the bucket contents, then re-list. */
+  const handleClearPrefix = async () => {
+    onOpenSettings();
+    showToast('请把「文件前缀」清空后保存，然后回到本页点刷新');
+  };
+
+  /* ------------------------------------------------- markdown integration */
+
+  /**
+   * Keys used to resolve [[wikilinks]] and relative attachments.
+   * The tree is authoritative, but notes restored from a previous session (or
+   * opened before the tree finished loading) must resolve too.
+   */
+  const vaultKeys = React.useMemo(() => {
+    const set = new Set<string>();
+    (ossListMeta?.objects || []).forEach((o) => set.add(o.key));
+    obsidianNotes.forEach((n) => set.add(n.key));
+    return [...set];
+  }, [ossListMeta, obsidianNotes]);
+
+  /** Jump to a heading after its note has rendered. */
+  React.useEffect(() => {
+    const id = pendingHeadingRef.current;
+    if (!id || isLoadingContent) return;
+    const target = currentObsidianNote?.content ? document.getElementById(id) : null;
+    if (target) {
+      pendingHeadingRef.current = null;
+      target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+  }, [currentObsidianNote?.content, currentObsidianNote?.key, isLoadingContent]);
+
+  const handleWikilink = React.useCallback(
+    (target: string, resolvedKey: string | null, heading?: string) => {
+      if (heading && !resolvedKey && !target) {
+        // Pure `#anchor` link inside the current document.
+        const el = document.getElementById(heading.toLowerCase().replace(/[\s\u3000]+/g, '-').replace(/[^\p{L}\p{N}\-_]/gu, ''));
+        el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        return;
+      }
+      if (!resolvedKey) {
+        showToast(`⚠️ 库中没有找到「${target}」对应的笔记`);
+        return;
+      }
+      const node: OssTreeNode = {
+        name: resolvedKey.split('/').pop() || resolvedKey,
+        path: resolvedKey,
+        isDir: false,
+        size: 0,
+        lastModified: Date.now(),
+        children: []
+      };
+      if (heading) {
+        pendingHeadingRef.current = heading
+          .toLowerCase()
+          .replace(/[\s\u3000]+/g, '-')
+          .replace(/[^\p{L}\p{N}\-_]/gu, '');
+      }
+      void handleOpenOssFile(node);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [handleOpenOssFile]
+  );
+
+  /** Toggle the Nth task checkbox in the current note's source. */
+  const handleToggleTask = React.useCallback((taskIndex: number) => {
+    const { obsidianNotes: list, editObsidianContent: buffer, isEditingObsidian: editing, selectedObsidianKey: key } =
+      latestRef.current;
+    const note = list.find((n) => n.key === key) || list[0];
+    if (!note) return;
+    const source = editing ? buffer : note.content || '';
+    const next = toggleTaskInSource(source, taskIndex);
+    if (next === source) return;
+    setEditObsidianContent(next);
+    onUpdateObsidianNotes(list.map((n) => (n.key === note.key ? { ...n, content: next } : n)));
+  }, [onUpdateObsidianNotes]);
+
+  /** Tag click → filter the tree by that tag (content matches for loaded notes). */
+  const handleTagClick = React.useCallback((tag: string) => {
+    setObsidianSearch(`#${tag}`);
+  }, []);
+
+  /**
+   * Note on performance: the reading view renders content live (no deferral) so
+   * that ticking a task checkbox updates instantly. Deferral is applied inside
+   * the editor's split preview, where per-keystroke re-rendering is the concern.
+   */
+
+  /** Files whose loaded body contains the current query (enables #tag filtering). */
+  const contentMatchKeys = React.useMemo(() => {
+    const q = obsidianSearch.trim().toLowerCase();
+    if (!q.startsWith('#')) return undefined;
+    const needle = q.slice(1);
+    if (!needle) return undefined;
+    const hits = new Set<string>();
+    for (const note of obsidianNotes) {
+      if (note.content && note.content.toLowerCase().includes(`#${needle}`)) hits.add(note.key);
+    }
+    return hits;
+  }, [obsidianSearch, obsidianNotes]);
+
+  // First time a note becomes current, treat its current text as the baseline.
+  // Later local edits (typing, ticking a task) then count as unsaved.
+  React.useEffect(() => {
+    const key = currentObsidianNote?.key;
+    if (!key) return;
+    if (ossSnapshotRef.current[key] === undefined && currentObsidianNote?.content !== undefined) {
+      ossSnapshotRef.current[key] = currentObsidianNote.content;
+    }
+  }, [currentObsidianNote?.key, currentObsidianNote?.content]);
+
+  const markdownCtx = React.useMemo<MarkdownContext>(
+    () => ({
+      vaultKeys,
+      currentKey: currentObsidianNote?.key,
+      onWikilink: handleWikilink,
+      onTag: handleTagClick,
+      onToggleTask: handleToggleTask,
+      loadImage: loadOssImage
+    }),
+    [vaultKeys, currentObsidianNote?.key, handleWikilink, handleTagClick, handleToggleTask, loadOssImage]
+  );
+
+  /**
+   * Content as last known to be on OSS. Local edits (typing, ticking a task)
+   * never touch this, so "dirty" means "differs from the cloud copy" rather than
+   * "differs from the local cache".
+   */
+  const ossSnapshotRef = React.useRef<Record<string, string>>({});
+
+  const isDirty = React.useMemo(() => {
+    const key = currentObsidianNote?.key;
+    if (!key) return false;
+    const live = isEditingObsidian ? editObsidianContent : currentObsidianNote?.content || '';
+    const baseline = ossSnapshotRef.current[key];
+    if (baseline === undefined) return false;
+    return live !== baseline;
+  }, [currentObsidianNote?.key, currentObsidianNote?.content, isEditingObsidian, editObsidianContent]);
+
+  // Load the bucket tree once on mount so the panel is not empty on first visit.
+  const didAutoLoadRef = React.useRef(false);
+  React.useEffect(() => {
+    if (didAutoLoadRef.current) return; // StrictMode mounts effects twice in dev
+    if (!obsidianConfig.enabled || !obsidianConfig.bucket || !obsidianConfig.accessKeyId) return;
+    if (obsidianConfig.accessKeyId.includes('•••')) return;
+    didAutoLoadRef.current = true;
+    void handleRefreshOssNotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSaveObsidian = async () => {
     if (!currentObsidianNote) return;
     setIsSavingObsidian(true);
     try {
       const res = await saveObsidianNote(obsidianConfig, currentObsidianNote.key, editObsidianContent, obsidianNotes);
-      if (res.success) {
-        onUpdateObsidianNotes(res.notes);
+      onUpdateObsidianNotes(res.notes);
+      if (res.realOss) {
+        // Cloud copy now matches: reset the dirty baseline.
+        ossSnapshotRef.current[currentObsidianNote.key] = editObsidianContent;
         setIsEditingObsidian(false);
         showToast(`✅ ${res.message}`);
+      } else {
+        // Keep the editor open: the edit is only in the local cache.
+        showToast(`⚠️ ${res.message}`);
       }
     } finally {
       setIsSavingObsidian(false);
@@ -157,16 +668,16 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   };
 
   const handleDeleteObsidian = async (key: string) => {
-    if (!confirm('确认从阿里云 OSS 笔记库删除此笔记？')) return;
+    if (!confirm(`确认从阿里云 OSS 删除该文件？\n\n${key}`)) return;
     const res = await deleteObsidianNote(obsidianConfig, key, obsidianNotes);
-    if (res.success) {
-      onUpdateObsidianNotes(res.notes);
-      if (selectedObsidianKey === key) {
-        setSelectedObsidianKey(res.notes[0]?.key || '');
-        setEditObsidianContent(res.notes[0]?.content || '');
-      }
-      showToast('🗑️ 已删除该笔记');
+    onUpdateObsidianNotes(res.notes);
+    // Drop it from the in-memory tree as well, otherwise it lingers until refresh.
+    setOssTree((prev) => (prev ? removeTreeNode(prev, key) : prev));    setOssListMeta((prev) => (prev ? { ...prev, objects: prev.objects.filter((o) => o.key !== key) } : prev));
+    if (selectedObsidianKey === key) {
+      setSelectedObsidianKey(res.notes[0]?.key || '');
+      setEditObsidianContent(res.notes[0]?.content || '');
     }
+    showToast(res.success ? '🗑️ 已从 OSS 删除' : `⚠️ ${res.message}`);
   };
 
   // -------------------------------------------------------------
@@ -289,7 +800,9 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
 
         const newItems: WucaiHighlight[] = extAnnotations.map((a: any) => ({
           id: a.id || `ext-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          pageUrl: a.url || '',
+          // The extension stores the source URL as `pageUrl`; reading `a.url` here
+          // silently dropped the origin of every imported highlight.
+          pageUrl: a.pageUrl || a.url || '',
           pageTitle: a.pageTitle || '网页划词批注',
           text: a.selectedText || a.text || '',
           color: (a.color as any) || 'yellow',
@@ -568,6 +1081,31 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   <span>新建</span>
                 </button>
                 <button
+                  onClick={() => openPathModal('newFolder')}
+                  className="p-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-amber-300"
+                  title="新建目录"
+                >
+                  <FolderPlus className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-sky-300"
+                  title={`上传文件到附件目录（${obsidianConfig.prefix || ''}图片位置/）`}
+                >
+                  <UploadCloud className="w-3.5 h-3.5" />
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={async (e) => {
+                    const files = Array.from(e.target.files || []);
+                    e.target.value = '';
+                    for (const file of files) await handleUploadAttachment(file);
+                  }}
+                />
+                <button
                   onClick={onOpenSettings}
                   className="p-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-200"
                   title="配置 OSS 鉴权"
@@ -628,50 +1166,179 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 type="text"
                 value={obsidianSearch}
                 onChange={(e) => setObsidianSearch(e.target.value)}
-                placeholder="搜索云端 Obsidian 笔记..."
+                placeholder="在整棵目录树中搜索文件或文件夹..."
                 className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-purple-600"
               />
             </div>
 
-            {/* Note items list */}
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {filteredObsidianNotes.map((note) => {
-                const isSelected = note.key === currentObsidianNote?.key;
-                return (
-                  <div
-                    key={note.key}
-                    onClick={() => handleSelectObsidianNote(note)}
-                    className={`p-3 rounded-xl border cursor-pointer transition-all ${
-                      isSelected
-                        ? 'bg-purple-950/30 border-purple-800/80 shadow-sm'
-                        : 'bg-zinc-900/50 border-zinc-800/60 hover:border-zinc-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <FileText className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-purple-400' : 'text-zinc-400'}`} />
-                        <h3 className={`text-xs font-semibold truncate ${isSelected ? 'text-purple-200' : 'text-zinc-200'}`}>
-                          {note.title}
-                        </h3>
-                      </div>
-                      <span className="text-[10px] font-mono text-zinc-500 shrink-0">
-                        {(note.size / 1024).toFixed(1)} KB
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-zinc-500 font-mono truncate">{note.path}</p>
-                    <div className="flex items-center justify-between text-[10px] text-zinc-500 mt-2 pt-1.5 border-t border-zinc-800/50">
-                      <span>{new Date(note.lastModified).toLocaleDateString()}</span>
-                      <span className="text-emerald-500/80 font-mono text-[9px]">OSS 同步中</span>
-                    </div>
+            {/* Bucket tree summary */}
+            {ossListMeta && ossListMeta.source === 'oss' && (
+              <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] font-mono text-zinc-500">
+                <span>对象 {ossListMeta.objects.length}</span>
+                <span>·</span>
+                <span>{ossListMeta.pages} 页</span>
+                <span>·</span>
+                <span>前缀「{ossListMeta.prefixUsed || '（空，整桶）'}」</span>
+                {ossListMeta.truncated && <span className="text-amber-400">· 已达安全上限</span>}
+              </div>
+            )}
+
+            {/* A prefix that matches nothing is the #1 cause of "看不到云端内容" */}
+            {ossListMeta &&
+              ossListMeta.source === 'oss' &&
+              ossListMeta.objects.length === 0 &&
+              ossListMeta.bucketTotalCount ? (
+                <div className="mb-2 rounded-xl border border-amber-800/50 bg-amber-950/30 p-3 text-[11px] text-amber-200 leading-relaxed">
+                  <div className="font-semibold">前缀把内容过滤空了</div>
+                  <div className="mt-1 text-amber-300/90">
+                    当前前缀「{ossListMeta.prefixUsed}」下没有任何对象，但桶内至少有 {ossListMeta.bucketTotalCount}{' '}
+                    个对象。请到设置里把「文件前缀」留空，即可列出整个 Bucket。
                   </div>
-                );
-              })}
+                  <button
+                    onClick={handleClearPrefix}
+                    className="mt-2 px-2.5 py-1 rounded-lg bg-amber-500/90 hover:bg-amber-400 text-zinc-950 font-semibold text-[11px]"
+                  >
+                    去清空前缀
+                  </button>
+                </div>
+              ) : null}
+
+            {/* Recently opened notes (the tree is deep; keep a shortcut back) */}
+            {recentKeys.length > 0 && !obsidianSearch.trim() && (
+              <div className="mb-2">
+                <div className="flex items-center gap-1.5 px-1 mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
+                  <History className="w-3 h-3" />
+                  最近打开
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {recentKeys.map((key) => (
+                    <button
+                      key={key}
+                      title={key}
+                      onClick={() => {
+                        if (isDirty && key !== currentObsidianNote?.key && !confirm('当前笔记有未保存的修改，确定切换吗？')) {
+                          return;
+                        }
+                        void handleOpenOssFile({
+                          name: key.split('/').pop() || key,
+                          path: key,
+                          isDir: false,
+                          size: 0,
+                          lastModified: Date.now(),
+                          children: []
+                        });
+                      }}
+                      className={`max-w-[46%] truncate px-2 py-0.5 rounded-md text-[11px] border ${
+                        key === currentObsidianNote?.key
+                          ? 'bg-purple-950/40 border-purple-800/60 text-purple-200'
+                          : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      {key.split('/').pop()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Bucket tree (all levels) */}
+            <div className="flex-1 overflow-y-auto pr-1 min-h-[200px]">
+              {ossTree ? (
+                <OssTree
+                  root={ossTree}
+                  searchTerm={obsidianSearch}
+                  selectedKey={currentObsidianNote?.key}
+                  extraMatchKeys={contentMatchKeys}
+                  onSelectFile={(node) => {
+                    if (isDirty && node.path !== currentObsidianNote?.key && !confirm('当前笔记有未保存的修改，确定切换吗？')) {
+                      return;
+                    }
+                    void handleOpenOssFile(node);
+                  }}
+                  onRename={(node) => openPathModal('rename', node)}
+                  onMove={(node) => openPathModal('move', node)}
+                  onDelete={handleDeleteNode}
+                />
+              ) : obsidianNotes.length > 0 ? (
+                // Fallback: notes restored from a previous session
+                <div className="space-y-1">
+                  {obsidianNotes.map((note) => (
+                    <button
+                      key={note.key}
+                      onClick={() =>
+                        handleOpenOssFile({
+                          name: note.key.split('/').pop() || note.key,
+                          path: note.key,
+                          isDir: false,
+                          size: note.size,
+                          lastModified: note.lastModified,
+                          children: []
+                        })
+                      }
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs truncate ${
+                        note.key === currentObsidianNote?.key
+                          ? 'bg-purple-950/40 text-purple-200'
+                          : 'text-zinc-300 hover:bg-zinc-800/60'
+                      }`}
+                      title={note.path}
+                    >
+                      <FileText className="w-3.5 h-3.5 inline mr-1.5 text-purple-400" />
+                      {note.title}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-10 text-center text-xs text-zinc-500 leading-relaxed">
+                  点上方刷新按钮，从阿里云 OSS 拉取目录树
+                </div>
+              )}
             </div>
           </div>
 
           {/* Right Column: Note Reader & Live Editor */}
           <div className="lg:col-span-8 flex flex-col rounded-2xl bg-[#121316] border border-[#22242a] overflow-hidden">
-            {currentObsidianNote ? (
+            {previewKey ? (
+              <>
+                <div className="p-4 border-b border-[#1e2026] flex items-center justify-between gap-3 bg-[#0f1013]">
+                  <div className="min-w-0 flex items-center gap-2">
+                    <ImageIcon className="w-4 h-4 text-sky-400 shrink-0" />
+                    <div className="min-w-0">
+                      <h2 className="text-sm font-bold text-zinc-100 truncate">
+                        {previewKey.split('/').pop()}
+                      </h2>
+                      <p className="text-[11px] text-zinc-500 font-mono truncate mt-0.5">{previewKey}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setPreviewKey(null);
+                      setPreviewUrl(null);
+                    }}
+                    className="p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100"
+                    title="关闭预览"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="flex-1 flex items-center justify-center p-6 overflow-auto min-h-[320px] bg-[#090a0c]">
+                  {contentError ? (
+                    <div className="text-xs text-rose-400">{contentError}</div>
+                  ) : previewUrl ? (
+                    <img
+                      data-testid="attachment-preview"
+                      src={previewUrl}
+                      alt={previewKey}
+                      className="max-w-full max-h-full object-contain rounded-lg"
+                    />
+                  ) : (
+                    <div className="flex items-center gap-2 text-xs text-zinc-400">
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      正在从 OSS 读取附件…
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : currentObsidianNote ? (
               <>
                 {/* Note Header Bar */}
                 <div className="p-4 border-b border-[#1e2026] flex flex-wrap items-center justify-between gap-3 bg-[#0f1013]">
@@ -684,7 +1351,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {/* View / Edit Mode Switch */}
+                    {/* Reading / editing switch */}
                     <div className="flex items-center p-0.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs">
                       <button
                         onClick={() => {
@@ -703,7 +1370,9 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                           setIsEditingObsidian(true);
                           setEditObsidianContent(currentObsidianNote.content || '');
                         }}
-                        className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 ${
+                        disabled={isLoadingContent}
+                        title={isLoadingContent ? '正文加载中...' : '编辑正文'}
+                        className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${
                           isEditingObsidian ? 'bg-purple-950/80 text-purple-300 font-medium border border-purple-800/60' : 'text-zinc-400 hover:text-zinc-200'
                         }`}
                       >
@@ -712,14 +1381,26 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                       </button>
                     </div>
 
-                    {isEditingObsidian && (
+                    <button
+                      onClick={() => setShowOutline((v) => !v)}
+                      className={`p-1.5 rounded-lg border text-xs ${
+                        showOutline
+                          ? 'bg-zinc-800 border-zinc-700 text-zinc-100'
+                          : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                      }`}
+                      title="显示/隐藏文档大纲"
+                    >
+                      <ListTree className="w-3.5 h-3.5" />
+                    </button>
+
+                    {(isEditingObsidian || isDirty) && (
                       <button
                         onClick={handleSaveObsidian}
                         disabled={isSavingObsidian}
                         className="px-3 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
                       >
                         <Save className="w-3.5 h-3.5" />
-                        <span>{isSavingObsidian ? '保存至 OSS...' : '保存修改'}</span>
+                        <span>{isSavingObsidian ? '保存至 OSS...' : isDirty ? '保存修改 •' : '保存修改'}</span>
                       </button>
                     )}
 
@@ -733,24 +1414,71 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   </div>
                 </div>
 
-                {/* Editor or Reader Body */}
-                <div className="flex-1 p-5 overflow-y-auto">
-                  {isEditingObsidian ? (
-                    <div className="h-full flex flex-col space-y-3">
-                      <div className="flex items-center justify-between text-xs text-zinc-500 font-mono border-b border-zinc-800/80 pb-2">
-                        <span>支持标准 Markdown 语法 · 修改将直接同步至阿里云 OSS ({obsidianConfig.bucket})</span>
-                        <span>{editObsidianContent.length} 字符</span>
+                {/* Markdown workspace: editor + optional outline */}
+                <div className="flex-1 flex min-h-0">
+                  <div className="flex-1 flex flex-col min-w-0">
+                    {isLoadingContent ? (
+                      <div className="flex items-center gap-2 text-xs text-zinc-400 p-6">
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        正在从阿里云 OSS 读取正文...
                       </div>
-                      <textarea
+                    ) : contentError ? (
+                      <div className="text-xs text-rose-400 p-6 leading-relaxed">{contentError}</div>
+                    ) : isEditingObsidian ? (
+                      <MarkdownEditor
                         value={editObsidianContent}
-                        onChange={(e) => setEditObsidianContent(e.target.value)}
-                        placeholder="在此直接修改 Obsidian Markdown 笔记内容..."
-                        className="w-full flex-1 min-h-[480px] p-4 bg-[#0a0b0d] border border-zinc-800/80 rounded-xl font-mono text-xs text-zinc-200 leading-relaxed focus:outline-none focus:border-purple-600 resize-none select-text"
+                        onChange={setEditObsidianContent}
+                        onSave={handleSaveObsidian}
+                        mode={mdMode}
+                        onModeChange={setMdMode}
+                        previewCtx={markdownCtx}
+                        dirty={isDirty}
+                        saving={isSavingObsidian}
+                        placeholder="在此直接修改 Obsidian Markdown 笔记内容（可直接粘贴截图，自动上传到 OSS）..."
+                        onHeadings={setOutline}
+                        onUploadFile={handleUploadAttachment}
+                        statusRight={
+                          <>
+                            <span>Ctrl+S 保存</span>
+                            <span className="hidden sm:inline">粘贴图片自动上传</span>
+                            <span className="hidden sm:inline">bq: {obsidianConfig.bucket}</span>
+                          </>
+                        }
                       />
-                    </div>
-                  ) : (
-                    <div className="font-mono text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap select-text bg-[#090a0c] p-6 rounded-xl border border-zinc-800/60 min-h-[480px]">
-                      {currentObsidianNote.content || '暂无正文内容'}
+                    ) : (
+                      <div ref={previewScrollRef} className="flex-1 overflow-y-auto p-5 min-h-0">
+                        {/*
+                          Live content, deliberately not deferred: ticking a task
+                          checkbox must reflect immediately, and the reading view
+                          never re-renders per keystroke the way the editor does.
+                        */}
+                        <Markdown content={currentObsidianNote.content || ''} ctx={markdownCtx} onHeadings={setOutline} />
+                      </div>
+                    )}
+                  </div>
+
+                  {showOutline && outline.length > 0 && (
+                    <div className="hidden xl:flex w-52 shrink-0 flex-col border-l border-[#1e2026] bg-[#0f1013]">
+                      <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-zinc-500 border-b border-[#1e2026]">
+                        文档大纲 ({outline.length})
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+                        {outline.map((h) => (
+                          <button
+                            key={h.id}
+                            type="button"
+                            className="md-outline-item"
+                            style={{ paddingLeft: `${8 + (h.depth - 1) * 10}px` }}
+                            title={h.text}
+                            onClick={() => {
+                              const el = document.getElementById(h.id);
+                              el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                            }}
+                          >
+                            {h.text || '(空标题)'}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1258,6 +1986,88 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
             >
               配置外部云凭据
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 0: 重命名 / 移动 / 新建目录 */}
+      {/* ========================================================================= */}
+      {pathModal && (
+        <div
+          onClick={() => !pathBusy && setPathModal(null)}
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg bg-[#121316] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden"
+          >
+            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+              <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
+                <FolderInput className="w-4 h-4 text-amber-400" />
+                {pathModal.mode === 'rename'
+                  ? pathModal.node?.isDir
+                    ? '重命名目录'
+                    : '重命名文件'
+                  : pathModal.mode === 'move'
+                  ? pathModal.node?.isDir
+                    ? '移动目录'
+                    : '移动文件'
+                  : '新建目录'}
+              </h3>
+              <button
+                onClick={() => !pathBusy && setPathModal(null)}
+                className="text-zinc-500 hover:text-white"
+                disabled={pathBusy}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs text-zinc-400 font-mono mb-1">
+                  {pathModal.mode === 'newFolder' ? '目录路径' : '完整路径（含文件名）'}
+                </label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={pathInput}
+                  onChange={(e) => setPathInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void submitPathModal();
+                    if (e.key === 'Escape') setPathModal(null);
+                  }}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-amber-600"
+                  placeholder="日记/2026年/2026年10月.md"
+                />
+              </div>
+
+              {pathModal.mode !== 'newFolder' && pathModal.node && (
+                <p className="text-[11px] text-zinc-500 font-mono break-all">
+                  当前：{pathModal.node.path}
+                  {pathModal.node.isDir && `（${pathModal.node.children.length} 项，移动会逐个复制后删除源文件）`}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  onClick={() => setPathModal(null)}
+                  disabled={pathBusy}
+                  className="px-4 py-1.5 rounded-xl bg-zinc-800 text-zinc-300 text-xs disabled:opacity-50"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => void submitPathModal()}
+                  disabled={pathBusy}
+                  className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {pathBusy ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                  {pathModal.mode === 'newFolder' ? '创建' : '确定'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -705,7 +705,7 @@ ${(project.decisions || []).map(d => `#### ${new Date(d.date).toLocaleDateString
                             </span>
                             <button
                               onClick={() => handleDeleteDecision(i)}
-                              className="text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                              className="text-zinc-600 hover:text-red-400 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity"
                               title="删除此条决策"
                             >
                               <Trash2 className="w-3 h-3" />

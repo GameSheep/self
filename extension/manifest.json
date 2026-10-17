@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Self-Hub | 网页高亮批注与极简新标签页",
-  "version": "1.0.0",
-  "description": "自研无感替代五彩与 GoTab：原生网页划线、颜色批注思考、全文搜索、统一新标签页与 Obsidian 同步",
+  "version": "1.0.1",
+  "description": "自研无感替代五彩与 GoTab：原生网页划线、颜色批注思考、多设备 S3/WebDAV 云同步、统一新标签页与 Obsidian 同步",
   "permissions": [
     "activeTab",
     "storage",
+    "unlimitedStorage",
     "sidePanel",
     "scripting",
     "contextMenus"
@@ -14,8 +15,13 @@
     "http://*/*",
     "https://*/*"
   ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "chrome_url_overrides": {
     "newtab": "newtab.html"

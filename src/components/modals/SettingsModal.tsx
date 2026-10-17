@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, HardDrive, Sparkles, Download, Upload, Shield, Check, Globe, AlertTriangle, Lock, Key, Database, RefreshCw } from 'lucide-react';
+import { X, Settings, HardDrive, Sparkles, Download, Upload, Shield, Check, Globe, AlertTriangle, Lock, Key, Database, RefreshCw, RotateCcw
+} from 'lucide-react';
 import { ObsidianConfig, AiConfig, HubState } from '../../types';
-import { exportBackup, importBackup, INITIAL_STATE, saveHubState } from '../../lib/storage';
+import { exportBackup, importBackup, INITIAL_STATE, saveHubState, snapshotForRollback, restoreRollbackSnapshot, hasRollbackSnapshot } from '../../lib/storage';
 import { exportEncryptedBackup, importEncryptedBackup, getTrustedSession } from '../../lib/crypto';
+import { deleteAllDatabases } from '../../lib/indexedDb';
 import { estimateStorageQuota } from '../../lib/indexedDb';
 
 interface SettingsModalProps {
@@ -50,6 +52,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isExportingEncrypted, setIsExportingEncrypted] = useState(false);
   const [exportPassword, setExportPassword] = useState('');
   const [showExportPasswordInput, setShowExportPasswordInput] = useState(false);
+  const [canRollback, setCanRollback] = useState(false);
+
+  // Settings form state is initialised once at mount, but the modal stays mounted:
+  // re-sync from props whenever it opens so stale values can never overwrite config.
+  useEffect(() => {
+    if (!isOpen) return;
+    setOssBucket(obsidianConfig.bucket);
+    setOssEndpoint(obsidianConfig.endpoint);
+    setOssRegion(obsidianConfig.region);
+    setOssKeyId(obsidianConfig.accessKeyId);
+    setOssKeySecret(obsidianConfig.accessKeySecret);
+    setOssPrefix(obsidianConfig.prefix);
+    setAiProvider(aiConfig.provider);
+    setAiKey(aiConfig.apiKey);
+    setAiBaseUrl(aiConfig.baseUrl);
+    setAiModel(aiConfig.model);
+    setCanRollback(hasRollbackSnapshot());
+    setSavedSuccess(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // Load storage quota
   useEffect(() => {
@@ -75,7 +97,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleSaveConfigs = () => {
     onUpdateObsidian({
-      enabled: true,
+      // Only claim the OSS integration is enabled when it is actually configured.
+      enabled: Boolean(ossBucket.trim() && ossEndpoint.trim() && ossKeyId.trim() && ossKeySecret.trim()),
       bucket: ossBucket,
       endpoint: ossEndpoint,
       region: ossRegion,
@@ -85,6 +108,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     });
 
     onUpdateAi({
+      // An empty key means "not configured": keep it disabled rather than
+      // advertising an AI engine that will silently fall back to local rules.
       provider: aiProvider,
       apiKey: aiKey,
       baseUrl: aiBaseUrl,
@@ -142,9 +167,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             pwd = prompt('检测到 AES-256 加密备份文件，请输入主密码以解密恢复：');
             if (!pwd) return;
           }
+          snapshotForRollback();
           const restored = await importEncryptedBackup(content, pwd);
           if (restored) {
             onRestoreState(restored);
+            setCanRollback(true);
             alert(`✅ 加密备份已成功解密并恢复！共恢复 ${restored.sites?.length || 0} 个站点，${restored.notes?.length || 0} 条笔记。`);
             onClose();
           } else {
@@ -155,6 +182,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           const imported = importBackup(content);
           if (imported) {
             onRestoreState(imported);
+            setCanRollback(true);
             alert('✅ 备份数据已成功恢复！');
             onClose();
           } else {
@@ -163,23 +191,47 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         }
       } catch (err: any) {
         alert(`❌ 读取备份失败: ${err.message || '不是有效的 JSON 文件'}`);
+      } finally {
+        // Allow re-selecting the same file again.
+        e.target.value = '';
       }
     };
     reader.readAsText(file);
   };
 
+  const handleRollback = () => {
+    if (!confirm('确定撤销上一次备份导入，恢复到导入前的数据吗？')) return;
+    const restored = restoreRollbackSnapshot();
+    if (!restored) {
+      alert('❌ 没有可用的回滚快照（快照仅在本次浏览器会话内有效）');
+      setCanRollback(false);
+      return;
+    }
+    onRestoreState(restored);
+    setCanRollback(false);
+    alert('✅ 已回滚到导入前的数据');
+    onClose();
+  };
+
   const handleResetData = () => {
     if (confirm('⚠️ 警告：确定彻底清空所有本地数据并恢复纯净出厂状态吗？这将清除全部本地缓存、旧测试数据与历史记录。')) {
-      try {
-        localStorage.clear();
-        sessionStorage.clear();
-        indexedDB.deleteDatabase('SelfHubDB');
-      } catch {}
-      saveHubState(INITIAL_STATE);
-      onRestoreState(INITIAL_STATE);
-      alert('✅ 本地数据与缓存已彻底清空，已重置为纯净出厂状态！');
-      onClose();
-      window.location.reload();
+      void (async () => {
+        try {
+          const removed = await deleteAllDatabases();
+          console.info('[Self-Hub] removed IndexedDB databases:', removed);
+        } catch (err) {
+          console.warn('IndexedDB cleanup failed', err);
+        }
+        try {
+          localStorage.clear();
+          sessionStorage.clear();
+        } catch {}
+        saveHubState(INITIAL_STATE);
+        onRestoreState(INITIAL_STATE);
+        alert('✅ 本地数据与缓存已彻底清空，已重置为纯净出厂状态！');
+        onClose();
+        window.location.reload();
+      })();
     }
   };
 
@@ -292,14 +344,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">同步目录前缀</label>
+                  <label className="block text-xs text-zinc-400 mb-1">
+                    同步目录前缀 <span className="text-zinc-500">(留空 = 列出整个 Bucket)</span>
+                  </label>
                   <input
                     type="text"
                     value={ossPrefix}
                     onChange={(e) => setOssPrefix(e.target.value)}
-                    placeholder="vault/"
+                    placeholder="留空即可，或填 vault/"
                     className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
                   />
+                  <p className="mt-1 text-[10px] text-zinc-500 leading-relaxed">
+                    只列出该前缀下的对象；填错会造成"看不到任何云端笔记"的假象，不确定就留空。
+                  </p>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -475,11 +532,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <h4 className="text-xs font-semibold text-zinc-200">恢复与导入备份</h4>
                   <p className="text-[11px] text-zinc-400 mt-0.5">支持一键导入 <code>.enc.json</code> 加密备份包或标准 <code>.json</code> 明文备份，自动检测格式与校验</p>
                 </div>
-                <label className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-100 font-medium flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors">
-                  <Upload className="w-3.5 h-3.5" />
-                  选择文件
-                  <input type="file" accept=".json,.enc.json" onChange={handleImportFile} className="hidden" />
-                </label>
+                <div className="flex items-center gap-2 shrink-0">
+                  {canRollback && (
+                    <button
+                      onClick={handleRollback}
+                      className="px-3 py-1.5 rounded-lg bg-amber-950/40 border border-amber-800/50 text-xs text-amber-300 font-medium flex items-center gap-1.5 transition-colors hover:bg-amber-900/40"
+                      title="恢复到上一次导入备份之前的数据"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      撤销上次导入
+                    </button>
+                  )}
+                  <label className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-100 font-medium flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors">
+                    <Upload className="w-3.5 h-3.5" />
+                    选择文件
+                    <input type="file" accept=".json,.enc.json" onChange={handleImportFile} className="hidden" />
+                  </label>
+                </div>
               </div>
 
               <div className="pt-2 border-t border-zinc-800/80 flex items-center justify-between">

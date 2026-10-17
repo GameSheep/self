@@ -69,6 +69,61 @@
       font-size: 11px;
       color: #a1a1aa;
     }
+    .tab-bar {
+      display: flex;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .tab-btn {
+      flex: 1;
+      background: #121316;
+      border: 1px solid #27272a;
+      color: #a1a1aa;
+      padding: 6px 8px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .tab-btn.active {
+      background: #f4f4f5;
+      color: #090a0c;
+      border-color: #f4f4f5;
+    }
+    .inbox-item {
+      background: #121316;
+      border: 1px solid #22242a;
+      border-radius: 10px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .inbox-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #f4f4f5;
+      word-break: break-all;
+    }
+    .inbox-content {
+      font-size: 11px;
+      color: #a1a1aa;
+      line-height: 1.5;
+      word-break: break-all;
+      max-height: 96px;
+      overflow: hidden;
+    }
+    .inbox-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .inbox-meta {
+      font-size: 10px;
+      color: #71717a;
+      font-family: monospace;
+    }
     .btn-action {
       background: #18191e;
       border: 1px solid #27272a;
@@ -176,9 +231,16 @@
         <span>Self-Hub</span>
         <span class="badge">五彩替代引擎</span>
       </div>
-      <button id="refresh-btn" class="btn-action" title="刷新划线列表">刷新</button>
+      <div style="display: flex; gap: 6px;">
+        <button id="sync-btn" class="btn-action" title="配置 S3 / WebDAV 多设备云同步">☁️ 同步</button>
+        <button id="refresh-btn" class="btn-action" title="刷新划线列表">刷新</button>
+      </div>
     </div>
     <input type="text" id="search-input" class="search-input" placeholder="检索当前网页批注与思考..." />
+    <div class="tab-bar">
+      <button id="tab-annotations" class="tab-btn active">本页划线</button>
+      <button id="tab-inbox" class="tab-btn">统一收件箱 <span id="inbox-count">0</span></button>
+    </div>
     <div class="stats-bar">
       <span id="page-count">本页划线: 0 条</span>
       <button id="export-md-btn" class="btn-action" title="导出为 Obsidian Markdown 格式">导出 Markdown</button>
@@ -191,6 +253,8 @@
       在网页中选中任意文本，点击浮动工具条或按 <code>Alt+H</code> 即可划线
     </div>
   </div>
+
+  <div id="inbox-list" class="list-container" style="display: none;"></div>
 
   <footer>
     <button id="open-hub-btn" class="btn-primary">打开 Self-Hub 主工作台</button>

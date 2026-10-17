@@ -31,7 +31,35 @@ console.log(`🛡️ 规范: Manifest V${manifest.manifest_version}`);
   }
 });
 
-// 3. 删除旧 zip 包
+// 3. 将最新构建的 Vite 工作台同步内嵌到 extension/app 中
+// Always rebuild: shipping a stale bundle inside the extension previously meant
+// the built-in workspace kept old bugs even after src/ was fixed.
+const distDir = path.join(rootDir, 'dist');
+const skipBuild = process.argv.includes('--skip-build');
+const distIndex = path.join(distDir, 'index.html');
+
+let needsBuild = !skipBuild;
+if (skipBuild && !fs.existsSync(distIndex)) {
+  console.warn('⚠️ 指定了 --skip-build 但 dist/ 不存在，改为执行构建。');
+  needsBuild = true;
+}
+
+if (needsBuild) {
+  console.log('📦 正在编译 Self-Hub 主工作台前端（可用 --skip-build 跳过）...');
+  execSync('npm run build', { cwd: rootDir, stdio: 'inherit' });
+}
+if (!fs.existsSync(distIndex)) {
+  console.error('❌ dist/index.html 不存在，无法内嵌工作台。');
+  process.exit(1);
+}
+const appDir = path.join(extDir, 'app');
+if (fs.existsSync(appDir)) {
+  fs.rmSync(appDir, { recursive: true, force: true });
+}
+fs.cpSync(distDir, appDir, { recursive: true });
+console.log('✅ 已将 Self-Hub 主工作台成功内嵌至扩展程序 (extension/app)');
+
+// 4. 删除旧 zip 包
 if (fs.existsSync(zipFile)) {
   fs.unlinkSync(zipFile);
 }

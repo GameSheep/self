@@ -1,17 +1,181 @@
 import { NavSite, ServerDeployment, SecretItem, QuickNote, AiConfig } from '../types';
 import { createMaskedPreview, encryptText } from './crypto';
 
+export interface ParsedSecret {
+  name: string;
+  category: 'api_key' | 'ssh_key' | 'db_credential' | 'token' | 'other';
+  /** Plaintext value, present when the source contained a readable secret. */
+  rawValue?: string;
+  description?: string;
+  tags?: string[];
+  /** Present when the source is a Self-Hub export: ciphertext must be kept as-is. */
+  encryptedValue?: string;
+  iv?: string;
+  salt?: string;
+  maskedPreview?: string;
+}
+
 export interface ParsedEntities {
   sites: Partial<NavSite>[];
   servers: Partial<ServerDeployment>[];
-  secrets: {
-    name: string;
-    category: 'api_key' | 'ssh_key' | 'db_credential' | 'token' | 'other';
-    rawValue: string;
-    description: string;
-    tags: string[];
-  }[];
+  secrets: ParsedSecret[];
   notes: Partial<QuickNote>[];
+}
+
+/**
+ * Attempt to parse structured JSON exports (GoTab, Chrome Bookmarks, Self-Hub exports, generic arrays)
+ * Delivers 100% lossless, pristine data extraction without any AI hallucination or text slicing.
+ */
+export function tryParseStructuredJson(rawText: string): ParsedEntities | null {
+  const trimmed = rawText.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return null;
+  }
+
+  try {
+    const json = JSON.parse(trimmed);
+    const result: ParsedEntities = {
+      sites: [],
+      servers: [],
+      secrets: [],
+      notes: []
+    };
+
+    // Case 1: GoTab 网站分类清单格式 (如 gotab-网站分类清单-20261016.json)
+    if (json && Array.isArray(json.bookmarks)) {
+      for (const bm of json.bookmarks) {
+        if (bm && bm.url && typeof bm.url === 'string') {
+          const rawUrl = bm.url.trim();
+          let hostname = '';
+          try { hostname = new URL(rawUrl).hostname; } catch (_) {}
+
+          result.sites.push({
+            id: `site-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            title: bm.name || bm.original_name || hostname || '未命名网站',
+            url: rawUrl,
+            category: bm.category || (Array.isArray(bm.origins) && bm.origins[0]) || 'GoTab导入',
+            description: bm.original_name && bm.original_name !== bm.name ? `原名: ${bm.original_name}` : '',
+            tags: Array.isArray(bm.origins) ? bm.origins : [],
+            pinned: false,
+            createdAt: Date.now()
+          });
+        }
+      }
+
+      // Also ingest GoTab note_links if present
+      if (Array.isArray(json.note_links)) {
+        for (const nl of json.note_links) {
+          if (nl && nl.url && typeof nl.url === 'string') {
+            const rawUrl = nl.url.trim();
+            let hostname = '';
+            try { hostname = new URL(rawUrl).hostname; } catch (_) {}
+
+            result.sites.push({
+              id: `site-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              title: nl.name || hostname || '便签链接',
+              url: rawUrl,
+              category: nl.kind || '便签与脚本',
+              description: Array.isArray(nl.origins) ? `来源便签: ${nl.origins.join(', ')}` : '',
+              tags: Array.isArray(nl.origins) ? nl.origins : [],
+              pinned: false,
+              createdAt: Date.now()
+            });
+          }
+        }
+      }
+
+      if (result.sites.length > 0) {
+        return result;
+      }
+    }
+
+    // Case 2: GoTab 原始备份格式 (gotab-data-*.json)
+    const siteList = json.siteList || (json.data && json.data.siteList);
+    if (Array.isArray(siteList)) {
+      for (const item of siteList) {
+        if (item && item.url) {
+          result.sites.push({
+            id: `site-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            title: item.title || item.name || item.url,
+            url: item.url,
+            category: item.category || item.group || 'GoTab导入',
+            description: item.desc || item.description || '',
+            tags: item.tags || [],
+            pinned: Boolean(item.pinned),
+            createdAt: Date.now()
+          });
+        }
+      }
+      if (result.sites.length > 0) return result;
+    }
+
+    // Case 3: Self-Hub 完整全量导出格式
+    if (json.sites || json.servers || json.secrets || json.notes) {
+      return {
+        sites: Array.isArray(json.sites) ? json.sites : [],
+        servers: Array.isArray(json.servers) ? json.servers : [],
+        secrets: Array.isArray(json.secrets) ? json.secrets : [],
+        notes: Array.isArray(json.notes) ? json.notes : []
+      };
+    }
+
+    // Case 4: Chrome / Edge Bookmarks JSON 树形结构
+    if (json.roots && (json.roots.bookmark_bar || json.roots.other)) {
+      const traverseChrome = (node: any, folderName: string) => {
+        if (!node) return;
+        if (node.type === 'url' && node.url) {
+          result.sites.push({
+            id: `site-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            title: node.name || node.url,
+            url: node.url,
+            category: folderName || '浏览器书签',
+            description: '',
+            tags: ['Chrome书签'],
+            pinned: false,
+            createdAt: Date.now()
+          });
+        }
+        if (Array.isArray(node.children)) {
+          const currentFolder = node.name || folderName;
+          node.children.forEach((child: any) => traverseChrome(child, currentFolder));
+        }
+      };
+
+      if (json.roots.bookmark_bar) traverseChrome(json.roots.bookmark_bar, '书签栏');
+      if (json.roots.other) traverseChrome(json.roots.other, '其他书签');
+      if (result.sites.length > 0) return result;
+    }
+
+    // Case 5: 通用书签数组格式 [ { name/title, url, category }, ... ]
+    const arr = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : (Array.isArray(json.list) ? json.list : null));
+    if (Array.isArray(arr) && arr.length > 0) {
+      let matchedCount = 0;
+      for (const item of arr) {
+        if (item && (item.url || item.link || item.href)) {
+          const targetUrl = item.url || item.link || item.href;
+          let hostname = '';
+          try { hostname = new URL(targetUrl).hostname; } catch (_) {}
+
+          result.sites.push({
+            id: `site-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            title: item.title || item.name || item.label || hostname || '书签',
+            url: targetUrl,
+            category: item.category || item.folder || item.tag || '导入书签',
+            description: item.desc || item.description || '',
+            tags: Array.isArray(item.tags) ? item.tags : [],
+            pinned: false,
+            createdAt: Date.now()
+          });
+          matchedCount++;
+        }
+      }
+      if (matchedCount > 0) return result;
+    }
+
+    return null;
+  } catch (_) {
+    return null;
+  }
 }
 
 /**
@@ -19,6 +183,12 @@ export interface ParsedEntities {
  * Works 100% offline without needing any AI API Key
  */
 export function parseTextLocally(rawText: string): ParsedEntities {
+  // Step 0: Auto-detect and parse structured JSON (GoTab, Chrome, SelfHub, etc.)
+  const structured = tryParseStructuredJson(rawText);
+  if (structured) {
+    return structured;
+  }
+
   const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const result: ParsedEntities = {
     sites: [],
@@ -28,6 +198,7 @@ export function parseTextLocally(rawText: string): ParsedEntities {
   };
 
   const processedLines = new Set<number>();
+  const seenUrls = new Set<string>();
 
   // 1. Detect API Keys & Secrets
   const apiKeyPatterns = [
@@ -89,24 +260,30 @@ export function parseTextLocally(rawText: string): ParsedEntities {
     }
   });
 
-  // 3. Detect Websites and URLs
-  const urlPattern = /(https?:\/\/[^\s]+)/g;
+  // 3. Detect Websites and URLs with sanitized URL regex
+  const urlPattern = /https?:\/\/[^\s"'<>,;()]+/g;
   lines.forEach((line, idx) => {
     if (processedLines.has(idx)) return;
 
     const urls = line.match(urlPattern);
     if (urls && urls.length > 0) {
       for (const urlStr of urls) {
+        const cleanUrl = urlStr.replace(/[.,;:"')]+$/, '').trim();
+        if (!cleanUrl || seenUrls.has(cleanUrl)) continue;
+        seenUrls.add(cleanUrl);
+
         try {
-          const u = new URL(urlStr);
-          let title = line.replace(urlStr, '').trim();
-          if (!title || title.length > 40) {
+          const u = new URL(cleanUrl);
+          // Clean up titles: strip JSON syntax like "url": " or "name": "
+          let title = line.replace(cleanUrl, '');
+          title = title.replace(/^["':\s,\-–—{}]+|["':\s,\-–—{}]+$/g, '').trim();
+          if (title.startsWith('"url"') || title.startsWith('url:') || title === '"' || !title || title.length > 40) {
             title = u.hostname;
           }
           result.sites.push({
             id: `site-${Date.now()}-${idx}`,
             title,
-            url: urlStr,
+            url: cleanUrl,
             category: 'AI整理导入',
             description: line.length > 60 ? line.slice(0, 60) + '...' : line,
             tags: [u.hostname],
@@ -145,6 +322,12 @@ export function parseTextLocally(rawText: string): ParsedEntities {
  * Calls Google Gemini / OpenAI / DeepSeek with structured prompt
  */
 export async function parseTextWithLLM(rawText: string, config: AiConfig): Promise<ParsedEntities> {
+  // Step 0: Check if it's already a clean structured JSON file (e.g. GoTab export)
+  const structured = tryParseStructuredJson(rawText);
+  if (structured) {
+    return structured;
+  }
+
   if (!config.apiKey) {
     return parseTextLocally(rawText);
   }

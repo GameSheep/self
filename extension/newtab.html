@@ -261,6 +261,33 @@
     .quick-textarea:focus {
       border-color: #10b981;
     }
+    .sync-pill {
+      font-size: 12px;
+      color: #a1a1aa;
+      background: #18191e;
+      border: 1px solid #27272a;
+      padding: 6px 12px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .sync-pill:hover {
+      border-color: #3f3f46;
+      color: #fff;
+      background: #202228;
+    }
+    .dot-idle { color: #71717a; }
+    .dot-syncing { color: #eab308; animation: pulse 1s infinite; }
+    .dot-success { color: #10b981; }
+    .dot-error { color: #ef4444; }
+    @keyframes pulse {
+      0% { opacity: 0.3; }
+      50% { opacity: 1; }
+      100% { opacity: 0.3; }
+    }
     footer {
       text-align: center;
       font-size: 11px;
@@ -278,12 +305,18 @@
         <img src="icon48.png" class="brand-logo" alt="Self-Hub" style="width: 32px; height: 32px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);" />
         <div>
           <div class="brand-text">Self-Hub</div>
-          <div class="badge-hub">GoTab 极速替代版</div>
+          <div class="badge-hub">GoTab 极速替代版 · v1.0.1</div>
         </div>
       </div>
-      <a href="#" id="hub-main-btn" class="hub-link">
-        <span>进入全功能工作台 &rarr;</span>
-      </a>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div id="sync-pill" class="sync-pill" title="点击配置 S3 / WebDAV 多设备云同步">
+          <span id="sync-dot" class="dot-idle">●</span>
+          <span id="sync-label">云同步</span>
+        </div>
+        <a href="#" id="hub-main-btn" class="hub-link">
+          <span>进入全功能工作台 &rarr;</span>
+        </a>
+      </div>
     </div>
 
     <!-- Search Section -->

@@ -29,14 +29,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Save to Inbox
   document.getElementById('save-inbox-btn').addEventListener('click', async () => {
     if (!tab) return;
+    const now = Date.now();
     const item = {
-      id: `inbox-${Date.now()}`,
+      id: `inbox-${now}`,
       content: tab.title || tab.url,
       title: tab.title,
       url: tab.url,
       type: 'url',
       status: 'inbox',
-      createdAt: Date.now()
+      createdAt: now,
+      updatedAt: now,
+      isDeleted: false
     };
 
     chrome.storage.local.get(['selfhub_inbox'], (res) => {
@@ -49,21 +52,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // Open Main App
+  // Open Sync Settings
+  const syncBtn = document.getElementById('open-sync-btn');
+  if (syncBtn) {
+    syncBtn.addEventListener('click', () => {
+      if (chrome.runtime.openOptionsPage) {
+        chrome.runtime.openOptionsPage();
+      } else {
+        window.open('options.html');
+      }
+    });
+  }
+
+  // Open Main App (Built-in offline workspace)
   document.getElementById('open-app-btn').addEventListener('click', () => {
     chrome.storage.local.get(['selfhub_web_url'], (res) => {
-      let target = res.selfhub_web_url;
-      if (!target) {
-        target = prompt('请输入您的 Self-Hub 部署地址（如 Cloudflare Pages 网址或 http://localhost:4173）：', 'http://localhost:4173');
-        if (target) {
-          target = target.trim();
-          chrome.storage.local.set({ selfhub_web_url: target });
-        }
-      }
-      if (target) {
-        chrome.tabs.create({ url: target });
-        window.close();
-      }
+      const customUrl = res.selfhub_web_url;
+      const target = (customUrl && !customUrl.includes('localhost:4173'))
+        ? customUrl
+        : chrome.runtime.getURL('app/index.html');
+      chrome.tabs.create({ url: target });
+      window.close();
     });
   });
 });

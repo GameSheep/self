@@ -105,7 +105,17 @@ export const InboxView: React.FC<InboxViewProps> = ({
     if (!editingItem) return;
     const trimmedTitle = editTitle.trim() || editingItem.title || '碎片速记';
     const trimmedContent = editContent.trim();
-    const detectedUrl = isUrl(trimmedContent) ? trimmedContent : undefined;
+    if (!trimmedContent) {
+      showToast('⚠️ 内容不能为空');
+      return;
+    }
+    // Only a URL-typed item keeps its url field; editing the title of a text item
+    // must not wipe an existing url (or leave type='url' with no url).
+    const detectedUrl = isUrl(trimmedContent)
+      ? trimmedContent
+      : editType === 'url'
+        ? editingItem.url
+        : undefined;
 
     onUpdateInboxItem({
       ...editingItem,
@@ -377,12 +387,19 @@ export const InboxView: React.FC<InboxViewProps> = ({
                     {/* Convert to Note */}
                     <button
                       onClick={() => {
+                        if (item.status === 'processed') {
+                          showToast('ℹ️ 该条目已分流过，请勿重复转换（如需再次转换请先恢复为待整理）');
+                          return;
+                        }
+                        // Only convert: the parent already records targetType/targetId.
+                        // A second onUpdateInboxItem() with this stale snapshot used to
+                        // overwrite targetId with undefined and break the traceability link.
                         onConvertToNote(item);
-                        onUpdateInboxItem({ ...item, status: 'processed', targetType: 'note' });
                         showToast('✅ 已成功转为深度知识笔记');
                       }}
-                      className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-purple-300 text-[11px] flex items-center gap-1"
-                      title="转为长期知识笔记并归档"
+                      disabled={item.status === 'processed'}
+                      className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-purple-300 text-[11px] flex items-center gap-1 disabled:opacity-45 disabled:cursor-not-allowed"
+                      title={item.status === 'processed' ? '已分流，不可重复转换' : '转为长期知识笔记并归档'}
                     >
                       <FileText className="w-3 h-3 text-purple-400" />
                       <span>转为笔记</span>
@@ -392,12 +409,16 @@ export const InboxView: React.FC<InboxViewProps> = ({
                     {item.url && (
                       <button
                         onClick={() => {
+                          if (item.status === 'processed') {
+                            showToast('ℹ️ 该条目已分流过，请勿重复转换');
+                            return;
+                          }
                           onConvertToSite(item);
-                          onUpdateInboxItem({ ...item, status: 'processed', targetType: 'site' });
                           showToast('✅ 已存为常用工作台书签');
                         }}
-                        className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-sky-300 text-[11px] flex items-center gap-1"
-                        title="添加到常用网站导航"
+                        disabled={item.status === 'processed'}
+                        className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-sky-300 text-[11px] flex items-center gap-1 disabled:opacity-45 disabled:cursor-not-allowed"
+                        title={item.status === 'processed' ? '已分流，不可重复转换' : '添加到常用网站导航'}
                       >
                         <Globe className="w-3 h-3 text-sky-400" />
                         <span>存为书签</span>
@@ -459,7 +480,13 @@ export const InboxView: React.FC<InboxViewProps> = ({
                     )}
 
                     <button
-                      onClick={() => onDeleteInboxItem(item.id)}
+                      onClick={() => {
+                        const preview = (item.title || item.content).slice(0, 40);
+                        if (confirm(`确定彻底删除该碎片吗？此操作不可撤销。\n\n${preview}`)) {
+                          onDeleteInboxItem(item.id);
+                          showToast('🗑️ 已删除');
+                        }
+                      }}
                       className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-400"
                       title="删除此碎片"
                     >

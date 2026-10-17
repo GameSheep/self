@@ -21,6 +21,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { ReminderItem } from '../../types';
+import { daysUntil, parseDateInputValue, toDateInputValue, advanceRecurringDate, nextRenewal } from '../../lib/dates';
 
 interface RemindersViewProps {
   reminders: ReminderItem[];
@@ -69,25 +70,24 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
 
   const now = Date.now();
 
-  const getDaysLeft = (targetDate: number) => {
-    return Math.ceil((targetDate - now) / (1000 * 60 * 60 * 24));
-  };
+  const getDaysLeft = (targetDate: number) => daysUntil(targetDate, now);
 
-  // Auto-catchup on mount: advance expired items that have autoRollover === true
+  // Auto-catchup on mount: advance expired items that have autoRollover === true.
+  // Bounded by advanceRecurringDate(), which returns null for unknown recurrences —
+  // the previous unbounded `while` froze the whole tab on imported bad data.
   useEffect(() => {
     if (!onUpdateReminder) return;
     const nowTs = Date.now();
     reminders.forEach((r) => {
-      if (r.autoRollover && r.recurring && r.recurring !== 'once' && r.targetDate < nowTs) {
-        let next = new Date(r.targetDate);
-        while (next.getTime() < nowTs) {
-          if (r.recurring === 'monthly') next.setMonth(next.getMonth() + 1);
-          else if (r.recurring === 'yearly') next.setFullYear(next.getFullYear() + 1);
-          else if (r.recurring === 'weekly') next.setDate(next.getDate() + 7);
-        }
+      if (!r.autoRollover || !r.recurring || r.recurring === 'once') return;
+      const base = Number(r.targetDate);
+      if (!Number.isFinite(base) || base >= nowTs) return;
+      const next = advanceRecurringDate(base, r.recurring, nowTs);
+      if (next && next.getTime() !== base) {
         onUpdateReminder({ ...r, targetDate: next.getTime() });
       }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const sortedReminders = [...reminders].sort((a, b) => a.targetDate - b.targetDate);
@@ -105,7 +105,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     e.preventDefault();
     if (!title || !targetDateStr) return;
 
-    const targetTimestamp = new Date(targetDateStr).getTime();
+    const targetTimestamp = parseDateInputValue(targetDateStr);
     if (isNaN(targetTimestamp)) return;
 
     onAddReminder({
@@ -136,7 +136,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     setEditingReminder(item);
     setEditTitle(item.title);
     setEditCategory(item.category);
-    setEditTargetDateStr(new Date(item.targetDate).toISOString().slice(0, 10));
+    setEditTargetDateStr(toDateInputValue(item.targetDate));
     setEditRecurring(item.recurring || 'monthly');
     setEditCost(item.cost || '');
     setEditUrl(item.url || '');
@@ -148,7 +148,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     e.preventDefault();
     if (!editingReminder || !editTitle.trim() || !editTargetDateStr) return;
 
-    const targetTimestamp = new Date(editTargetDateStr).getTime();
+    const targetTimestamp = parseDateInputValue(editTargetDateStr);
     if (isNaN(targetTimestamp)) return;
 
     const updated: ReminderItem = {
@@ -171,26 +171,28 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
   };
 
   const handleAdvanceCycle = (item: ReminderItem) => {
-    let nextDate = item.targetDate < Date.now() ? new Date() : new Date(item.targetDate);
-    if (item.recurring === 'monthly') {
-      nextDate.setMonth(nextDate.getMonth() + 1);
-    } else if (item.recurring === 'yearly') {
-      nextDate.setFullYear(nextDate.getFullYear() + 1);
-    } else if (item.recurring === 'weekly') {
-      nextDate.setDate(nextDate.getDate() + 7);
-    } else {
-      nextDate.setDate(nextDate.getDate() + 30);
+    if (!item.recurring || item.recurring === 'once') {
+      // A one-off item has no next cycle: mark it done instead of inventing +30 days.
+      if (onToggleComplete) onToggleComplete(item.id);
+      showToast(`✅【${item.title}】是一次性事项，已标记完成`);
+      return;
+    }
+
+    const nextTs = nextRenewal(item.targetDate, item.recurring);
+    if (nextTs === null || nextTs === item.targetDate) {
+      showToast(`⚠️【${item.title}】的周期设置无效，无法自动顺延`);
+      return;
     }
 
     const updated: ReminderItem = {
       ...item,
-      targetDate: nextDate.getTime(),
+      targetDate: nextTs,
       completed: false
     };
 
     if (onUpdateReminder) {
       onUpdateReminder(updated);
-      showToast(`🎉 已将【${item.title}】顺延至下个周期：${nextDate.toLocaleDateString()}`);
+      showToast(`🎉 已将【${item.title}】顺延至下个周期：${new Date(nextTs).toLocaleDateString()}`);
     }
   };
 
@@ -347,9 +349,17 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
                     <span>到期日: {new Date(item.targetDate).toLocaleDateString()}</span>
                   </div>
 
-                  {isExpired ? (
+                  {item.completed ? (
+                    <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-950/70 text-emerald-400 border border-emerald-800/70">
+                      已完成
+                    </span>
+                  ) : isExpired ? (
                     <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-red-950 text-red-400 border border-red-800">
                       已到期
+                    </span>
+                  ) : daysLeft === 0 ? (
+                    <span className="px-2.5 py-1 rounded text-xs font-mono font-bold bg-red-950/80 text-red-400 border border-red-800/80">
+                      今天到期
                     </span>
                   ) : isUrgent ? (
                     <span className="px-2.5 py-1 rounded text-xs font-mono font-bold bg-red-950/80 text-red-400 border border-red-800/80 animate-pulse">
@@ -381,6 +391,21 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
                   <RefreshCw className="w-3 h-3" />
                   <span>已续费·顺延下期</span>
                 </button>
+
+                {onToggleComplete && (
+                  <button
+                    onClick={() => onToggleComplete(item.id)}
+                    className={`px-2.5 py-1 rounded-lg border text-[11px] flex items-center gap-1.5 transition-colors ${
+                      item.completed
+                        ? 'bg-emerald-950/50 border-emerald-800/60 text-emerald-400 hover:bg-emerald-900/40'
+                        : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300'
+                    }`}
+                    title={item.completed ? '取消完成标记' : '标记为已处理（保留记录，不再计入紧急提醒）'}
+                  >
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span>{item.completed ? '已完成' : '标记完成'}</span>
+                  </button>
+                )}
 
                 {item.url && (
                   <a

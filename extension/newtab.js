@@ -38,16 +38,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     setEngine(savedEngine);
   }
 
-  // Load custom sites from chrome storage if available
+  // Load custom sites and quicknote from chrome storage
+  refreshLocalContent();
+
+  // Setup Sync Pill & Auto-Sync
+  setupSyncWorkflow();
+
+  setupEventListeners();
+});
+
+function refreshLocalContent() {
   if (chrome && chrome.storage && chrome.storage.local) {
     chrome.storage.local.get(['selfhub_sites', 'selfhub_quicknote'], (res) => {
       if (res.selfhub_sites && res.selfhub_sites.length > 0) {
-        allSites = res.selfhub_sites;
+        // Filter out tombstones
+        allSites = res.selfhub_sites.filter(s => !s.isDeleted);
       }
       renderCategories();
       renderSites();
 
-      if (res.selfhub_quicknote) {
+      if (res.selfhub_quicknote !== undefined) {
         document.getElementById('quick-note').value = res.selfhub_quicknote;
       }
     });
@@ -59,9 +69,76 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('quick-note').value = savedNote;
     }
   }
+}
 
-  setupEventListeners();
-});
+function updateSyncPill(status, config) {
+  const dot = document.getElementById('sync-dot');
+  const label = document.getElementById('sync-label');
+  if (!dot || !label) return;
+
+  if (!config || config.provider === 'none') {
+    dot.className = 'dot-idle';
+    label.textContent = '云同步 (未配置)';
+    return;
+  }
+
+  const providerName = config.provider === 's3' ? 'S3/R2' : 'WebDAV';
+  if (status && status.state === 'syncing') {
+    dot.className = 'dot-syncing';
+    label.textContent = `${providerName} 同步中...`;
+  } else if (status && status.state === 'success') {
+    dot.className = 'dot-success';
+    label.textContent = `${providerName} 已同步`;
+  } else if (status && status.state === 'error') {
+    dot.className = 'dot-error';
+    label.textContent = `${providerName} 失败`;
+  } else {
+    dot.className = 'dot-idle';
+    label.textContent = `${providerName} 就绪`;
+  }
+}
+
+function setupSyncWorkflow() {
+  const syncPill = document.getElementById('sync-pill');
+  if (syncPill) {
+    syncPill.addEventListener('click', () => {
+      if (chrome.runtime.openOptionsPage) {
+        chrome.runtime.openOptionsPage();
+      } else {
+        window.open('options.html');
+      }
+    });
+  }
+
+  if (chrome && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(['selfhub_sync_config', 'selfhub_sync_status'], (res) => {
+      const config = res.selfhub_sync_config;
+      const status = res.selfhub_sync_status;
+      updateSyncPill(status, config);
+
+      // Auto-sync on open if enabled (60s cooldown built-in)
+      if (config && config.provider && config.provider !== 'none' && config.autoSync !== false) {
+        chrome.runtime.sendMessage({ action: 'PERFORM_SYNC' }, (syncRes) => {
+          if (syncRes && syncRes.success) {
+            refreshLocalContent();
+          }
+        });
+      }
+    });
+
+    // Listen for status changes
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg.action === 'SYNC_STATUS_CHANGED') {
+        chrome.storage.local.get(['selfhub_sync_config'], (cfgRes) => {
+          updateSyncPill(msg.status, cfgRes.selfhub_sync_config);
+          if (msg.status && msg.status.state === 'success') {
+            refreshLocalContent();
+          }
+        });
+      }
+    });
+  }
+}
 
 function setupEventListeners() {
   // Engine switchers
@@ -89,7 +166,7 @@ function setupEventListeners() {
     window.location.href = targetUrl;
   });
 
-  // Scratchpad Note auto-save
+  // Scratchpad Note auto-save with timestamp
   const noteEl = document.getElementById('quick-note');
   const statusEl = document.getElementById('note-status');
   let saveTimer = null;
@@ -98,9 +175,13 @@ function setupEventListeners() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       const val = noteEl.value;
+      const now = Date.now();
       localStorage.setItem('selfhub_quicknote', val);
       if (chrome && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.set({ selfhub_quicknote: val });
+        chrome.storage.local.set({
+          selfhub_quicknote: val,
+          selfhub_quicknote_updatedAt: now
+        });
       }
       statusEl.innerText = '已保存';
     }, 400);
@@ -115,13 +196,16 @@ function setupEventListeners() {
       const val = inboxInput.value.trim();
       if (!val) return;
 
+      const now = Date.now();
       const item = {
-        id: `inbox-${Date.now()}`,
+        id: `inbox-${now}`,
         content: val,
         type: val.startsWith('http') ? 'url' : 'text',
         url: val.startsWith('http') ? val : undefined,
         status: 'inbox',
-        createdAt: Date.now()
+        createdAt: now,
+        updatedAt: now,
+        isDeleted: false
       };
 
       if (chrome && chrome.storage && chrome.storage.local) {
@@ -140,52 +224,48 @@ function setupEventListeners() {
     }
   });
 
-  // Handle Hub Link Navigation
+  // Handle Hub Link Navigation (Open Built-in Local App Dashboard)
   const hubBtn = document.getElementById('hub-main-btn');
   if (hubBtn) {
     hubBtn.addEventListener('click', (e) => {
       e.preventDefault();
+      const openBuiltinApp = () => {
+        const builtinUrl = chrome && chrome.runtime && chrome.runtime.getURL
+          ? chrome.runtime.getURL('app/index.html')
+          : 'app/index.html';
+        window.open(builtinUrl, '_blank');
+      };
+
       if (chrome && chrome.storage && chrome.storage.local) {
         chrome.storage.local.get(['selfhub_web_url'], (res) => {
-          let target = res.selfhub_web_url || localStorage.getItem('selfhub_web_url');
-          if (!target) {
-            target = prompt('请输入您的 Self-Hub 部署地址（例如 Cloudflare Pages 网址或 http://localhost:4173）：', 'http://localhost:4173');
-            if (target) {
-              target = target.trim();
-              chrome.storage.local.set({ selfhub_web_url: target });
-              localStorage.setItem('selfhub_web_url', target);
-            }
-          }
-          if (target) {
-            window.open(target, '_blank');
+          const customUrl = res.selfhub_web_url || localStorage.getItem('selfhub_web_url');
+          if (customUrl && !customUrl.includes('localhost:4173')) {
+            window.open(customUrl, '_blank');
+          } else {
+            openBuiltinApp();
           }
         });
       } else {
-        let target = localStorage.getItem('selfhub_web_url');
-        if (!target) {
-          target = prompt('请输入您的 Self-Hub 部署地址（例如 Cloudflare Pages 网址或 http://localhost:4173）：', 'http://localhost:4173');
-          if (target) {
-            target = target.trim();
-            localStorage.setItem('selfhub_web_url', target);
-          }
-        }
-        if (target) {
-          window.open(target, '_blank');
+        const customUrl = localStorage.getItem('selfhub_web_url');
+        if (customUrl && !customUrl.includes('localhost:4173')) {
+          window.open(customUrl, '_blank');
+        } else {
+          openBuiltinApp();
         }
       }
     });
 
     hubBtn.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      const current = localStorage.getItem('selfhub_web_url') || 'http://localhost:4173';
-      const updated = prompt('修改 Self-Hub 部署网址：', current);
+      const current = localStorage.getItem('selfhub_web_url') || '';
+      const updated = prompt('自定义 Self-Hub 远程部署网址（留空则默认使用内置离线工作台）：', current);
       if (updated !== null) {
         const trimmed = updated.trim();
         localStorage.setItem('selfhub_web_url', trimmed);
         if (chrome && chrome.storage && chrome.storage.local) {
           chrome.storage.local.set({ selfhub_web_url: trimmed });
         }
-        alert('✅ Self-Hub 部署网址已更新！');
+        alert(trimmed ? `✅ 已配置为远程网址: ${trimmed}` : '✅ 已恢复为插件内置离线工作台！');
       }
     });
   }

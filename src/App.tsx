@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { HubState, NavSite, ServerDeployment, SecretItem, CheckInTask, QuickNote, HandwritingNote, ReminderItem, InboxItem, ProjectItem } from './types';
-import { loadHubState, saveHubState } from './lib/storage';
-import { getTrustedSession, clearTrustedSession } from './lib/crypto';
+import { loadHubState, saveHubState, normalizeHubState, getStorageKey } from './lib/storage';
+import { clearTrustedSession, restoreTrustedSession } from './lib/crypto';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { mirrorStateToExtension } from './lib/extensionBridge';
 import { Sidebar } from './components/Sidebar';
 import { Navbar } from './components/Navbar';
 import { DashboardOverview } from './components/views/DashboardOverview';
@@ -22,13 +24,17 @@ import { MasterKeyModal } from './components/modals/MasterKeyModal';
 import { AddItemModal } from './components/modals/AddItemModal';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { executeCheckIn } from './lib/automation';
-import { Server, ShieldCheck, CheckSquare, Plus, Lock } from 'lucide-react';
+import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X } from 'lucide-react';
 
 export function App() {
   const [state, setState] = useState<HubState>(() => loadHubState());
   const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'projects' | 'sites' | 'servers' | 'secrets' | 'reminders' | 'notes' | 'checkin' | 'obsidian' | 'handwriting'>('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [masterPassword, setMasterPassword] = useState<string | null>(null);
+  const [persistError, setPersistError] = useState<string | null>(null);
+  const [externalChange, setExternalChange] = useState(false);
+  const [focusNoteId, setFocusNoteId] = useState<string | null>(null);
+  const clearFocusNoteId = useCallback(() => setFocusNoteId(null), []);
 
   // Modals state
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -37,12 +43,17 @@ export function App() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Check trusted device session on mount (auto-unlock on user's authorized browser!)
+  // Restore a remembered device session (survives reload, expires after 30 days)
   useEffect(() => {
-    const session = getTrustedSession();
-    if (session.isValid && session.password) {
-      setMasterPassword(session.password);
-    }
+    let cancelled = false;
+    restoreTrustedSession().then((session) => {
+      if (!cancelled && session.isValid && session.password) {
+        setMasterPassword(session.password);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Sync theme class to document root
@@ -52,19 +63,36 @@ export function App() {
   }, [state.theme]);
 
   const handleToggleTheme = () => {
-    const nextTheme = (state.theme || 'dark') === 'dark' ? 'light' : 'dark';
-    updateState((prev) => ({ ...prev, theme: nextTheme }));
-    document.documentElement.classList.toggle('dark', nextTheme === 'dark');
+    updateState((prev) => ({ ...prev, theme: (prev.theme || 'dark') === 'dark' ? 'light' : 'dark' }));
   };
 
-  // Sync state changes to local storage
-  const updateState = (updater: (prev: HubState) => HubState) => {
-    setState((prev) => {
-      const next = updater(prev);
-      saveHubState(next);
-      return next;
-    });
-  };
+  // Pure state updates: persistence happens in the effect below, never inside the
+  // setState updater (React may invoke an updater more than once, and writing to
+  // storage during render is a side effect that can persist discarded state).
+  const updateState = useCallback((updater: (prev: HubState) => HubState) => {
+    setState((prev) => updater(prev));
+  }, []);
+
+  // Persist every committed state change and surface storage failures to the user.
+  const persistResultRef = useRef<{ success: boolean; error?: string }>({ success: true });
+  useEffect(() => {
+    const result = saveHubState(state);
+    persistResultRef.current = result;
+    setPersistError(result.success ? null : result.error || '保存失败');
+    // When running inside the bundled extension, keep its storage in sync so the
+    // new-tab grid and side panel show the real bookmarks/annotations.
+    mirrorStateToExtension(state);
+  }, [state]);
+
+  // Another tab wrote to the same key: warn instead of silently overwriting it.
+  useEffect(() => {
+    const key = getStorageKey();
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === key && e.newValue) setExternalChange(true);
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   // Keyboard shortcut listener (Ctrl+K / Cmd+K)
   useEffect(() => {
@@ -108,10 +136,17 @@ export function App() {
   };
 
   const handleImportBookmarks = (newSites: NavSite[]) => {
-    updateState((prev) => ({
-      ...prev,
-      sites: [...newSites, ...prev.sites]
-    }));
+    updateState((prev) => {
+      const catSet = new Set(prev.categories || ['全部']);
+      newSites.forEach((s) => {
+        if (s.category && s.category.trim()) catSet.add(s.category.trim());
+      });
+      return {
+        ...prev,
+        categories: Array.from(catSet),
+        sites: [...newSites, ...prev.sites]
+      };
+    });
   };
 
   const handleAddServer = (server: ServerDeployment) => {
@@ -161,6 +196,7 @@ export function App() {
     if (!task) return;
 
     const result = await executeCheckIn(task);
+    const countsAsCheckIn = result.success && result.verified !== false;
 
     updateState((prev) => ({
       ...prev,
@@ -171,7 +207,7 @@ export function App() {
               lastRun: Date.now(),
               lastStatus: result.success ? 'success' : 'failed',
               lastMessage: result.message,
-              streakDays: result.success ? (c.streakDays || 0) + 1 : c.streakDays
+              streakDays: countsAsCheckIn ? (c.streakDays || 0) + 1 : c.streakDays
             }
           : c
       )
@@ -341,19 +377,34 @@ export function App() {
     notes: QuickNote[];
     reminders: ReminderItem[];
   }) => {
-    updateState((prev) => ({
-      ...prev,
-      sites: [...data.sites, ...prev.sites],
-      servers: [...data.servers, ...prev.servers],
-      secrets: [...data.secrets, ...prev.secrets],
-      notes: [...data.notes, ...(prev.notes || [])],
-      reminders: [...data.reminders, ...(prev.reminders || [])]
-    }));
+    updateState((prev) => {
+      const catSet = new Set(prev.categories || ['全部']);
+      data.sites.forEach(s => {
+        if (s.category && s.category.trim()) {
+          catSet.add(s.category.trim());
+        }
+      });
+
+      return {
+        ...prev,
+        categories: Array.from(catSet),
+        sites: [...data.sites, ...prev.sites],
+        servers: [...data.servers, ...prev.servers],
+        secrets: [...data.secrets, ...prev.secrets],
+        notes: [...data.notes, ...(prev.notes || [])],
+        reminders: [...data.reminders, ...(prev.reminders || [])]
+      };
+    });
   };
 
   const handleLockVault = () => {
     setMasterPassword(null);
-    clearTrustedSession();
+    void clearTrustedSession();
+  };
+
+  const handleRestoreState = (restored: HubState) => {
+    // Normalise: a restored backup may be missing optional collections.
+    setState(normalizeHubState(restored));
   };
 
   return (
@@ -407,6 +458,49 @@ export function App() {
         />
 
         <main className="flex-1 p-3 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+          {persistError && (
+            <div className="mb-4 flex items-start gap-2.5 rounded-2xl border border-red-900/60 bg-red-950/40 p-3.5 text-xs text-red-300">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="flex-1 leading-relaxed">
+                <div className="font-semibold text-red-200">数据未能写入本地存储</div>
+                <div className="mt-0.5">{persistError}</div>
+              </div>
+              <button
+                onClick={() => setIsSettingsOpen(true)}
+                className="shrink-0 rounded-lg border border-red-800/60 px-2.5 py-1 font-medium text-red-200 hover:bg-red-900/40"
+              >
+                去导出备份
+              </button>
+            </div>
+          )}
+
+          {externalChange && (
+            <div className="mb-4 flex items-start gap-2.5 rounded-2xl border border-amber-900/60 bg-amber-950/30 p-3.5 text-xs text-amber-300">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="flex-1 leading-relaxed">
+                <div className="font-semibold text-amber-200">另一个标签页修改了同一份数据</div>
+                <div className="mt-0.5">
+                  继续在当前页面编辑会用这里的版本覆盖对方。建议先重新加载，采用最新版本。
+                </div>
+              </div>
+              <button
+                onClick={() => window.location.reload()}
+                className="shrink-0 rounded-lg border border-amber-800/60 px-2.5 py-1 font-medium text-amber-200 hover:bg-amber-900/40 flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" />
+                重新加载
+              </button>
+              <button
+                onClick={() => setExternalChange(false)}
+                className="shrink-0 rounded-lg px-2 py-1 text-amber-400/70 hover:text-amber-200"
+                title="忽略"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          <ErrorBoundary scope={activeTab} key={activeTab}>
           {/* VIEW 1: Dashboard Overview (Bento Command Center) */}
           {activeTab === 'dashboard' && (
             <DashboardOverview
@@ -445,7 +539,10 @@ export function App() {
               onAddProject={handleAddProject}
               onUpdateProject={handleUpdateProject}
               onDeleteProject={handleDeleteProject}
-              onNavigateTab={(tab) => setActiveTab(tab as any)}
+              onNavigateTab={(tab, itemId) => {
+                if (tab === 'notes' && itemId) setFocusNoteId(itemId);
+                setActiveTab(tab as any);
+              }}
             />
           )}
 
@@ -553,6 +650,8 @@ export function App() {
               onAddNote={handleAddNote}
               onUpdateNote={handleUpdateNote}
               onDeleteNote={handleDeleteNote}
+              focusNoteId={focusNoteId}
+              onFocusHandled={clearFocusNoteId}
             />
           )}
 
@@ -611,6 +710,7 @@ export function App() {
               onDeleteNote={handleDeleteHandwriting}
             />
           )}
+          </ErrorBoundary>
         </main>
 
         {/* Footer */}
@@ -644,7 +744,8 @@ export function App() {
           navigator.clipboard.writeText(srv.sshCommand || `ssh ${srv.sshUser || 'root'}@${srv.publicIp}`);
           alert(`已复制服务器 SSH 命令: ${srv.sshCommand}`);
         }}
-        onSelectNote={() => {
+        onSelectNote={(note) => {
+          if (note?.id) setFocusNoteId(note.id);
           setActiveTab('notes');
           setIsSearchOpen(false);
         }}
@@ -695,7 +796,7 @@ export function App() {
         aiConfig={state.aiConfig}
         onUpdateAi={(cfg) => updateState((prev) => ({ ...prev, aiConfig: cfg }))}
         state={state}
-        onRestoreState={(restored) => setState(restored)}
+        onRestoreState={handleRestoreState}
         masterPassword={masterPassword}
       />
     </div>

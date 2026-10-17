@@ -85,7 +85,7 @@ export const CheckInCard: React.FC<CheckInCardProps> = ({ task, onRun, onDelete 
                 onDelete(task.id);
               }
             }}
-            className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-red-400 transition-opacity shrink-0"
+            className="opacity-100 sm:opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-red-400 transition-opacity shrink-0"
             title="删除"
           >
             <Trash2 className="w-3.5 h-3.5" />

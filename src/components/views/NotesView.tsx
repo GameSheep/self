@@ -19,25 +19,41 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { QuickNote } from '../../types';
+import { Markdown } from '../Markdown';
 
 interface NotesViewProps {
   notes: QuickNote[];
   onAddNote: (note: QuickNote) => void;
   onUpdateNote: (note: QuickNote) => void;
   onDeleteNote: (id: string) => void;
+  /** Note to reveal when arriving from another view (e.g. a project's linked doc). */
+  focusNoteId?: string | null;
+  onFocusHandled?: () => void;
 }
 
 export const NotesView: React.FC<NotesViewProps> = ({
   notes,
   onAddNote,
   onUpdateNote,
-  onDeleteNote
+  onDeleteNote,
+  focusNoteId,
+  onFocusHandled
 }) => {
   const [selectedNoteId, setSelectedNoteId] = useState<string>(notes[0]?.id || '');
   const [searchQuery, setSearchQuery] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editorMode, setEditorMode] = useState<'split' | 'edit' | 'preview'>('split');
+
+  // Deep link from projects / inbox / global search: select the target note.
+  useEffect(() => {
+    if (!focusNoteId) return;
+    if (!notes.some((n) => n.id === focusNoteId)) return;
+    setSelectedNoteId(focusNoteId);
+    setIsEditing(false);
+    setSearchQuery('');
+    onFocusHandled?.();
+  }, [focusNoteId, notes, onFocusHandled]);
 
   // Editor states
   const [editTitle, setEditTitle] = useState('');
@@ -67,14 +83,21 @@ export const NotesView: React.FC<NotesViewProps> = ({
   useEffect(() => {
     try {
       const saved = localStorage.getItem('selfhub_note_draft');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.content && (!selectedNote || parsed.content !== selectedNote.content)) {
-          setHasUnsavedDraft(true);
-        }
+      if (!saved) {
+        setHasUnsavedDraft(false);
+        return;
       }
-    } catch {}
-  }, [selectedNoteId]);
+      const parsed = JSON.parse(saved);
+      const pending =
+        parsed &&
+        typeof parsed.content === 'string' &&
+        parsed.content.trim() !== '' &&
+        (!selectedNote || parsed.content !== selectedNote.content);
+      setHasUnsavedDraft(Boolean(pending));
+    } catch {
+      setHasUnsavedDraft(false);
+    }
+  }, [selectedNoteId, selectedNote]);
 
   // Debounced auto-save draft while typing (N06)
   useEffect(() => {
@@ -105,6 +128,9 @@ export const NotesView: React.FC<NotesViewProps> = ({
       const parsed = JSON.parse(saved);
       if (parsed) {
         setEditingExistingId(parsed.id || null);
+        // Keep the selection in sync with the note the draft belongs to, otherwise
+        // saving the restored draft silently overwrites a *different* note.
+        if (parsed.id) setSelectedNoteId(parsed.id);
         setEditTitle(parsed.title || '');
         setEditContent(parsed.content || '');
         setEditCategory(parsed.category || '通用知识');
@@ -115,10 +141,16 @@ export const NotesView: React.FC<NotesViewProps> = ({
     } catch {}
   };
 
-  const handleDiscardDraft = () => {
-    localStorage.removeItem('selfhub_note_draft');
+  const clearDraft = () => {
+    try {
+      localStorage.removeItem('selfhub_note_draft');
+    } catch {}
     setHasUnsavedDraft(false);
     setDraftSavedAt(null);
+  };
+
+  const handleDiscardDraft = () => {
+    clearDraft();
   };
 
   const handleExportMarkdown = (note: QuickNote) => {
@@ -198,6 +230,9 @@ ${note.content}
 
     setIsEditing(false);
     setEditingExistingId(null);
+    // The content is committed now: a leftover draft would later be offered for
+    // "recovery" and could overwrite this or another note.
+    clearDraft();
   };
 
   const handleCopyContent = () => {
@@ -285,6 +320,13 @@ ${note.content}
                   <div
                     key={note.id}
                     onClick={() => {
+                      if (
+                        isEditing &&
+                        editContent !== (selectedNote?.content || '') &&
+                        !confirm('当前编辑内容尚未保存，切换文档会放弃这些改动，确定继续吗？')
+                      ) {
+                        return;
+                      }
                       setSelectedNoteId(note.id);
                       setIsEditing(false);
                     }}
@@ -372,7 +414,16 @@ ${note.content}
                   </div>
 
                   <button
-                    onClick={() => setIsEditing(false)}
+                    onClick={() => {
+                      if (
+                        isEditing &&
+                        editContent !== (selectedNote?.content || '') &&
+                        !confirm('当前编辑内容尚未保存，确定放弃吗？')
+                      ) {
+                        return;
+                      }
+                      setIsEditing(false);
+                    }}
                     className="px-3 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-xs text-zinc-400 hover:text-white"
                   >
                     取消
@@ -430,7 +481,7 @@ ${note.content}
                     <div className="flex flex-col">
                       <div className="text-[11px] text-zinc-500 mb-1 font-mono">实时渲染预览</div>
                       <div className="flex-1 bg-[#0d0e11] border border-zinc-800/80 rounded-xl p-4 overflow-y-auto text-xs min-h-[300px]">
-                        <MarkdownViewer content={editContent} />
+                        <Markdown content={editContent} />
                       </div>
                     </div>
                   </div>
@@ -451,7 +502,7 @@ ${note.content}
                   <div className="flex flex-col flex-1">
                     <div className="text-[11px] text-zinc-500 mb-1 font-mono">预览渲染效果</div>
                     <div className="flex-1 bg-[#0d0e11] border border-zinc-800/80 rounded-xl p-5 overflow-y-auto text-xs min-h-[350px]">
-                      <MarkdownViewer content={editContent} />
+                      <Markdown content={editContent} />
                     </div>
                   </div>
                 )}
@@ -534,7 +585,7 @@ ${note.content}
 
               {/* Rich Markdown Rendered Body */}
               <div className="flex-1 p-5 sm:p-6 overflow-y-auto leading-relaxed select-text bg-[#0d0e11]">
-                <MarkdownViewer content={selectedNote.content} />
+                <Markdown content={selectedNote.content} />
               </div>
 
               {/* Footer Tags & Info */}
@@ -565,210 +616,3 @@ ${note.content}
   );
 };
 
-// =========================================================================
-// Custom High-Performance Lightweight Markdown Viewer Component
-// =========================================================================
-function MarkdownViewer({ content }: { content: string }) {
-  if (!content) {
-    return <p className="text-zinc-500 italic text-xs">暂无正文内容...</p>;
-  }
-
-  // Parse lines into blocks
-  const lines = content.split('\n');
-  const elements: React.ReactNode[] = [];
-  let inCodeBlock = false;
-  let codeBuffer: string[] = [];
-  let codeLang = '';
-
-  const renderInline = (text: string): React.ReactNode => {
-    // Basic inline formatting: **bold**, `code`, [link](url)
-    const parts: React.ReactNode[] = [];
-    const regex = /(\*\*.*?\*\*|`.*?`|\[.*?\]\(.*?\))/g;
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = regex.exec(text)) !== null) {
-      if (match.index > lastIndex) {
-        parts.push(text.slice(lastIndex, match.index));
-      }
-      const token = match[0];
-      if (token.startsWith('**') && token.endsWith('**')) {
-        parts.push(
-          <strong key={match.index} className="text-zinc-100 font-semibold">
-            {token.slice(2, -2)}
-          </strong>
-        );
-      } else if (token.startsWith('`') && token.endsWith('`')) {
-        parts.push(
-          <code
-            key={match.index}
-            className="px-1.5 py-0.5 rounded bg-zinc-800 text-indigo-300 font-mono text-[11px]"
-          >
-            {token.slice(1, -1)}
-          </code>
-        );
-      } else if (token.startsWith('[') && token.includes('](')) {
-        const linkMatch = token.match(/\[(.*?)\]\((.*?)\)/);
-        if (linkMatch) {
-          parts.push(
-            <a
-              key={match.index}
-              href={linkMatch[2]}
-              target="_blank"
-              rel="noreferrer"
-              className="text-sky-400 hover:underline"
-            >
-              {linkMatch[1]}
-            </a>
-          );
-        }
-      }
-      lastIndex = match.index + token.length;
-    }
-
-    if (lastIndex < text.length) {
-      parts.push(text.slice(lastIndex));
-    }
-
-    return parts.length > 0 ? parts : text;
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // Code block delimiters
-    if (line.trim().startsWith('```')) {
-      if (inCodeBlock) {
-        // End of code block
-        const codeText = codeBuffer.join('\n');
-        elements.push(
-          <CodeSnippetBlock key={`code-${i}`} code={codeText} lang={codeLang} />
-        );
-        codeBuffer = [];
-        codeLang = '';
-        inCodeBlock = false;
-      } else {
-        // Start of code block
-        inCodeBlock = true;
-        codeLang = line.trim().slice(3).trim();
-      }
-      continue;
-    }
-
-    if (inCodeBlock) {
-      codeBuffer.push(line);
-      continue;
-    }
-
-    // Headings
-    if (line.startsWith('# ')) {
-      elements.push(
-        <h1 key={i} className="text-lg font-bold text-zinc-100 mt-4 mb-2 pb-1.5 border-b border-zinc-800">
-          {renderInline(line.slice(2))}
-        </h1>
-      );
-    } else if (line.startsWith('## ')) {
-      elements.push(
-        <h2 key={i} className="text-base font-semibold text-zinc-150 mt-3 mb-1.5 text-zinc-200">
-          {renderInline(line.slice(3))}
-        </h2>
-      );
-    } else if (line.startsWith('### ')) {
-      elements.push(
-        <h3 key={i} className="text-sm font-semibold text-zinc-300 mt-2.5 mb-1">
-          {renderInline(line.slice(4))}
-        </h3>
-      );
-    } else if (line.startsWith('> ')) {
-      // Blockquote
-      elements.push(
-        <blockquote key={i} className="border-l-2 border-indigo-500 bg-indigo-950/20 px-3.5 py-1.5 my-2 rounded-r text-zinc-300 italic text-xs">
-          {renderInline(line.slice(2))}
-        </blockquote>
-      );
-    } else if (/^[-*]\s+\[( |x)\]\s+/i.test(line)) {
-      // Checklist
-      const isChecked = /^[-*]\s+\[x\]/i.test(line);
-      const itemText = line.replace(/^[-*]\s+\[( |x)\]\s+/i, '');
-      elements.push(
-        <div key={i} className="flex items-center gap-2 my-1 text-xs text-zinc-300">
-          <input
-            type="checkbox"
-            checked={isChecked}
-            readOnly
-            className="rounded border-zinc-700 bg-zinc-800 text-indigo-500 focus:ring-0"
-          />
-          <span className={isChecked ? 'line-through text-zinc-500' : ''}>
-            {renderInline(itemText)}
-          </span>
-        </div>
-      );
-    } else if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
-      // Bullet list
-      elements.push(
-        <div key={i} className="flex items-start gap-2 my-1 text-xs text-zinc-300">
-          <span className="text-indigo-400 mt-1 shrink-0">•</span>
-          <span>{renderInline(line.trim().slice(2))}</span>
-        </div>
-      );
-    } else if (/^\d+\.\s+/.test(line.trim())) {
-      // Numbered list
-      const numMatch = line.trim().match(/^(\d+)\.\s+(.*)/);
-      if (numMatch) {
-        elements.push(
-          <div key={i} className="flex items-start gap-2 my-1 text-xs text-zinc-300">
-            <span className="font-mono text-indigo-400 shrink-0">{numMatch[1]}.</span>
-            <span>{renderInline(numMatch[2])}</span>
-          </div>
-        );
-      }
-    } else if (line.trim() === '---' || line.trim() === '***') {
-      elements.push(<hr key={i} className="my-4 border-zinc-800" />);
-    } else if (line.trim() === '') {
-      elements.push(<div key={i} className="h-2" />);
-    } else {
-      elements.push(
-        <p key={i} className="text-xs text-zinc-300 leading-relaxed my-1">
-          {renderInline(line)}
-        </p>
-      );
-    }
-  }
-
-  // Handle unclosed code block if file ends inside code fence
-  if (inCodeBlock && codeBuffer.length > 0) {
-    elements.push(
-      <CodeSnippetBlock key="code-unclosed" code={codeBuffer.join('\n')} lang={codeLang} />
-    );
-  }
-
-  return <div className="space-y-0.5">{elements}</div>;
-}
-
-function CodeSnippetBlock({ code, lang }: { code: string; lang: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <div className="my-3 rounded-xl border border-zinc-800 bg-[#090a0c] overflow-hidden">
-      <div className="px-3.5 py-1.5 bg-zinc-900/80 border-b border-zinc-800/80 flex items-center justify-between text-[11px] font-mono text-zinc-400">
-        <span>{lang || 'code'}</span>
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1 hover:text-zinc-200 transition-colors"
-        >
-          {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-          <span>{copied ? '已复制' : '复制代码'}</span>
-        </button>
-      </div>
-      <pre className="p-3.5 overflow-x-auto text-xs font-mono text-zinc-200 leading-relaxed">
-        <code>{code}</code>
-      </pre>
-    </div>
-  );
-}

@@ -33,11 +33,27 @@ export const AiIngestModal: React.FC<AiIngestModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [parsedResult, setParsedResult] = useState<ParsedEntities | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [importing, setImporting] = useState(false);
 
   // Destination custom mapping overrides
   const [siteCategories, setSiteCategories] = useState<Record<number, string>>({});
   const [secretCategories, setSecretCategories] = useState<Record<number, 'api_key' | 'ssh_key' | 'token'>>({});
   const [serverEnvs, setServerEnvs] = useState<Record<number, 'prod' | 'test' | 'dev'>>({});
+
+  // Start every open from a blank slate (a stale confirmation screen used to
+  // reappear with the previous batch still queued).
+  useEffect(() => {
+    if (isOpen) {
+      setRawText('');
+      setParsedResult(null);
+      setErrorMsg('');
+      setLoading(false);
+      setImporting(false);
+      setSiteCategories({});
+      setSecretCategories({});
+      setServerEnvs({});
+    }
+  }, [isOpen]);
 
   // Global window keydown listener for ESC
   useEffect(() => {
@@ -78,13 +94,15 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
   };
 
   const handleConfirmImport = async () => {
-    if (!parsedResult) return;
+    if (!parsedResult || importing) return;
 
     if (parsedResult.secrets.length > 0 && !masterPassword) {
       alert('检测到敏感凭证需要加密，请先输入主密码解锁金库后再入库！');
       onRequireUnlock();
       return;
     }
+
+    setImporting(true);
 
     // 1. Prepare sites with customized categories
     const newSites: NavSite[] = parsedResult.sites.map((s, idx) => ({
@@ -112,14 +130,40 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
 
     // 3. Prepare secrets (AES-256 encrypted)
     const newSecrets: SecretItem[] = [];
+    const skippedSecrets: string[] = [];
     if (masterPassword) {
       for (let i = 0; i < parsedResult.secrets.length; i++) {
         const sec = parsedResult.secrets[i];
+
+        // Already-encrypted payload (importing a Self-Hub export): keep the original
+        // ciphertext. Re-encrypting a missing rawValue used to store a credential
+        // that decrypts to an empty string and loses the original secret forever.
+        if (sec.encryptedValue && sec.iv && sec.salt) {
+          newSecrets.push({
+            id: `sec-${Date.now()}-${i}`,
+            name: sec.name,
+            category: (secretCategories[i] || sec.category || 'api_key') as SecretItem['category'],
+            encryptedValue: sec.encryptedValue,
+            iv: sec.iv,
+            salt: sec.salt,
+            maskedPreview: sec.maskedPreview || '••••••••',
+            description: sec.description,
+            tags: sec.tags,
+            updatedAt: Date.now()
+          });
+          continue;
+        }
+
+        if (!sec.rawValue || !String(sec.rawValue).trim()) {
+          skippedSecrets.push(sec.name || `第 ${i + 1} 条凭据`);
+          continue;
+        }
+
         const encrypted = await encryptText(sec.rawValue, masterPassword);
         newSecrets.push({
           id: `sec-${Date.now()}-${i}`,
           name: sec.name,
-          category: secretCategories[i] || sec.category || 'api_key',
+          category: (secretCategories[i] || sec.category || 'api_key') as SecretItem['category'],
           encryptedValue: encrypted.ciphertext,
           iv: encrypted.iv,
           salt: encrypted.salt,
@@ -129,6 +173,15 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
           updatedAt: Date.now()
         });
       }
+      if (skippedSecrets.length > 0) {
+        alert(
+          `⚠️ 以下 ${skippedSecrets.length} 条凭据缺少明文内容，已跳过（不会写入空凭据）：\n${skippedSecrets.join('、')}`
+        );
+      }
+    } else if (parsedResult.secrets.length > 0) {
+      alert(
+        `⚠️ 检测到 ${parsedResult.secrets.length} 条敏感凭据，但金库处于锁定状态，本次未导入。请先解锁金库后重试。`
+      );
     }
 
     // 4. Prepare notes
@@ -165,6 +218,7 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
     onClose();
     setParsedResult(null);
     setRawText('');
+    setImporting(false);
   };
 
   return (
@@ -279,7 +333,10 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                             onChange={(e) => setSiteCategories(prev => ({ ...prev, [i]: e.target.value }))}
                             className="bg-zinc-800 border border-zinc-700 text-xs text-zinc-200 rounded-lg px-2 py-1 focus:outline-none"
                           >
-                            {categories.filter(c => c !== '全部').map(cat => (
+                            {Array.from(new Set([
+                              ...categories.filter(c => c !== '全部'),
+                              ...(parsedResult ? parsedResult.sites.map(item => item.category).filter(Boolean) as string[] : [])
+                            ])).map(cat => (
                               <option key={cat} value={cat}>{cat}</option>
                             ))}
                           </select>
@@ -338,7 +395,11 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                         <div className="min-w-0 flex-1">
                           <div className="font-semibold text-zinc-200 text-xs truncate">{sec.name}</div>
                           <div className="text-zinc-400 font-mono text-[11px]">
-                            {createMaskedPreview(sec.rawValue)}
+                            {sec.encryptedValue
+                              ? `${sec.maskedPreview || '••••••••'}（已是加密凭据，将原样保留）`
+                              : sec.rawValue
+                                ? createMaskedPreview(sec.rawValue)
+                                : '⚠️ 缺少明文内容，导入时将跳过'}
                           </div>
                         </div>
 
@@ -388,10 +449,11 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                 </button>
                 <button
                   onClick={handleConfirmImport}
-                  className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-900 hover:bg-white text-xs font-semibold flex items-center gap-1.5 shadow-sm"
+                  disabled={importing}
+                  className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-900 hover:bg-white text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <Check className="w-3.5 h-3.5" />
-                  <span>确认存储位置，一键全部入库</span>
+                  <span>{importing ? '正在加密入库...' : '确认存储位置，一键全部入库'}</span>
                 </button>
               </div>
             </div>

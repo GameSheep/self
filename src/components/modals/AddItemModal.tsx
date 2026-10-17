@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Globe, Server, Key, CheckSquare, FileText, Check } from 'lucide-react';
+import { X, Plus, Globe, Server, Key, CheckSquare, FileText, Check, AlertCircle } from 'lucide-react';
 import { NavSite, ServerDeployment, SecretItem, CheckInTask, QuickNote } from '../../types';
 import { encryptText, createMaskedPreview } from '../../lib/crypto';
 
@@ -59,6 +59,37 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   // Note form
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  // Wipe the form (including any pasted plaintext secret) whenever the modal closes.
+  useEffect(() => {
+    if (isOpen) {
+      setFormError('');
+      setSubmitting(false);
+      setSiteTitle('');
+      setSiteUrl('');
+      setSiteDesc('');
+      setSiteCategory(categories.filter((c) => c !== '全部')[0] || '常用工具');
+      setServerName('');
+      setServerDomain('');
+      setServerIp('');
+      setServerPort(22);
+      setServerEnv('prod');
+      setServerUser('root');
+      setServerNotes('');
+      setSecretName('');
+      setSecretRaw('');
+      setSecretDesc('');
+      setCheckInName('');
+      setCheckInUrl('');
+      setCheckInType('redirect');
+      setNoteTitle('');
+      setNoteContent('');
+      setActiveType('site');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // Global window keydown listener for ESC
   useEffect(() => {
@@ -77,60 +108,82 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
+    setFormError('');
 
     if (activeType === 'site') {
-      if (!siteTitle || !siteUrl) return;
+      if (!siteTitle.trim() || !siteUrl.trim()) {
+        setFormError('请填写网站名称与 URL 网址');
+        return;
+      }
       onAddSite({
         id: `site-${Date.now()}`,
-        title: siteTitle,
+        title: siteTitle.trim(),
         url: siteUrl.startsWith('http') ? siteUrl : `https://${siteUrl}`,
         category: siteCategory,
         description: siteDesc,
+        icon: 'Globe',
         createdAt: Date.now()
       });
       onClose();
     } else if (activeType === 'server') {
-      if (!serverName || !serverIp) return;
+      if (!serverName.trim() || !serverIp.trim()) {
+        setFormError('请填写服务名称与公网 IP');
+        return;
+      }
       onAddServer({
         id: `srv-${Date.now()}`,
-        name: serverName,
+        name: serverName.trim(),
         domain: serverDomain,
-        publicIp: serverIp,
+        publicIp: serverIp.trim(),
         port: Number(serverPort) || 22,
         env: serverEnv,
         sshUser: serverUser,
-        sshCommand: `ssh ${serverUser}@${serverIp}`,
+        sshCommand: `ssh ${serverUser}@${serverIp}${Number(serverPort) && Number(serverPort) !== 22 ? ` -p ${serverPort}` : ''}`,
         notes: serverNotes,
         status: 'online',
         createdAt: Date.now()
       });
       onClose();
     } else if (activeType === 'secret') {
-      if (!secretName || !secretRaw) return;
+      if (!secretName.trim() || !secretRaw.trim()) {
+        setFormError('请填写凭据名称与明文内容');
+        return;
+      }
       if (!masterPassword) {
-        alert('安全金库当前处于锁定状态，请先输入主密码解锁后再录入敏感凭据！');
+        setFormError('安全金库处于锁定状态，请先在解锁弹窗中输入主密码（该弹窗已置于最上层）。');
         onRequireUnlock();
         return;
       }
-      const encrypted = await encryptText(secretRaw, masterPassword);
-      onAddSecret({
-        id: `sec-${Date.now()}`,
-        name: secretName,
-        category: secretCategory,
-        encryptedValue: encrypted.ciphertext,
-        iv: encrypted.iv,
-        salt: encrypted.salt,
-        maskedPreview: createMaskedPreview(secretRaw),
-        description: secretDesc,
-        updatedAt: Date.now()
-      });
-      onClose();
+      try {
+        setSubmitting(true);
+        const encrypted = await encryptText(secretRaw, masterPassword);
+        onAddSecret({
+          id: `sec-${Date.now()}`,
+          name: secretName.trim(),
+          category: secretCategory,
+          encryptedValue: encrypted.ciphertext,
+          iv: encrypted.iv,
+          salt: encrypted.salt,
+          maskedPreview: createMaskedPreview(secretRaw),
+          description: secretDesc,
+          updatedAt: Date.now()
+        });
+        onClose();
+      } catch (err) {
+        setFormError(`加密失败：${(err as Error)?.message || err}`);
+      } finally {
+        setSubmitting(false);
+      }
     } else if (activeType === 'checkin') {
-      if (!checkInName || !checkInUrl) return;
+      if (!checkInName.trim() || !checkInUrl.trim()) {
+        setFormError('请填写签到任务名称与 URL');
+        return;
+      }
       onAddCheckIn({
         id: `chk-${Date.now()}`,
-        name: checkInName,
-        url: checkInUrl,
+        name: checkInName.trim(),
+        url: checkInUrl.trim(),
         method: 'GET',
         type: checkInType,
         streakDays: 0,
@@ -138,10 +191,13 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
       });
       onClose();
     } else if (activeType === 'note') {
-      if (!noteTitle || !noteContent) return;
+      if (!noteTitle.trim() || !noteContent.trim()) {
+        setFormError('请填写便签标题与内容');
+        return;
+      }
       onAddNote({
         id: `note-${Date.now()}`,
-        title: noteTitle,
+        title: noteTitle.trim(),
         content: noteContent,
         updatedAt: Date.now()
       });
@@ -457,6 +513,13 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             </>
           )}
 
+          {formError && (
+            <div className="flex items-start gap-2 p-2.5 rounded-lg bg-red-950/40 border border-red-800/40 text-red-400 text-xs">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <span>{formError}</span>
+            </div>
+          )}
+
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800">
             <button
               type="button"
@@ -467,10 +530,11 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-900 hover:bg-white text-xs font-semibold flex items-center gap-1.5 shadow-sm"
+              disabled={submitting}
+              className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-900 hover:bg-white text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <Check className="w-3.5 h-3.5" />
-              <span>保存资产</span>
+              <span>{submitting ? '加密保存中...' : '保存资产'}</span>
             </button>
           </div>
         </form>

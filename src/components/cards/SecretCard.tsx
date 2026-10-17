@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Key, Eye, EyeOff, Copy, Check, Shield, Trash2, Lock } from 'lucide-react';
 import { SecretItem } from '../../types';
 import { decryptText } from '../../lib/crypto';
@@ -19,6 +19,27 @@ export const SecretCard: React.FC<SecretCardProps> = ({
   const [revealed, setRevealed] = useState(false);
   const [decryptedValue, setDecryptedValue] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  // Locking the vault must also erase the plaintext held by this card.
+  useEffect(() => {
+    if (!masterPassword) {
+      setRevealed(false);
+      setDecryptedValue(null);
+      setCopied(false);
+      setErrorMsg('');
+    }
+  }, [masterPassword]);
+
+  useEffect(() => {
+    const onLocked = () => {
+      setRevealed(false);
+      setDecryptedValue(null);
+      setCopied(false);
+    };
+    window.addEventListener('selfhub:vault-locked', onLocked);
+    return () => window.removeEventListener('selfhub:vault-locked', onLocked);
+  }, []);
 
   const handleToggleReveal = async () => {
     if (!masterPassword) {
@@ -32,6 +53,7 @@ export const SecretCard: React.FC<SecretCardProps> = ({
     }
 
     try {
+      setErrorMsg('');
       if (!decryptedValue) {
         const plain = await decryptText(secret.encryptedValue, secret.iv, secret.salt, masterPassword);
         setDecryptedValue(plain);
@@ -39,6 +61,7 @@ export const SecretCard: React.FC<SecretCardProps> = ({
       setRevealed(true);
     } catch (err) {
       console.error('Decryption failed', err);
+      setErrorMsg('解密失败：该凭据可能由另一个主密码加密，或密文已损坏。');
     }
   };
 
@@ -49,16 +72,23 @@ export const SecretCard: React.FC<SecretCardProps> = ({
     }
 
     try {
+      setErrorMsg('');
       let textToCopy = decryptedValue;
       if (!textToCopy) {
         textToCopy = await decryptText(secret.encryptedValue, secret.iv, secret.salt, masterPassword);
         setDecryptedValue(textToCopy);
       }
-      navigator.clipboard.writeText(textToCopy);
+      await navigator.clipboard.writeText(textToCopy);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      onRequireUnlock();
+    } catch (err) {
+      console.error('Copy failed', err);
+      // Do not silently pretend it worked: distinguish decrypt vs clipboard errors.
+      setErrorMsg(
+        decryptedValue === null && !masterPassword
+          ? '金库已锁定，请先解锁'
+          : '复制或解密失败：请确认主密码正确，且页面处于聚焦状态。'
+      );
     }
   };
 
@@ -134,6 +164,12 @@ export const SecretCard: React.FC<SecretCardProps> = ({
             </button>
           </div>
         </div>
+
+        {errorMsg && (
+          <div className="mt-2 rounded-lg border border-red-900/50 bg-red-950/30 px-2 py-1.5 text-[10px] text-red-300">
+            {errorMsg}
+          </div>
+        )}
       </div>
 
       {/* Security Status Tag */}

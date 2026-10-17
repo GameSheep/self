@@ -21,6 +21,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [noteTitle, setNoteTitle] = useState('');
   const historyRef = useRef<ImageData[]>([]);
+  const hasContentRef = useRef(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -34,6 +35,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
 
     // Save initial state
     historyRef.current = [ctx.getImageData(0, 0, canvas.width, canvas.height)];
+    hasContentRef.current = false;
   }, []);
 
   const getCoordinates = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
@@ -81,6 +83,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
     const { x, y } = getCoordinates(e);
     ctx.lineTo(x, y);
     ctx.stroke();
+    hasContentRef.current = true;
   };
 
   const stopDrawing = () => {
@@ -117,13 +120,38 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
     ctx.fillStyle = '#121316';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     historyRef.current = [ctx.getImageData(0, 0, canvas.width, canvas.height)];
+    hasContentRef.current = false;
   };
 
   const handleSave = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const dataUrl = canvas.toDataURL('image/png');
+    if (!hasContentRef.current) {
+      alert('画板还是空的，先画点内容再保存吧。');
+      return;
+    }
+
+    // Downscale before storing: a full-resolution PNG in localStorage is the
+    // fastest way to hit the ~5MB quota (which silently dropped other edits).
+    const MAX_EDGE = 1280;
+    let dataUrl = canvas.toDataURL('image/png');
+    try {
+      const scale = Math.min(1, MAX_EDGE / Math.max(canvas.width, canvas.height));
+      if (scale < 1) {
+        const out = document.createElement('canvas');
+        out.width = Math.round(canvas.width * scale);
+        out.height = Math.round(canvas.height * scale);
+        const octx = out.getContext('2d');
+        if (octx) {
+          octx.fillStyle = '#121316';
+          octx.fillRect(0, 0, out.width, out.height);
+          octx.drawImage(canvas, 0, 0, out.width, out.height);
+          dataUrl = out.toDataURL('image/png');
+        }
+      }
+    } catch {}
+
     const newNote: HandwritingNote = {
       id: `hw-${Date.now()}`,
       title: noteTitle.trim() || `手绘速记 (${new Date().toLocaleTimeString()})`,
@@ -263,7 +291,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
                   <span className="truncate">{note.title}</span>
                   <button
                     onClick={() => onDeleteNote(note.id)}
-                    className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 text-[10px]"
+                    className="opacity-100 sm:opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 text-[10px]"
                   >
                     删除
                   </button>

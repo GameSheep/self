@@ -24,3 +24,12 @@ dist-ssr
 *.sw?
 *.zip
 *.enc.json
+
+# Playwright artifacts
+test-results
+playwright-report
+tests/.report
+tests/.artifacts
+
+# Local audit scratch space (probes/reports generated during the bug audit)
+.audit

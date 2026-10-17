@@ -3,6 +3,8 @@
  * Uses Browser Native WebCrypto (PBKDF2 + AES-256-GCM)
  * Zero external dependencies, 100% client-side security
  */
+import { rememberMasterPassword, recallMasterPassword, forgetMasterPassword } from './trustedDevice';
+import { normalizeHubState } from './storage';
 
 // Helper to convert ArrayBuffer to Base64
 export function bufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
@@ -174,21 +176,25 @@ export interface TrustedDeviceSession {
 // In-memory active session reference
 let memorySessionPassword: string | null = null;
 
-// Secure session: uses sessionStorage (ephemeral, destroyed on tab/window close)
-// Cleans up legacy plaintext password from localStorage immediately
-export function saveTrustedSession(password: string): void {
+/**
+ * Keep the vault unlocked on this device.
+ * The password is wrapped with a random per-device key in IndexedDB
+ * (see lib/trustedDevice.ts) and expires after `days` days.
+ */
+export async function saveTrustedSession(password: string, days = 30): Promise<void> {
+  memorySessionPassword = password;
   try {
-    memorySessionPassword = password;
     sessionStorage.setItem('self_hub_session_active', '1');
     // Security clean up: immediately wipe any insecure legacy localStorage key
     localStorage.removeItem(TRUSTED_DEVICE_KEY);
   } catch (err) {
     console.warn('Failed to save session', err);
   }
+  await rememberMasterPassword(password, days);
 }
 
+/** Synchronous in-memory lookup (used during a live session). */
 export function getTrustedSession(): { password?: string; isValid: boolean } {
-  // Purge any legacy localStorage plaintext password if still present
   try {
     localStorage.removeItem(TRUSTED_DEVICE_KEY);
   } catch {}
@@ -199,7 +205,24 @@ export function getTrustedSession(): { password?: string; isValid: boolean } {
   return { isValid: false };
 }
 
-export function clearTrustedSession(): void {
+/**
+ * Boot-time lookup: restores a remembered session surviving a page reload
+ * or browser restart, until it expires.
+ */
+export async function restoreTrustedSession(): Promise<{ password?: string; isValid: boolean }> {
+  if (memorySessionPassword) return { password: memorySessionPassword, isValid: true };
+  try {
+    const password = await recallMasterPassword();
+    if (password) {
+      memorySessionPassword = password;
+      sessionStorage.setItem('self_hub_session_active', '1');
+      return { password, isValid: true };
+    }
+  } catch {}
+  return { isValid: false };
+}
+
+export async function clearTrustedSession(): Promise<void> {
   memorySessionPassword = null;
   try {
     sessionStorage.removeItem('self_hub_session_active');
@@ -209,6 +232,7 @@ export function clearTrustedSession(): void {
   } catch {
     // ignore
   }
+  await forgetMasterPassword();
 }
 
 /**
@@ -259,7 +283,8 @@ export async function importEncryptedBackup(payloadJson: string, password: strin
         parsedPayload.salt,
         password
       );
-      return JSON.parse(decryptedJson);
+      // Normalised so a backup missing optional collections cannot blank the app.
+      return normalizeHubState(JSON.parse(decryptedJson));
     } catch {
       throw new Error('解密失败：主密码错误或备份已被篡改');
     }
@@ -269,7 +294,6 @@ export async function importEncryptedBackup(payloadJson: string, password: strin
   if (parsedPayload.sites && parsedPayload.servers && parsedPayload.secrets) {
     return parsedPayload;
   }
-
   throw new Error('无效的 Self-Hub 备份文件格式');
 }
 

@@ -1,8 +1,13 @@
-import { HubState } from '../types';
+import { HubState, WucaiConfig, YoudaoConfig, GoTabPreferences } from '../types';
 import { syncStateToIndexedDb } from './indexedDb';
 
 const STORAGE_KEY = 'self_hub_data_v2';
 const MASTER_HASH_KEY = 'self_hub_master_auth';
+const SCHEMA_VERSION = 2;
+
+export function getStorageKey(): string {
+  return STORAGE_KEY;
+}
 
 export const INITIAL_STATE: HubState = {
   theme: 'dark',
@@ -156,37 +161,96 @@ export function resetHubStateToClean(): void {
 // In-memory recovery buffer if localStorage fails
 let inMemoryFallbackState: HubState | null = null;
 
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function mergeObject<T extends object>(defaults: T, value: unknown): T {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...defaults };
+  return { ...defaults, ...(value as Partial<T>) };
+}
+
+/**
+ * Coerce arbitrary (possibly imported / legacy / hand-edited) data into a complete HubState.
+ *
+ * Every consumer of a restored backup must go through this: importBackup() and
+ * importEncryptedBackup() only validate a subset of the fields, so a backup missing
+ * `checkIns`/`handwritings`/`obsidianConfig`/`categories` used to reach the views and
+ * crash them (undefined.length) into a blank page.
+ */
+export function normalizeHubState(raw: unknown): HubState {
+  const base: any = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    theme: base.theme === 'light' ? 'light' : 'dark',
+    categories:
+      Array.isArray(base.categories) && base.categories.length > 0
+        ? base.categories.filter((c: unknown) => typeof c === 'string')
+        : [...INITIAL_STATE.categories],
+    sites: asArray(base.sites),
+    servers: asArray(base.servers),
+    secrets: asArray(base.secrets),
+    checkIns: asArray(base.checkIns),
+    reminders: asArray(base.reminders),
+    notes: asArray(base.notes),
+    handwritings: asArray(base.handwritings),
+    inbox: asArray(base.inbox),
+    projects: asArray(base.projects),
+    annotations: asArray(base.annotations),
+    obsidianNotes: asArray(base.obsidianNotes),
+    wucaiHighlights: asArray(base.wucaiHighlights),
+    youdaoNotes: asArray(base.youdaoNotes),
+    obsidianConfig: mergeObject(INITIAL_STATE.obsidianConfig, base.obsidianConfig),
+    wucaiConfig: mergeObject(INITIAL_STATE.wucaiConfig as WucaiConfig, base.wucaiConfig),
+    youdaoConfig: mergeObject(INITIAL_STATE.youdaoConfig as YoudaoConfig, base.youdaoConfig),
+    aiConfig: mergeObject(INITIAL_STATE.aiConfig, base.aiConfig),
+    cloudflareSync: mergeObject(INITIAL_STATE.cloudflareSync, base.cloudflareSync),
+    gotabPrefs: mergeObject(INITIAL_STATE.gotabPrefs as GoTabPreferences, base.gotabPrefs)
+  };
+}
+
 export function loadHubState(): HubState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      saveHubState(INITIAL_STATE);
-      return INITIAL_STATE;
+      // No seed write here: loadHubState() runs inside a useState initializer
+      // (render phase). App seeds storage from an effect instead.
+      return normalizeHubState(INITIAL_STATE);
     }
-    const parsed = JSON.parse(raw);
-    return { ...INITIAL_STATE, ...parsed };
+    return normalizeHubState(JSON.parse(raw));
   } catch (err) {
     console.error('Failed to load state from localStorage', err);
-    return inMemoryFallbackState || INITIAL_STATE;
+    // Keep the damaged payload so the user can still export/salvage it.
+    try {
+      const damaged = localStorage.getItem(STORAGE_KEY);
+      if (damaged) localStorage.setItem(`${STORAGE_KEY}__corrupt_${Date.now()}`, damaged);
+    } catch {}
+    return normalizeHubState(inMemoryFallbackState || INITIAL_STATE);
   }
 }
 
 export function saveHubState(state: HubState): { success: boolean; error?: string } {
-  state.schemaVersion = 2;
-  inMemoryFallbackState = state;
+  // Never mutate the caller's object (INITIAL_STATE used to be patched in place).
+  const payload: HubState = { ...state, schemaVersion: SCHEMA_VERSION };
+  inMemoryFallbackState = payload;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     // Asynchronously replicate to persistent IndexedDB
-    syncStateToIndexedDb(state).catch((e) => console.warn('IndexedDB auto-sync error', e));
+    syncStateToIndexedDb(payload).catch((e) => console.warn('IndexedDB auto-sync error', e));
     return { success: true };
   } catch (err: any) {
     console.error('Failed to save state to localStorage', err);
     // Still try to persist in IndexedDB even if localStorage quota failed!
-    syncStateToIndexedDb(state).catch(() => {});
+    syncStateToIndexedDb(payload).catch(() => {});
+    const isQuota =
+      err?.name === 'QuotaExceededError' ||
+      err?.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+      err?.code === 22;
     return {
       success: false,
-      error: err?.name === 'QuotaExceededError' 
-        ? 'LocalStorage 空间超出限制，数据已自动备份至 IndexedDB 底座与内存' 
+      error: isQuota
+        ? '浏览器本地存储空间已满（LocalStorage 约 5MB）。本次改动只存在于内存中，刷新后会丢失：请先导出备份，再删除部分手绘/大笔记后重试。'
         : `保存失败: ${err?.message || '未知存储错误'}`
     };
   }
@@ -201,8 +265,15 @@ export function validateHubState(data: any): { isValid: boolean; errors: string[
     return { isValid: false, errors: ['备份数据必须为有效的 JSON 对象'] };
   }
 
-  const requiredArrays = ['sites', 'servers', 'secrets', 'reminders', 'notes'];
+  const requiredArrays = [
+    'sites', 'servers', 'secrets', 'reminders', 'notes', 'checkIns', 'handwritings'
+  ];
   for (const field of requiredArrays) {
+    if (data[field] !== undefined && !Array.isArray(data[field])) {
+      errors.push(`字段类型错误，应为数组: ${field}`);
+    }
+  }
+  for (const field of ['sites', 'servers', 'secrets', 'reminders', 'notes']) {
     if (!Array.isArray(data[field])) {
       errors.push(`缺少必要数据集合: ${field}`);
     }
@@ -227,6 +298,11 @@ export function validateHubState(data: any): { isValid: boolean; errors: string[
   checkColl(data.servers, '部署服务器');
   checkColl(data.secrets, '金库凭据');
   checkColl(data.notes, '知识笔记');
+  checkColl(data.reminders, '提醒事项');
+  checkColl(data.checkIns, '签到任务');
+  checkColl(data.handwritings, '手绘卡片');
+  checkColl(data.inbox, '收件箱条目');
+  checkColl(data.projects, '项目空间');
 
   return { isValid: errors.length === 0, errors };
 }
@@ -259,6 +335,38 @@ export function exportBackup(state: HubState): void {
   downloadAnchor.remove();
 }
 
+const ROLLBACK_KEY = 'self_hub_rollback_snapshot';
+
+/** Snapshot the current payload so a bad import can be undone. */
+export function snapshotForRollback(): void {
+  try {
+    const prev = localStorage.getItem(STORAGE_KEY);
+    if (prev) sessionStorage.setItem(ROLLBACK_KEY, prev);
+  } catch {}
+}
+
+export function hasRollbackSnapshot(): boolean {
+  try {
+    return Boolean(sessionStorage.getItem(ROLLBACK_KEY));
+  } catch {
+    return false;
+  }
+}
+
+/** Restore the snapshot captured before the last backup import. */
+export function restoreRollbackSnapshot(): HubState | null {
+  try {
+    const raw = sessionStorage.getItem(ROLLBACK_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(ROLLBACK_KEY);
+    const restored = normalizeHubState(JSON.parse(raw));
+    saveHubState(restored);
+    return restored;
+  } catch {
+    return null;
+  }
+}
+
 export function importBackup(jsonString: string): HubState | null {
   try {
     const parsed = JSON.parse(jsonString);
@@ -269,14 +377,12 @@ export function importBackup(jsonString: string): HubState | null {
       return null;
     }
 
-    // Save previous snapshot as emergency rollback
-    try {
-      const prev = localStorage.getItem(STORAGE_KEY);
-      if (prev) sessionStorage.setItem('self_hub_rollback_snapshot', prev);
-    } catch {}
+    // Save previous snapshot as emergency rollback (readable via restoreRollbackSnapshot)
+    snapshotForRollback();
 
-    saveHubState(parsed);
-    return parsed;
+    // Normalised so missing optional collections can never reach the views.
+    // Persisting is the caller's job (App persists every committed state change).
+    return normalizeHubState(parsed);
   } catch (err) {
     console.error('Failed to import backup', err);
     return null;

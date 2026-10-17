@@ -16,6 +16,16 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Never keep a typed password / error message across open-close cycles.
+  React.useEffect(() => {
+    if (isOpen) {
+      setPassword('');
+      setConfirmPassword('');
+      setErrorMsg('');
+      setLoading(false);
+    }
+  }, [isOpen]);
+
   // Global window keydown listener for ESC
   React.useEffect(() => {
     if (!isOpen) return;
@@ -62,7 +72,7 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
         setMasterAuth(authHash.hash, authHash.salt);
 
         if (rememberDevice) {
-          saveTrustedSession(password);
+          await saveTrustedSession(password);
         }
 
         onSuccess(password);
@@ -76,7 +86,7 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
         }
 
         if (rememberDevice) {
-          saveTrustedSession(password);
+          await saveTrustedSession(password);
         }
 
         onSuccess(password);
@@ -92,7 +102,7 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
   return (
     <div 
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
     >
       <div 
         onClick={(e) => e.stopPropagation()}

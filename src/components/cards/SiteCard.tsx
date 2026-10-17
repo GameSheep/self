@@ -9,14 +9,20 @@ interface SiteCardProps {
   onTogglePin?: (id: string) => void;
 }
 
-export const SiteCard: React.FC<SiteCardProps> = ({ site, onVisit, onDelete, onTogglePin }) => {
+export const SiteCard: React.FC<SiteCardProps> = React.memo(({ site, onVisit, onDelete, onTogglePin }) => {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
-  const handleCopy = (e: React.MouseEvent) => {
+  const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(site.url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(site.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopyFailed(true);
+      setTimeout(() => setCopyFailed(false), 2500);
+    }
   };
 
   const handleVisit = () => {
@@ -24,16 +30,30 @@ export const SiteCard: React.FC<SiteCardProps> = ({ site, onVisit, onDelete, onT
     window.open(site.url, '_blank', 'noopener,noreferrer');
   };
 
-  const getFaviconUrl = (url: string) => {
+  /**
+   * Local-only icon.
+   *
+   * This used to point at https://www.google.com/s2/favicons for every bookmark,
+   * which (a) sent each saved domain to a third party from an app that advertises
+   * "本地离线优先 / 无第三方追踪", (b) fired one network request per card (hundreds
+   * for an imported bookmark library) and (c) spammed the console with 404s for
+   * domains Google does not know. A deterministic letter tile costs nothing.
+   */
+  const getHostname = (url: string): string => {
     try {
-      const parsed = new URL(url);
-      return `https://www.google.com/s2/favicons?domain=${parsed.hostname}&sz=32`;
+      return new URL(url).hostname.replace(/^www\./, '');
     } catch {
-      return null;
+      return url.replace(/^https?:\/\//, '').split('/')[0] || '';
     }
   };
 
-  const favicon = getFaviconUrl(site.url);
+  const hostname = getHostname(site.url);
+  const initial = (site.title || hostname || '?').trim().charAt(0).toUpperCase() || '?';
+  const hue = React.useMemo(() => {
+    let h = 0;
+    for (let i = 0; i < hostname.length; i++) h = (h * 31 + hostname.charCodeAt(i)) % 360;
+    return h;
+  }, [hostname]);
 
   return (
     <div 
@@ -44,19 +64,16 @@ export const SiteCard: React.FC<SiteCardProps> = ({ site, onVisit, onDelete, onT
         {/* Header */}
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="flex items-center gap-2.5 min-w-0 flex-1">
-            <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0 overflow-hidden">
-              {favicon ? (
-                <img 
-                  src={favicon} 
-                  alt="" 
-                  className="w-4 h-4 object-contain opacity-90 group-hover:opacity-100"
-                  onError={(e) => {
-                    (e.target as HTMLElement).style.display = 'none';
-                  }}
-                />
-              ) : (
-                <Globe className="w-4 h-4 text-zinc-400" />
-              )}
+            <div
+              className="w-8 h-8 rounded-lg border border-zinc-800 flex items-center justify-center shrink-0 overflow-hidden font-semibold text-xs select-none"
+              style={{
+                backgroundColor: `hsl(${hue} 45% 20%)`,
+                color: `hsl(${hue} 75% 72%)`
+              }}
+              title={hostname || site.title}
+              aria-hidden="true"
+            >
+              {initial}
             </div>
             <div className="min-w-0 flex-1">
               <h3 className="text-xs sm:text-sm font-semibold text-zinc-200 group-hover:text-white truncate">
@@ -85,7 +102,7 @@ export const SiteCard: React.FC<SiteCardProps> = ({ site, onVisit, onDelete, onT
             <button
               onClick={handleCopy}
               className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 text-xs"
-              title="复制网址"
+              title={copyFailed ? '复制失败，请手动复制' : '复制网址'}
             >
               {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
             </button>
@@ -128,4 +145,8 @@ export const SiteCard: React.FC<SiteCardProps> = ({ site, onVisit, onDelete, onT
       </div>
     </div>
   );
-};
+});
+
+SiteCard.displayName = 'SiteCard';
+
+export default SiteCard;

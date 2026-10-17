@@ -52,26 +52,51 @@ function renderList(list) {
     card.className = 'card';
 
     const colorHex = COLOR_MAP[item.color] || '#fde047';
-    card.innerHTML = `
-      <div class="card-color-stripe" style="background-color: ${colorHex};"></div>
-      <div class="card-content">
-        <div class="card-text">"${item.text}"</div>
-        ${item.note ? `<div class="card-note">💭 ${item.note}</div>` : ''}
-        <div class="card-meta">
-          <span>${new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-          <span>定位跳转 &rarr;</span>
-        </div>
-      </div>
-    `;
+
+    // Build with textContent: highlighted text comes from arbitrary web pages,
+    // so interpolating it into innerHTML was a stored-XSS sink.
+    const stripe = document.createElement('div');
+    stripe.className = 'card-color-stripe';
+    stripe.style.backgroundColor = colorHex;
+
+    const content = document.createElement('div');
+    content.className = 'card-content';
+
+    const text = document.createElement('div');
+    text.className = 'card-text';
+    text.textContent = `"${item.text}"`;
+    content.appendChild(text);
+
+    if (item.note) {
+      const note = document.createElement('div');
+      note.className = 'card-note';
+      note.textContent = `💭 ${item.note}`;
+      content.appendChild(note);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'card-meta';
+    const time = document.createElement('span');
+    time.textContent = new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const jump = document.createElement('span');
+    jump.textContent = '定位跳转 →';
+    meta.appendChild(time);
+    meta.appendChild(jump);
+    content.appendChild(meta);
+
+    card.appendChild(stripe);
+    card.appendChild(content);
 
     // Click card to scroll to annotation on web page
     card.addEventListener('click', async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab && tab.id) {
+      if (tab && tab.id && tab.url === activeTabUrl) {
         chrome.tabs.sendMessage(tab.id, {
           action: 'SCROLL_TO_ANNOTATION',
           id: item.id
         });
+      } else if (tab && tab.id) {
+        alert('该划线属于另一个标签页，请切换到对应网页后再定位。');
       }
     });
 
@@ -79,9 +104,121 @@ function renderList(list) {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Unified inbox: chrome.storage.local.selfhub_inbox used to be write-only. */
+/* ------------------------------------------------------------------ */
+
+let inboxItems = [];
+let activeTab = 'annotations';
+
+function loadInbox() {
+  chrome.storage.local.get(['selfhub_inbox'], (res) => {
+    inboxItems = (res.selfhub_inbox || []).filter((i) => !i.isDeleted);
+    renderInbox();
+  });
+}
+
+function renderInbox() {
+  const container = document.getElementById('inbox-list');
+  const count = document.getElementById('inbox-count');
+  if (count) count.textContent = String(inboxItems.length);
+
+  container.innerHTML = '';
+  if (inboxItems.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = '统一收件箱还是空的。用弹窗按钮或右键菜单「保存至统一收件箱」收集网页与灵感。';
+    container.appendChild(empty);
+    return;
+  }
+
+  inboxItems.forEach((item) => {
+    const card = document.createElement('div');
+    card.className = 'inbox-item';
+
+    const title = document.createElement('div');
+    title.className = 'inbox-title';
+    title.textContent = item.title || (item.url ? item.url : '未命名碎片');
+    card.appendChild(title);
+
+    const body = document.createElement('div');
+    body.className = 'inbox-content';
+    body.textContent = item.content || item.url || '';
+    card.appendChild(body);
+
+    const actions = document.createElement('div');
+    actions.className = 'inbox-actions';
+
+    const meta = document.createElement('span');
+    meta.className = 'inbox-meta';
+    meta.textContent = item.createdAt ? new Date(item.createdAt).toLocaleString() : '';
+    actions.appendChild(meta);
+
+    const btnRow = document.createElement('div');
+    btnRow.style.display = 'flex';
+    btnRow.style.gap = '6px';
+
+    if (item.url) {
+      const openBtn = document.createElement('button');
+      openBtn.className = 'btn-action';
+      openBtn.textContent = '打开';
+      openBtn.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
+      btnRow.appendChild(openBtn);
+    }
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn-action';
+    delBtn.textContent = '删除';
+    delBtn.addEventListener('click', () => {
+      if (!confirm('确定从统一收件箱删除该条吗？')) return;
+      const next = inboxItems.filter((i) => i.id !== item.id);
+      inboxItems = next;
+      chrome.storage.local.set({ selfhub_inbox: next }, renderInbox);
+    });
+    btnRow.appendChild(delBtn);
+
+    actions.appendChild(btnRow);
+    card.appendChild(actions);
+    container.appendChild(card);
+  });
+}
+
+function setActiveTab(tab) {
+  activeTab = tab;
+  const isInbox = tab === 'inbox';
+  document.getElementById('tab-annotations').classList.toggle('active', !isInbox);
+  document.getElementById('tab-inbox').classList.toggle('active', isInbox);
+  document.getElementById('list').style.display = isInbox ? 'none' : 'flex';
+  document.getElementById('inbox-list').style.display = isInbox ? 'flex' : 'none';
+  document.getElementById('export-md-btn').style.display = isInbox ? 'none' : 'block';
+  document.getElementById('search-input').placeholder = isInbox
+    ? '检索收件箱内容...'
+    : '检索当前网页批注与思考...';
+  if (isInbox) renderInbox();
+}
+
+document.getElementById('tab-annotations').addEventListener('click', () => setActiveTab('annotations'));
+document.getElementById('tab-inbox').addEventListener('click', () => setActiveTab('inbox'));
+
 // Search filter
 document.getElementById('search-input').addEventListener('input', (e) => {
   const q = e.target.value.toLowerCase().trim();
+  if (activeTab === 'inbox') {
+    const container = document.getElementById('inbox-list');
+    const filtered = q
+      ? inboxItems.filter(
+          (i) =>
+            (i.title && i.title.toLowerCase().includes(q)) ||
+            (i.content && i.content.toLowerCase().includes(q)) ||
+            (i.url && i.url.toLowerCase().includes(q))
+        )
+      : inboxItems;
+    const backup = inboxItems;
+    inboxItems = filtered;
+    renderInbox();
+    inboxItems = backup;
+    return;
+  }
   if (!q) {
     renderList(currentAnnotations);
     return;
@@ -94,7 +231,19 @@ document.getElementById('search-input').addEventListener('input', (e) => {
 });
 
 // Refresh button
-document.getElementById('refresh-btn').addEventListener('click', loadAnnotations);
+document.getElementById('refresh-btn').addEventListener('click', () => {
+  loadAnnotations();
+  loadInbox();
+});
+
+// Keep the list in sync when the current tab changes.
+chrome.tabs.onActivated.addListener(() => loadAnnotations());
+chrome.tabs.onUpdated.addListener((_id, info) => {
+  if (info.status === 'complete') loadAnnotations();
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.selfhub_inbox) loadInbox();
+});
 
 // Export to Obsidian Markdown format
 document.getElementById('export-md-btn').addEventListener('click', () => {
@@ -147,22 +296,29 @@ tags:
   });
 });
 
-// Open Self-Hub Web App
+// Open Self-Hub Web App (Built-in offline workspace)
 document.getElementById('open-hub-btn').addEventListener('click', () => {
   chrome.storage.local.get(['selfhub_web_url'], (res) => {
-    let target = res.selfhub_web_url;
-    if (!target) {
-      target = prompt('请输入您的 Self-Hub 部署地址（如 Cloudflare Pages 网址或 http://localhost:4173）：', 'http://localhost:4173');
-      if (target) {
-        target = target.trim();
-        chrome.storage.local.set({ selfhub_web_url: target });
-      }
-    }
-    if (target) {
-      chrome.tabs.create({ url: target });
-    }
+    const customUrl = res.selfhub_web_url;
+    const target = (customUrl && !customUrl.includes('localhost:4173'))
+      ? customUrl
+      : chrome.runtime.getURL('app/index.html');
+    chrome.tabs.create({ url: target });
   });
 });
 
+// Open Sync Settings
+const syncBtn = document.getElementById('sync-btn');
+if (syncBtn) {
+  syncBtn.addEventListener('click', () => {
+    if (chrome.runtime.openOptionsPage) {
+      chrome.runtime.openOptionsPage();
+    } else {
+      window.open('options.html');
+    }
+  });
+}
+
 // Initial load
 loadAnnotations();
+loadInbox();
