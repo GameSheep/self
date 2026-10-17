@@ -532,6 +532,69 @@ UI：设置 →「备份与恢复」页新增一块：上次备份时间、当�
 - `App.tsx`（约 970 行）仍是上帝组件：状态、副作用、所有业务回调与渲染都在一起，需要拆 `useHubState` / `useCloudBackup` / `useReminderNotifications`。
 - 扩展 `options.html` 的同步配置与应用设置是两套存储（`chrome.storage` vs `localStorage`），路径也不同（`self/` vs `selfhub_sync/`）。
 
+---
+
+## 21. 数据安全：备份不再携带凭据（2026-10-17 第十三轮）
+
+### 21.1 发现的问题
+
+全量备份把整个 `HubState` 原样 JSON 化后上传，而 `HubState` 里含有：
+
+- `obsidianConfig.accessKeySecret`（OSS 密钥）
+- `webdavConfig.password`
+- `aiConfig.apiKey`
+- `wucaiConfig.token` / `youdaoConfig.token` / `cookie`
+
+也就是说，**用来保护桶的 OSS 密钥被写进了这个桶里的文件**。桶一旦被分享、被误设为公开、或被别人拿到读权限，泄露的不只是备份，而是账号本身。这类"把钥匙放在门上"的设计必须移除。
+
+（顺带实测了当前桶的暴露面：匿名 `GET` 与匿名 `LIST` 都返回 **403**，目前是私有桶，暂时没有实际泄露，但设计缺陷仍然存在。）
+
+### 21.2 方案
+
+备份信封升级到 **v2**，上传前调用 `stripCredentials(state)`：
+
+- 抹掉上面列出的全部凭据字段；
+- 保留非敏感配置（bucket / endpoint / prefix / accessKeyId / WebDAV URL 与用户名），保证换设备恢复后配置可用；
+- 加 `credentialsStripped: true` 标记，老备份（v1）可被识别为"含明文凭据"；
+- `secrets[]` 加密库**保留**——它没有主密码无法解密，而主密码从不离开浏览器。
+
+恢复时走 `mergeRestoredState(restored, current)`：配置用备份的，**凭据用本机的**。否则在新设备上恢复会把刚填好的 Key 清空。
+
+### 21.3 真实环境验证
+
+```
+备份状态：刚刚备份
+云端文件：1533 → 1353 字节（去掉密钥后变小）
+
+OSS-SECRET-MARKER-1234567890   出现: False
+AI-SECRET-MARKER-abcdefghij    出现: False
+WUCAI-SECRET-MARKER-xyz        出现: False
+<真实 WebDAV 密码>              出现: False
+
+非敏感字段仍在：my-vault ✅  LTAI-VISIBLE-ID ✅  credentialsStripped: True ✅
+探针清理：DELETE 204 / 204
+```
+
+### 21.4 测试
+
+`tests/e2e/security-and-features.spec.ts` 前两条：上传体不得包含任何密钥字样（逐字段断言）、恢复时保留本机凭据。
+
+---
+
+## 22. 功能开关（2026-10-17 第十三轮）
+
+不是每个模块都要用，侧边栏太长本身就是负担。新增 `src/lib/features.ts`：
+
+- 可关闭：收件箱、项目空间、知识文档、手绘白板、服务器、金库、签到、五彩、有道
+- **不可关闭**：仪表盘、网站、倒计时、Obsidian 笔记（CORE_TABS）
+- 关闭后从侧边栏与顶部标签中移除；若正停在该模块，自动退回仪表盘
+- 数据不删除，重新打开即恢复
+
+设置新增「功能开关」分区（`data-feature-toggle`），7 条测试覆盖：关闭后隐藏、数据仍在、当前页回退、核心模块无开关、重新开启恢复。
+
+全量 **126 条测试通过**。
+
+
 
 
 
