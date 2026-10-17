@@ -134,3 +134,123 @@ export function publishRemindersToExtension(reminders: ReminderItem[]): boolean 
 export function requestReminderCheck(): boolean {
   return sendToWorker({ action: 'CHECK_REMINDERS_NOW' });
 }
+
+/* -------------------------------------------------------------------------- */
+/* Extension's own sync (SyncManager) — made visible to the app settings       */
+/* -------------------------------------------------------------------------- */
+
+export interface ExtensionSyncState {
+  /** Was a chrome.storage-backed config found at all? */
+  available: boolean;
+  provider: 'none' | 's3' | 'webdav';
+  autoSync: boolean;
+  /** Path prefix the extension writes under, e.g. "self" or "selfhub_sync". */
+  pathPrefix?: string;
+  /** Where the data actually lands (URL or bucket), for the overlap check. */
+  endpoint?: string;
+  lastSyncTime?: number;
+  lastMessage?: string;
+  state?: string;
+}
+
+interface ChromeSyncLike extends ChromeStorageLike {
+  storage?: {
+    local?: {
+      set: (items: Record<string, unknown>, cb?: () => void) => void;
+      get?: (keys: string[] | string, cb: (items: Record<string, unknown>) => void) => void;
+    };
+  };
+  runtime?: {
+    id?: string;
+    sendMessage?: (message: unknown, cb?: (response: unknown) => void) => void;
+    lastError?: unknown;
+    openOptionsPage?: () => void;
+    getURL?: (path: string) => string;
+  };
+  tabs?: { create?: (props: { url: string }) => void };
+}
+
+function chromeSyncApi(): ChromeSyncLike | null {
+  const candidate = (globalThis as unknown as { chrome?: ChromeSyncLike }).chrome;
+  if (candidate?.storage?.local?.set) return candidate;
+  return null;
+}
+
+/** Read the extension's sync configuration (empty when not in the extension). */
+export async function readExtensionSyncState(): Promise<ExtensionSyncState> {
+  const api = chromeSyncApi();
+  const unavailable: ExtensionSyncState = { available: false, provider: 'none', autoSync: false };
+  if (!api?.storage?.local?.get) return unavailable;
+
+  const get = api.storage!.local!.get!.bind(api.storage!.local);
+  const set = api.storage!.local!.set!.bind(api.storage!.local);
+  return new Promise<ExtensionSyncState>((resolve) => {
+    try {
+      get(['selfhub_sync_config', 'selfhub_sync_status'], (res) => {
+        const config = (res?.selfhub_sync_config || {}) as Record<string, any>;
+        const status = (res?.selfhub_sync_status || {}) as Record<string, any>;
+        const provider = (config.provider || 'none') as ExtensionSyncState['provider'];
+        const sub = provider === 'webdav' ? config.webdav || {} : config.s3 || {};
+        resolve({
+          available: true,
+          provider,
+          autoSync: config.autoSync !== false,
+          pathPrefix: sub.pathPrefix,
+          endpoint: provider === 'webdav' ? sub.serverUrl : sub.endpoint || sub.bucket,
+          lastSyncTime: status.lastSyncTime,
+          lastMessage: status.lastMessage,
+          state: status.state
+        });
+      });
+    } catch {
+      resolve(unavailable);
+    }
+  });
+}
+
+/**
+ * Turn the extension's own sync off (or back on).
+ *
+ * Used to resolve the overlap: the app already backs up sites/annotations inside
+ * its whole-state snapshot, so running both writes the same data twice.
+ */
+export async function setExtensionSyncEnabled(enabled: boolean): Promise<boolean> {
+  const api = chromeSyncApi();
+  if (!api?.storage?.local?.get || !api.storage.local.set) return false;
+
+  const get = api.storage!.local!.get!.bind(api.storage!.local);
+  const set = api.storage!.local!.set!.bind(api.storage!.local);
+  return new Promise<boolean>((resolve) => {
+    try {
+      get(['selfhub_sync_config'], (res) => {
+        const config = { ...((res?.selfhub_sync_config || {}) as Record<string, unknown>) };
+        config.provider = enabled ? config.provider || 'none' : 'none';
+        config.disabledByApp = !enabled;
+        set({ selfhub_sync_config: config }, () => resolve(true));
+      });
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+/** Open the extension's own options page (where SyncManager is configured). */
+export function openExtensionOptions(): boolean {
+  const api = chromeSyncApi();
+  if (!api?.runtime?.id) return false;
+  try {
+    if (api.runtime.openOptionsPage) {
+      api.runtime.openOptionsPage();
+      return true;
+    }
+    if (api.runtime.getURL && api.tabs?.create) {
+      api.tabs.create({ url: api.runtime.getURL('options.html') });
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+

@@ -13,7 +13,13 @@ import {
   readStateBackupFromWebdav
 } from '../../lib/stateBackup';
 import { testWebdav } from '../../lib/webdavClient';
-import { isExtensionContext } from '../../lib/extensionBridge';
+import {
+  isExtensionContext,
+  openExtensionOptions,
+  readExtensionSyncState,
+  setExtensionSyncEnabled,
+  type ExtensionSyncState
+} from '../../lib/extensionBridge';
 import { INTEGRATIONS, IntegrationId } from '../../lib/integrations';
 import { FEATURE_DEFS, FeatureId, isFeatureEnabled } from '../../lib/features';
 import { IntegrationCard } from '../settings/IntegrationCard';
@@ -62,6 +68,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   );
   const [wdTest, setWdTest] = useState<{ ok: boolean; message: string } | null>(null);
   const [wdTesting, setWdTesting] = useState(false);
+  const [extSync, setExtSync] = useState<ExtensionSyncState>({
+    available: false,
+    provider: 'none',
+    autoSync: false
+  });
   useEffect(() => {
     if (isOpen && webdavConfig) setWd(webdavConfig);
   }, [isOpen, webdavConfig]);
@@ -70,6 +81,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   // AI state
   const [savedSuccess, setSavedSuccess] = useState(false);
+  // True when the app's own whole-state backup is pointing somewhere.
+  const backupTargetActive = Boolean(
+    (webdavConfig?.enabled && webdavConfig.url) || (obsidianConfig.enabled && obsidianConfig.bucket)
+  );
 
   // Storage Quota & Encrypted Backup states
   const [quota, setQuota] = useState<{ usageMb: number; quotaMb: number; percentage: number; persisted: boolean } | null>(null);
@@ -97,6 +112,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (!isOpen) return;
     setCanRollback(hasRollbackSnapshot());
     setSavedSuccess(false);
+    void readExtensionSyncState().then(setExtSync);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
@@ -480,6 +496,98 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
           {activeTab === 'sync' && (
             <div className="space-y-3">
+              {/* ---- 浏览器扩展自带同步：与全量备份存在重叠，必须让用户看得见 ---- */}
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3" data-testid="extension-sync-section">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs font-semibold text-zinc-200">浏览器扩展自带同步</h4>
+                    <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
+                      扩展里另有一套同步，会单独把站点、批注、收件箱写到云盘。它和本应用的「全量备份」
+                      <b className="text-zinc-400">覆盖同一批数据但写在不同的目录</b>，同时开启会让同一份站点出现两处副本。
+                    </p>
+                  </div>
+                </div>
+
+                {!extSync.available ? (
+                  <p className="text-[11px] text-zinc-500">
+                    当前不是扩展环境，扩展自带同步不可用（也不会有重复写入的问题）。
+                  </p>
+                ) : (
+                  <>
+                    <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 font-mono text-[11px] space-y-1">
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">当前状态</span>
+                        <span className={extSync.provider === 'none' ? 'text-zinc-400' : 'text-emerald-400'}>
+                          {extSync.provider === 'none' ? '已关闭' : `已开启（${extSync.provider.toUpperCase()}）`}
+                        </span>
+                      </div>
+                      {extSync.pathPrefix && (
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500">写入目录</span>
+                          <span className="text-zinc-300">{extSync.pathPrefix}/</span>
+                        </div>
+                      )}
+                      {extSync.endpoint && (
+                        <div className="flex justify-between gap-3">
+                          <span className="text-zinc-500 shrink-0">目标</span>
+                          <span className="text-zinc-300 truncate">{extSync.endpoint}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">上次同步</span>
+                        <span className="text-zinc-400">
+                          {extSync.lastSyncTime ? new Date(extSync.lastSyncTime).toLocaleString() : '从未'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Overlap warning: both systems writing the same datasets. */}
+                    {extSync.provider !== 'none' && backupTargetActive && (
+                      <div
+                        className="rounded-lg border border-amber-900/60 bg-amber-950/25 px-3 py-2 text-[11px] text-amber-300 leading-relaxed"
+                        data-testid="sync-overlap-warning"
+                      >
+                        ⚠️ 两套同步同时开启：站点/批注会被写两次（扩展写「{extSync.pathPrefix || 'selfhub_sync'}/」，
+                        应用备份写各自的目标）。建议只保留一套——应用备份已包含全部数据，建议关闭扩展同步。
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={async () => {
+                          const turningOff = extSync.provider !== 'none';
+                          if (
+                            turningOff &&
+                            !confirm(
+                              '关闭扩展自带同步？\n\n站点、批注、收件箱之后由本应用的「全量备份」统一负责，云端已写入的旧文件不会被删除。'
+                            )
+                          ) {
+                            return;
+                          }
+                          const ok = await setExtensionSyncEnabled(!turningOff);
+                          if (!ok) {
+                            alert('⚠️ 修改失败，请稍后重试');
+                            return;
+                          }
+                          setExtSync(await readExtensionSyncState());
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px]"
+                        data-testid="extension-sync-toggle"
+                      >
+                        {extSync.provider === 'none' ? '开启扩展同步' : '关闭扩展同步（推荐）'}
+                      </button>
+                      <button
+                        onClick={() => openExtensionOptions()}
+                        className="text-[11px] text-sky-400 hover:underline"
+                        data-testid="open-extension-options"
+                      >
+                        打开扩展完整设置页
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+
               <div className="p-3.5 rounded-xl bg-zinc-900/80 border border-zinc-800 text-xs text-zinc-300 leading-relaxed">
                 <div className="font-semibold text-zinc-100 flex items-center gap-1.5 mb-1.5">
                   <Shield className="w-4 h-4 text-emerald-400" />
@@ -772,6 +880,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 };
+
+
 
 
 
