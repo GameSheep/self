@@ -18,13 +18,15 @@ export type SettingsSection = 'overview' | 'storage' | 'sync' | 'content' | 'ai'
 export interface IntegrationField {
   key: string;
   label: string;
-  type?: 'text' | 'password' | 'select';
+  type?: 'text' | 'password' | 'select' | 'toggle';
   placeholder?: string;
   hint?: string;
   options?: { value: string; label: string }[];
   mono?: boolean;
   /** Required for `isConfigured` to be true. */
   required?: boolean;
+  /** Shown in red under the control — used for privacy-relevant switches. */
+  warning?: string;
 }
 
 export interface IntegrationDef {
@@ -156,13 +158,22 @@ export const INTEGRATIONS: IntegrationDef[] = [
       },
       { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'AIzaSy... 或 sk-...', required: true },
       { key: 'baseUrl', label: 'Base URL（自定义端点时填写）', placeholder: 'https://api.example.com/v1', mono: true },
-      { key: 'model', label: '模型名称', placeholder: 'gemini-2.5-flash / deepseek-chat', mono: true }
+      { key: 'model', label: '模型名称', placeholder: 'gemini-2.5-flash / deepseek-chat', mono: true },
+      {
+        key: 'cloudAiEnabled',
+        label: '允许把内容发送到云端 AI',
+        type: 'toggle',
+        hint: '默认关闭。关闭时只用本机离线规则分拣，任何内容都不会离开这台设备。',
+        warning:
+          '开启后，你粘贴到「AI 智能分拣」的整段文字会发送到所选服务商。这类内容里常常包含 API Key、SSH 密码、数据库连接串——请确认你信任该服务商，并避免粘贴真实凭据。'
+      }
     ],
     read: (s) => ({
       provider: s.aiConfig.provider,
       apiKey: s.aiConfig.apiKey,
       baseUrl: s.aiConfig.baseUrl,
-      model: s.aiConfig.model
+      model: s.aiConfig.model,
+      cloudAiEnabled: s.aiConfig.cloudAiEnabled === true ? 'true' : 'false'
     }),
     write: (s, v) => ({
       ...s,
@@ -171,7 +182,8 @@ export const INTEGRATIONS: IntegrationDef[] = [
         provider: (v.provider as HubState['aiConfig']['provider']) ?? s.aiConfig.provider,
         apiKey: v.apiKey ?? s.aiConfig.apiKey,
         baseUrl: v.baseUrl ?? s.aiConfig.baseUrl,
-        model: v.model ?? s.aiConfig.model
+        model: v.model ?? s.aiConfig.model,
+        cloudAiEnabled: (v.cloudAiEnabled ?? String(s.aiConfig.cloudAiEnabled === true)) === 'true'
       }
     }),
     isConfigured: (s) => filled(s.aiConfig.apiKey),

@@ -107,7 +107,8 @@ test.describe('统一设置中心', () => {
       await expect(page.locator(`[data-integration="${id}"]`)).toHaveCount(1);
 
       const fields = await page.locator(`[data-field^="${id}."]`).count();
-      const expected = id === 'youdao' ? 2 : id === 'wucai' ? 1 : id === 'ai' ? 4 : id === 'webdav' ? 4 : 5;
+      // ai gained the cloudAiEnabled privacy toggle, so it now has 5 controls.
+      const expected = id === 'youdao' ? 2 : id === 'wucai' ? 1 : id === 'ai' ? 5 : id === 'webdav' ? 4 : 5;
       expect(fields, `${id} 字段数量`).toBe(expected);
     }
 
@@ -131,6 +132,7 @@ test.describe('统一设置中心', () => {
     await expect(page.getByTestId('cloud-backup-section')).toHaveCount(0);
   });
 });
+
 
 
 

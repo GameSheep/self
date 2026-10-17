@@ -246,7 +246,7 @@ export async function loadStateFromIndexedDb(): Promise<HubState | null> {
       checkIns: [],
       handwritings: [],
       obsidianConfig: { enabled: false, bucket: '', endpoint: '', region: '', accessKeyId: '', accessKeySecret: '', prefix: '' },
-      aiConfig: { provider: 'gemini', apiKey: '', baseUrl: '', model: '' },
+      aiConfig: { provider: 'gemini', apiKey: '', baseUrl: '', model: '', cloudAiEnabled: false },
       cloudflareSync: { enabled: false, workerUrl: '', syncKey: '', autoSync: false },
       webdavConfig: { enabled: false, url: '', username: '', password: '', pathPrefix: 'selfhub_sync' }
     };
@@ -288,3 +288,4 @@ export async function estimateStorageQuota(): Promise<{
     persisted: false
   };
 }
+

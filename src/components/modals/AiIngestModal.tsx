@@ -282,7 +282,9 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4">
                 <span className="text-xs text-zinc-400 font-mono">
-                  {aiConfig.apiKey ? `AI 深度引擎: ${aiConfig.model || 'Gemini 2.5 Flash'}` : '内置本地高精启发式规则引擎 (离线即时)'}
+                  {aiConfig.apiKey && aiConfig.cloudAiEnabled === true
+                    ? `云端引擎: ${aiConfig.model || 'Gemini 2.5 Flash'}（内容会发送到该服务商）`
+                    : '内置本地规则引擎（离线即时，内容不离开本机）'}
                 </span>
 
                 <button
@@ -291,9 +293,24 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                   className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-900 hover:bg-white text-xs font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50 shadow-sm"
                 >
                   <Sparkles className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                  <span>{loading ? 'AI 正在深度解析语义与结构...' : '开始高精准识别'}</span>
+                  <span>{loading ? '正在解析语义与结构...' : '开始高精准识别'}</span>
                 </button>
               </div>
+
+              {/* Be explicit about the privacy boundary before anything is sent. */}
+              {aiConfig.apiKey && aiConfig.cloudAiEnabled === true && (
+                <div
+                  className="mt-3 flex items-start gap-2 rounded-xl border border-amber-900/60 bg-amber-950/25 px-3 py-2 text-[11px] text-amber-300 leading-relaxed"
+                  data-testid="cloud-ai-warning"
+                >
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>
+                    当前会把下面这段文字发送到 <b>{aiConfig.provider}</b>。请确认其中没有真实的 API Key、
+                    SSH 密码或数据库连接串——这类内容一旦发送就离开了本机。
+                    可在「系统设置 → AI 模型」里关闭云端 AI，改用本地规则。
+                  </span>
+                </div>
+              )}
             </div>
           ) : (
             /* Review & Destination Selector Screen */

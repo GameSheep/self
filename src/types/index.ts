@@ -248,6 +248,11 @@ export interface EncryptedBackupPayload {
 
 export interface AiConfig {
   provider: 'gemini' | 'deepseek' | 'openai' | 'custom';
+  /**
+   * Must be explicitly enabled before any content is sent to a third-party model.
+   * Pasted text often contains API keys, so the default is local-only parsing.
+   */
+  cloudAiEnabled?: boolean;
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -303,6 +308,7 @@ export interface HubState {
   features?: Partial<FeatureFlags>;
   categories: string[];
 }
+
 
 
 

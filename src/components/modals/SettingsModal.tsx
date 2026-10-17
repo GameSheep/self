@@ -591,7 +591,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <p className="text-[11px] text-zinc-400 mt-0.5">导出未二次加密的纯 JSON 文件，便于手动查阅代码或在本地文本编辑器修改</p>
                 </div>
                 <button
-                  onClick={() => exportBackup(state)}
+                  onClick={() => {
+                    // The plaintext export is the one artifact that DOES contain
+                    // credentials, so make the user acknowledge it once.
+                    const hasSecrets = Boolean(
+                      state.obsidianConfig?.accessKeySecret ||
+                        state.webdavConfig?.password ||
+                        state.aiConfig?.apiKey ||
+                        state.wucaiConfig?.token ||
+                        (state.secrets || []).length > 0
+                    );
+                    if (
+                      hasSecrets &&
+                      !confirm(
+                        '导出的是明文 JSON，其中的 OSS 密钥、WebDAV 密码、AI Key 等会以可读形式保存到文件。\n\n' +
+                          '请只存放在可信位置，不要上传到网盘或发给他人。\n\n' +
+                          '如需安全转移，请改用左侧的「导出加密包」。\n\n仍要导出明文吗？'
+                      )
+                    ) {
+                      return;
+                    }
+                    exportBackup(state);
+                  }}
                   className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-100 font-medium flex items-center gap-1.5 shrink-0 transition-colors"
                 >
                   <Download className="w-3.5 h-3.5" />

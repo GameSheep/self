@@ -20,6 +20,8 @@ export interface ParsedEntities {
   servers: Partial<ServerDeployment>[];
   secrets: ParsedSecret[];
   notes: Partial<QuickNote>[];
+  /** Which engine produced this result, so the UI can be honest about it. */
+  engine?: 'llm' | 'local';
 }
 
 /**
@@ -322,6 +324,12 @@ export function parseTextLocally(rawText: string): ParsedEntities {
  * Calls Google Gemini / OpenAI / DeepSeek with structured prompt
  */
 export async function parseTextWithLLM(rawText: string, config: AiConfig): Promise<ParsedEntities> {
+  // Safety gate: pasted text routinely contains API keys and passwords. Nothing
+  // leaves the device unless the user explicitly turned on cloud AI.
+  if (!config?.apiKey || config.cloudAiEnabled !== true) {
+    const local = parseTextLocally(rawText);
+    return { ...local, engine: 'local' };
+  }
   // Step 0: Check if it's already a clean structured JSON file (e.g. GoTab export)
   const structured = tryParseStructuredJson(rawText);
   if (structured) {
@@ -408,4 +416,6 @@ ${rawText}
     return parseTextLocally(rawText);
   }
 }
+
+
 

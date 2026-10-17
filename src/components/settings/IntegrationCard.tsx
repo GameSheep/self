@@ -71,6 +71,50 @@ export const IntegrationCard: React.FC<IntegrationCardProps> = ({ def, state, on
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {def.fields.map((field) => {
+          const on = (draft[field.key] ?? 'false') === 'true';
+
+          if (field.type === 'toggle') {
+            return (
+              <div key={field.key} className="sm:col-span-2 rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[11px] text-zinc-300">{field.label}</div>
+                    {field.hint && (
+                      <p className="text-[10px] text-zinc-500 mt-0.5 leading-relaxed">{field.hint}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      const next = { ...draft, [field.key]: on ? 'false' : 'true' };
+                      setDraft(next);
+                      // Toggles are dangerous-by-nature: persist immediately so the
+                      // state on screen always equals the state in effect.
+                      onSave(def.id, next);
+                    }}
+                    data-field={`${def.id}.${field.key}`}
+                    data-enabled={on ? 'true' : 'false'}
+                    aria-pressed={on}
+                    className={`shrink-0 w-9 h-5 rounded-full transition-colors relative ${
+                      on ? 'bg-amber-600' : 'bg-zinc-700'
+                    }`}
+                    title={on ? '点击关闭' : '点击开启'}
+                  >
+                    <span
+                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${
+                        on ? 'left-[18px]' : 'left-0.5'
+                      }`}
+                    />
+                  </button>
+                </div>
+                {on && field.warning && (
+                  <p className="mt-2 text-[10px] text-amber-300 leading-relaxed" data-warning={def.id}>
+                    ⚠️ {field.warning}
+                  </p>
+                )}
+              </div>
+            );
+          }
+
           const wide = field.type === 'password' || field.key === 'bucket' || field.key === 'url';
           return (
             <label key={field.key} className={`block ${wide ? 'sm:col-span-2' : ''}`}>

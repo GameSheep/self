@@ -126,6 +126,7 @@ export const INITIAL_STATE: HubState = {
   youdaoNotes: [],
   aiConfig: {
     provider: 'gemini',
+    cloudAiEnabled: false,
     apiKey: '',
     baseUrl: 'https://generativelanguage.googleapis.com',
     model: 'gemini-2.5-flash'
@@ -409,4 +410,5 @@ export function importBackup(jsonString: string): HubState | null {
     return null;
   }
 }
+
 
