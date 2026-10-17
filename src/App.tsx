@@ -26,6 +26,7 @@ import { SettingsModal } from './components/modals/SettingsModal';
 import { executeCheckIn } from './lib/automation';
 import { recordRun } from './lib/checkInHistory';
 import { notifyDueReminders } from './lib/reminderNotifier';
+import { backupStateToOss, readLastBackupAt, type BackupResult } from './lib/stateBackup';
 import { checkServerHealth, checkServersHealth } from './lib/serverHealth';
 import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X, Activity } from 'lucide-react';
 
@@ -87,6 +88,55 @@ export function App() {
     const timer = setInterval(tick, 60_000);
     return () => clearInterval(timer);
   }, []);
+
+  // ---- Full-state cloud backup (whole HubState -> .selfhub/state.json) ----
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const [backupStatus, setBackupStatus] = useState<{
+    status: 'idle' | 'saving' | 'error' | 'conflict';
+    lastAt?: number;
+    message?: string;
+  }>(() => ({ status: 'idle', lastAt: readLastBackupAt() }));
+
+  const runStateBackup = useCallback(async (force = false) => {
+    const current = stateRef.current;
+    const cfg = current.obsidianConfig;
+    if (!cfg?.enabled || !cfg.bucket || !cfg.accessKeyId) {
+      return { ok: false, error: '未配置 OSS' } as BackupResult;
+    }
+    setBackupStatus((prev) => ({ ...prev, status: 'saving' }));
+    const result = await backupStateToOss(cfg, current, force);
+    if (result.ok) {
+      setBackupStatus({ status: 'idle', lastAt: readLastBackupAt() });
+    } else {
+      setBackupStatus({
+        status: result.conflict ? 'conflict' : 'error',
+        lastAt: readLastBackupAt(),
+        message: result.error
+      });
+    }
+    return result;
+  }, []);
+
+  // Debounced auto-backup: bursts of edits become one upload.
+  const backupTimerRef = useRef<number | null>(null);
+  const backupHydratedRef = useRef(false);
+  useEffect(() => {
+    if (!backupHydratedRef.current) {
+      backupHydratedRef.current = true;
+      return; // do not write on the very first render
+    }
+    const cfg = state.obsidianConfig;
+    if (!cfg?.enabled || !cfg.bucket || !cfg.accessKeyId || cfg.accessKeyId.includes('•••')) return;
+
+    if (backupTimerRef.current) window.clearTimeout(backupTimerRef.current);
+    backupTimerRef.current = window.setTimeout(() => {
+      void runStateBackup();
+    }, 5000);
+    return () => {
+      if (backupTimerRef.current) window.clearTimeout(backupTimerRef.current);
+    };
+  }, [state, runStateBackup]);
 
   // Sync theme class to document root
   useEffect(() => {
@@ -896,6 +946,8 @@ export function App() {
         state={state}
         onRestoreState={handleRestoreState}
         masterPassword={masterPassword}
+        backupStatus={backupStatus}
+        onBackupNow={(force) => runStateBackup(force)}
       />
     </div>
   );

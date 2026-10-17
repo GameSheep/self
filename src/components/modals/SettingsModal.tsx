@@ -5,6 +5,7 @@ import { ObsidianConfig, AiConfig, HubState } from '../../types';
 import { exportBackup, importBackup, INITIAL_STATE, saveHubState, snapshotForRollback, restoreRollbackSnapshot, hasRollbackSnapshot } from '../../lib/storage';
 import { exportEncryptedBackup, importEncryptedBackup, getTrustedSession } from '../../lib/crypto';
 import { deleteAllDatabases } from '../../lib/indexedDb';
+import { backupKeyFor, describeBackupAge, readStateBackup } from '../../lib/stateBackup';
 import { estimateStorageQuota } from '../../lib/indexedDb';
 
 interface SettingsModalProps {
@@ -17,6 +18,10 @@ interface SettingsModalProps {
   state: HubState;
   onRestoreState: (state: HubState) => void;
   masterPassword?: string | null;
+  /** Auto-backup status shown next to the OSS settings. */
+  backupStatus?: { status: 'idle' | 'saving' | 'error' | 'conflict'; lastAt?: number; message?: string };
+  /** Force a backup now (skips the debounce). */
+  onBackupNow?: (force?: boolean) => Promise<{ ok: boolean; conflict?: boolean; error?: string }>;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -28,7 +33,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdateAi,
   state,
   onRestoreState,
-  masterPassword
+  masterPassword,
+  backupStatus,
+  onBackupNow
 }) => {
   const [activeTab, setActiveTab] = useState<'oss' | 'ai' | 'backup' | 'cloudflare'>('cloudflare');
 
@@ -565,6 +572,87 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             </div>
           )}
+
+          {/* ---- 全量数据云备份 ---- */}
+          {activeTab === 'backup' && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3" data-testid="cloud-backup-section">
+              <div>
+                <h4 className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                  <Database className="w-3.5 h-3.5 text-sky-400" />
+                  全量数据自动备份
+                </h4>
+                <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
+                  把站点、提醒、项目、收件箱、批注、签到等本地数据备份到
+                  <code className="text-zinc-400 mx-1">{backupKeyFor(obsidianConfig)}</code>
+                  。换设备或清空浏览器数据后可从这里恢复。
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <span className="font-mono text-zinc-400" data-testid="backup-status">
+                  {backupStatus?.status === 'saving'
+                    ? '备份中…'
+                    : backupStatus?.status === 'conflict'
+                    ? '⚠️ 云端更新，未覆盖'
+                    : backupStatus?.status === 'error'
+                    ? `⚠️ 备份失败：${backupStatus.message || '未知原因'}`
+                    : describeBackupAge(backupStatus?.lastAt)}
+                </span>
+
+                <button
+                  onClick={async () => {
+                    if (!onBackupNow) return;
+                    // Never clobber a newer cloud snapshot silently: ask first.
+                    const res = await onBackupNow(false);
+                    if (res.ok) {
+                      alert('✅ 已备份到云端');
+                      return;
+                    }
+                    if (res.conflict) {
+                      alert(`⚠️ ${res.error || '云端备份比本机新，已把本地快照另存到 conflicts 目录'}`);
+                      if (confirm('云端备份比本机更新（可能来自另一台设备）。\n\n仍要用本机数据覆盖云端吗？')) {
+                        const forced = await onBackupNow(true);
+                        alert(forced.ok ? '✅ 已用本机数据覆盖云端备份' : `⚠️ ${forced.error || '仍然失败'}`);
+                      }
+                      return;
+                    }
+                    alert(`⚠️ 备份失败：${res.error || '未知原因'}`);
+                  }}
+                  disabled={backupStatus?.status === 'saving' || !onBackupNow}
+                  className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 disabled:opacity-50"
+                  data-testid="backup-now"
+                >
+                  立即备份
+                </button>
+
+                <button
+                  onClick={async () => {
+                    const res = await readStateBackup(obsidianConfig);
+                    if (!res.ok || !res.backup) {
+                      alert(`⚠️ 无法读取云端备份：${res.error || '未知原因'}`);
+                      return;
+                    }
+                    const when = res.backup.envelope.updatedAt
+                      ? new Date(res.backup.envelope.updatedAt).toLocaleString()
+                      : '未知时间';
+                    if (
+                      !confirm(
+                        `从云端恢复备份？\n\n备份时间：${when}\n来源设备：${res.backup.envelope.deviceId}\n\n当前本机数据会被这份备份覆盖（建议先「立即备份」把当前状态存上去）。`
+                      )
+                    ) {
+                      return;
+                    }
+                    onRestoreState(res.backup.envelope.state);
+                    alert('✅ 已从云端恢复');
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300"
+                  data-testid="restore-from-cloud"
+                >
+                  从云端恢复
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -588,3 +676,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 };
+
+
+

@@ -384,6 +384,47 @@ ledger: ["r-due_2026-10-17"]
 
 `tests/e2e/index-management.spec.ts`（4 条）：面板数字、清除后库为空且回到引导态、重建后能重新搜到、数据库结构损坏时自动恢复。
 
+---
+
+## 18. 追加：全量状态云备份（2026-10-17 第十轮）
+
+### 18.1 问题
+
+页面叫「多平台数据互通」，但**只有 Obsidian 笔记真的在云上**。站点、提醒、项目、收件箱、批注、签到记录全部只存在本机 `localStorage`。换一台设备、清一次站点数据，这些就没了。
+
+### 18.2 方案
+
+`src/lib/stateBackup.ts`：
+
+- 把整个 `HubState` 打包成 `{ version, updatedAt, deviceId, state }`，写入 `<prefix>.selfhub/state.json`（跟随目录前缀）。
+- **防覆盖**：写之前先 `HEAD` 比对 `Last-Modified` 与"上次成功备份时记录的基线时间"。若云端更新（另一台设备写过），**不覆盖**，而是把本机快照另存到 `.selfhub/conflicts/state-<时间戳>-<设备>.json` 并如实告知。
+- 自动备份：状态变化后 **5 秒防抖**合并成一次上传；首次渲染不写；未配置 OSS 时完全不发请求。
+- 恢复：读取并校验云端快照（`validateHubState`），确认后覆盖本机；格式无法识别时明确报错而不是写入垃圾数据。
+- `deviceId` 是每浏览器一次的随机标识，用于标注备份来源与冲突文件名。
+
+UI：设置 →「备份与恢复」页新增一块：上次备份时间、当前状态、**立即备份**、**从云端恢复**。
+
+### 18.3 测试暴露的产品缺陷
+
+「立即备份」最初硬编码 `force=true`，即**无条件覆盖云端**——正好是这套机制要防的事。改为手动备份同样走冲突检查，冲突时弹出"云端更新，是否用本机覆盖"由用户决定。
+
+### 18.4 真实桶实测
+
+```json
+{ "baseline_objects": 1951, "backup_status_before": "尚未自动备份",
+  "backup_status_after": "刚刚备份", "remote_get_status": 200,
+  "remote_envelope": { "version": 1, "has_state": true, "sites": 6, "device": "dev-77pjj9kfi5" },
+  "theme_after_toggle": "light", "theme_after_restore": "dark",
+  "objects_after_cleanup": 1951, "selfhub_prefix_left": 0, "baseline_restored": true }
+```
+
+即：备份真的落盘且结构正确；本机改成 light 后从云端恢复回 dark；探针数据已清理，桶内对象数回到基线。
+
+### 18.5 测试
+
+`tests/e2e/state-backup.spec.ts`（5 条）：状态变化自动备份、手动立即备份、云端更新时另存冲突副本而不覆盖、从云端恢复、未配置 OSS 时不发请求。
+
+
 
 
 

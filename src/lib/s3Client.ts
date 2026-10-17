@@ -704,7 +704,7 @@ function ossObjectUrl(config: ObsidianConfig, key: string): string {
   return `https://${config.bucket}.${cleanEndpoint}/${encodeOssKey(cleanKey)}`;
 }
 
-function hasRealOssKeys(config: ObsidianConfig): boolean {
+export function hasRealOssKeys(config: ObsidianConfig): boolean {
   return Boolean(
     config.enabled &&
       config.bucket &&
