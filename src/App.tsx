@@ -23,15 +23,15 @@ import { AiIngestModal } from './components/modals/AiIngestModal';
 import { MasterKeyModal } from './components/modals/MasterKeyModal';
 import { AddItemModal } from './components/modals/AddItemModal';
 import { SettingsModal } from './components/modals/SettingsModal';
-import { executeCheckIn } from './lib/automation';
-import { recordRun } from './lib/checkInHistory';
 import { notifyDueReminders } from './lib/reminderNotifier';
 import { backupStateToOss, backupStateToWebdav, readLastBackupAt, type BackupResult } from './lib/stateBackup';
 import { applyIntegrationValues } from './lib/integrations';
 import { isTabAllowed } from './lib/features';
 import { useCloudBackup } from './hooks/useCloudBackup';
 import { useReminderNotifications } from './hooks/useReminderNotifications';
-import { checkServerHealth, checkServersHealth } from './lib/serverHealth';
+import { useSiteActions } from './hooks/useSiteActions';
+import { useServerActions } from './hooks/useServerActions';
+import { useSecretActions, useCheckInActions } from './hooks/useSecretActions';
 import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X, Activity } from 'lucide-react';
 
 export function App() {
@@ -135,156 +135,12 @@ export function App() {
   }, [activeTab]);
 
   // Handlers for adding and mutating assets
-  const handleAddSite = (site: NavSite) => {
-    updateState((prev) => ({
-      ...prev,
-      sites: [site, ...prev.sites]
-    }));
-  };
-
-  const handleDeleteSite = (id: string) => {
-    updateState((prev) => ({
-      ...prev,
-      sites: prev.sites.filter((s) => s.id !== id)
-    }));
-  };
-
-  const handleVisitSite = (id: string) => {
-    updateState((prev) => ({
-      ...prev,
-      sites: prev.sites.map((s) =>
-        s.id === id ? { ...s, visitCount: (s.visitCount || 0) + 1, lastVisited: Date.now() } : s
-      )
-    }));
-  };
-
-  const handleImportBookmarks = (newSites: NavSite[]) => {
-    updateState((prev) => {
-      const catSet = new Set(prev.categories || ['全部']);
-      newSites.forEach((s) => {
-        if (s.category && s.category.trim()) catSet.add(s.category.trim());
-      });
-      return {
-        ...prev,
-        categories: Array.from(catSet),
-        sites: [...newSites, ...prev.sites]
-      };
-    });
-  };
-
-  const handleAddServer = (server: ServerDeployment) => {
-    updateState((prev) => ({
-      ...prev,
-      servers: [server, ...prev.servers]
-    }));
-  };
-
-  const handleDeleteServer = (id: string) => {
-    updateState((prev) => ({
-      ...prev,
-      servers: prev.servers.filter((s) => s.id !== id)
-    }));
-  };
-
-  /** Probe one server and store the real result (never assume "online"). */
-  const handleCheckServer = async (id: string) => {
-    const server = state.servers.find((s) => s.id === id);
-    if (!server) return;
-    updateState((prev) => ({
-      ...prev,
-      servers: prev.servers.map((s) => (s.id === id ? { ...s, status: 'checking' } : s))
-    }));
-    const result = await checkServerHealth(server);
-    updateState((prev) => ({
-      ...prev,
-      servers: prev.servers.map((s) =>
-        s.id === id
-          ? {
-              ...s,
-              status: result.state,
-              lastCheckedAt: result.checkedAt,
-              lastCheckMessage: result.message,
-              lastLatencyMs: result.latencyMs
-            }
-          : s
-      )
-    }));
-  };
-
-  const handleCheckAllServers = async () => {
-    const targets = state.servers;
-    if (targets.length === 0) return;
-    updateState((prev) => ({
-      ...prev,
-      servers: prev.servers.map((s) => ({ ...s, status: 'checking' }))
-    }));
-    const results = await checkServersHealth(targets);
-    updateState((prev) => ({
-      ...prev,
-      servers: prev.servers.map((s) => {
-        const r = results[s.id];
-        if (!r) return s;
-        return {
-          ...s,
-          status: r.state,
-          lastCheckedAt: r.checkedAt,
-          lastCheckMessage: r.message,
-          lastLatencyMs: r.latencyMs
-        };
-      })
-    }));
-  };
-
-  const handleAddSecret = (secret: SecretItem) => {
-    updateState((prev) => ({
-      ...prev,
-      secrets: [secret, ...prev.secrets]
-    }));
-  };
-
-  const handleDeleteSecret = (id: string) => {
-    updateState((prev) => ({
-      ...prev,
-      secrets: prev.secrets.filter((s) => s.id !== id)
-    }));
-  };
-
-  const handleAddCheckIn = (task: CheckInTask) => {
-    updateState((prev) => ({
-      ...prev,
-      checkIns: [task, ...prev.checkIns]
-    }));
-  };
-
-  const handleDeleteCheckIn = (id: string) => {
-    updateState((prev) => ({
-      ...prev,
-      checkIns: prev.checkIns.filter((c) => c.id !== id)
-    }));
-  };
-
-  const handleRunCheckIn = async (id: string) => {
-    const task = state.checkIns.find((c) => c.id === id);
-    if (!task) return;
-
-    const result = await executeCheckIn(task);
-
-    updateState((prev) => ({
-      ...prev,
-      checkIns: prev.checkIns.map((c) =>
-        c.id === id
-          ? // History is per local day: running twice cannot inflate the streak.
-            recordRun(c, result)
-          : c
-      )
-    }));
-  };
-
-  const handleRunAllCheckIns = async () => {
-    for (const task of state.checkIns) {
-      await handleRunCheckIn(task.id);
-    }
-  };
+  // Domain actions live in their own hooks (see src/hooks/*): the component no
+  // longer has to hold every feature's CRUD callbacks in one place.
+  const { addSite, deleteSite, visitSite, importBookmarks } = useSiteActions(updateState);
+  const { addServer, deleteServer, checkServer, checkAllServers } = useServerActions(state, updateState);
+  const { addSecret, deleteSecret } = useSecretActions(updateState);
+  const { addCheckIn, deleteCheckIn, runCheckIn, runAllCheckIns } = useCheckInActions(state, updateState);
 
   const handleSaveHandwriting = (note: HandwritingNote) => {
     updateState((prev) => ({
@@ -576,9 +432,9 @@ export function App() {
               onNavigateTab={(tab) => setActiveTab(tab)}
               masterPassword={masterPassword}
               onRequireUnlock={() => setIsMasterKeyOpen(true)}
-              onVisitSite={handleVisitSite}
-              onRunCheckIn={handleRunCheckIn}
-              onRunAllCheckIns={handleRunAllCheckIns}
+              onVisitSite={visitSite}
+              onRunCheckIn={runCheckIn}
+              onRunAllCheckIns={runAllCheckIns}
             />
           )}
 
@@ -619,11 +475,11 @@ export function App() {
             <SitesView
               sites={state.sites}
               categories={state.categories}
-              onVisit={handleVisitSite}
-              onDelete={handleDeleteSite}
+              onVisit={visitSite}
+              onDelete={deleteSite}
               onOpenAddModal={() => setIsAddModalOpen(true)}
               onOpenAiIngest={() => setIsAiIngestOpen(true)}
-              onImportBookmarks={handleImportBookmarks}
+              onImportBookmarks={importBookmarks}
             />
           )}
 
@@ -640,7 +496,7 @@ export function App() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => void handleCheckAllServers()}
+                    onClick={() => void checkAllServers()}
                     disabled={state.servers.length === 0}
                     className="px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white text-xs flex items-center gap-1.5 disabled:opacity-40"
                     title="逐个探测所有服务器的健康检查地址"
@@ -663,8 +519,8 @@ export function App() {
                   <ServerCard
                     key={server.id}
                     server={server}
-                    onDelete={handleDeleteServer}
-                    onCheck={(id) => void handleCheckServer(id)}
+                    onDelete={deleteServer}
+                    onCheck={(id) => void checkServer(id)}
                   />
                 ))}
               </div>
@@ -709,7 +565,7 @@ export function App() {
                     secret={secret}
                     masterPassword={masterPassword}
                     onRequireUnlock={() => setIsMasterKeyOpen(true)}
-                    onDelete={handleDeleteSecret}
+                    onDelete={deleteSecret}
                   />
                 ))}
               </div>
@@ -761,7 +617,7 @@ export function App() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
                 {state.checkIns.map((task) => (
-                  <CheckInCard key={task.id} task={task} onRun={handleRunCheckIn} onDelete={handleDeleteCheckIn} />
+                  <CheckInCard key={task.id} task={task} onRun={runCheckIn} onDelete={deleteCheckIn} />
                 ))}
               </div>
             </div>
@@ -872,10 +728,10 @@ export function App() {
         categories={state.categories}
         masterPassword={masterPassword}
         onRequireUnlock={() => setIsMasterKeyOpen(true)}
-        onAddSite={handleAddSite}
-        onAddServer={handleAddServer}
-        onAddSecret={handleAddSecret}
-        onAddCheckIn={handleAddCheckIn}
+        onAddSite={addSite}
+        onAddServer={addServer}
+        onAddSecret={addSecret}
+        onAddCheckIn={addCheckIn}
         onAddNote={(note) => updateState((prev) => ({ ...prev, notes: [note, ...prev.notes] }))}
       />
 
@@ -900,6 +756,22 @@ export function App() {
 }
 
 export default App;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
