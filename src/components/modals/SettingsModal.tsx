@@ -6,17 +6,17 @@ import { exportBackup, importBackup, INITIAL_STATE, saveHubState, snapshotForRol
 import { exportEncryptedBackup, importEncryptedBackup, getTrustedSession } from '../../lib/crypto';
 import { deleteAllDatabases } from '../../lib/indexedDb';
 import { backupKeyFor, describeBackupAge, readStateBackup, readStateBackupFromWebdav } from '../../lib/stateBackup';
+import { testWebdav } from '../../lib/webdavClient';
 import { isExtensionContext } from '../../lib/extensionBridge';
-import { testWebdav, describeWebdavTarget } from '../../lib/webdavClient';
+import { INTEGRATIONS, IntegrationId } from '../../lib/integrations';
+import { IntegrationCard } from '../settings/IntegrationCard';
 import { estimateStorageQuota } from '../../lib/indexedDb';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   obsidianConfig: ObsidianConfig;
-  onUpdateObsidian: (config: ObsidianConfig) => void;
   aiConfig: AiConfig;
-  onUpdateAi: (config: AiConfig) => void;
   state: HubState;
   onRestoreState: (state: HubState) => void;
   masterPassword?: string | null;
@@ -25,26 +25,25 @@ interface SettingsModalProps {
   /** Force a backup now (skips the debounce). */
   onBackupNow?: (force?: boolean) => Promise<{ ok: boolean; conflict?: boolean; error?: string }>;
   webdavConfig?: WebdavSyncConfig;
-  onUpdateWebdav?: (config: WebdavSyncConfig) => void;
   /** Content sources (五彩 etc.) used to live inside the data page. */
   onUpdateWucai?: (config: WucaiConfig) => void;
+  /** Registry-driven save for every integration card. */
+  onSaveIntegration: (id: IntegrationId, values: Record<string, string>) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   obsidianConfig,
-  onUpdateObsidian,
   aiConfig,
-  onUpdateAi,
   state,
   onRestoreState,
   masterPassword,
   backupStatus,
   onBackupNow,
   webdavConfig,
-  onUpdateWebdav,
-  onUpdateWucai
+  onUpdateWucai,
+  onSaveIntegration
 }) => {
   type SettingsSection = 'overview' | 'storage' | 'sync' | 'content' | 'ai' | 'data';
   const [activeTab, setActiveTab] = useState<SettingsSection>('overview');
@@ -53,26 +52,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   );
   const [wdTest, setWdTest] = useState<{ ok: boolean; message: string } | null>(null);
   const [wdTesting, setWdTesting] = useState(false);
-  const [wdSaved, setWdSaved] = useState(false);
-  const [wucaiToken, setWucaiToken] = useState(state.wucaiConfig?.token || '');
-  const [wucaiSaved, setWucaiSaved] = useState(false);
   useEffect(() => {
     if (isOpen && webdavConfig) setWd(webdavConfig);
   }, [isOpen, webdavConfig]);
 
   // OSS state
-  const [ossBucket, setOssBucket] = useState(obsidianConfig.bucket);
-  const [ossEndpoint, setOssEndpoint] = useState(obsidianConfig.endpoint);
-  const [ossRegion, setOssRegion] = useState(obsidianConfig.region);
-  const [ossKeyId, setOssKeyId] = useState(obsidianConfig.accessKeyId);
-  const [ossKeySecret, setOssKeySecret] = useState(obsidianConfig.accessKeySecret);
-  const [ossPrefix, setOssPrefix] = useState(obsidianConfig.prefix);
 
   // AI state
-  const [aiProvider, setAiProvider] = useState(aiConfig.provider);
-  const [aiKey, setAiKey] = useState(aiConfig.apiKey);
-  const [aiBaseUrl, setAiBaseUrl] = useState(aiConfig.baseUrl);
-  const [aiModel, setAiModel] = useState(aiConfig.model);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   // Storage Quota & Encrypted Backup states
@@ -82,20 +68,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [showExportPasswordInput, setShowExportPasswordInput] = useState(false);
   const [canRollback, setCanRollback] = useState(false);
 
-  // Settings form state is initialised once at mount, but the modal stays mounted:
-  // re-sync from props whenever it opens so stale values can never overwrite config.
+  // Integration fields are registry-driven and keep their own draft state inside
+  // <IntegrationCard>, so the modal no longer mirrors config into local state.
   useEffect(() => {
     if (!isOpen) return;
-    setOssBucket(obsidianConfig.bucket);
-    setOssEndpoint(obsidianConfig.endpoint);
-    setOssRegion(obsidianConfig.region);
-    setOssKeyId(obsidianConfig.accessKeyId);
-    setOssKeySecret(obsidianConfig.accessKeySecret);
-    setOssPrefix(obsidianConfig.prefix);
-    setAiProvider(aiConfig.provider);
-    setAiKey(aiConfig.apiKey);
-    setAiBaseUrl(aiConfig.baseUrl);
-    setAiModel(aiConfig.model);
     setCanRollback(hasRollbackSnapshot());
     setSavedSuccess(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -124,26 +100,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   if (!isOpen) return null;
 
   const handleSaveConfigs = () => {
-    onUpdateObsidian({
-      // Only claim the OSS integration is enabled when it is actually configured.
-      enabled: Boolean(ossBucket.trim() && ossEndpoint.trim() && ossKeyId.trim() && ossKeySecret.trim()),
-      bucket: ossBucket,
-      endpoint: ossEndpoint,
-      region: ossRegion,
-      accessKeyId: ossKeyId,
-      accessKeySecret: ossKeySecret,
-      prefix: ossPrefix
-    });
-
-    onUpdateAi({
-      // An empty key means "not configured": keep it disabled rather than
-      // advertising an AI engine that will silently fall back to local rules.
-      provider: aiProvider,
-      apiKey: aiKey,
-      baseUrl: aiBaseUrl,
-      model: aiModel
-    });
-
+    // Every integration card persists on blur / on its own save button, so this
+    // footer action must NOT write cached copies back (that is how stale values
+    // used to clobber fresh edits). It only confirms.
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
@@ -325,24 +284,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </p>
 
               {[
-                {
-                  key: 'oss',
-                  name: '阿里云 OSS（Obsidian 笔记库）',
-                  configured: Boolean(obsidianConfig.enabled && obsidianConfig.bucket && obsidianConfig.accessKeyId),
-                  detail: obsidianConfig.bucket
-                    ? `${obsidianConfig.bucket} · 前缀「${obsidianConfig.prefix || '整桶'}」`
-                    : '未填写 Bucket',
-                  section: 'storage' as SettingsSection
-                },
-                {
-                  key: 'webdav',
-                  name: 'WebDAV 备份',
-                  configured: Boolean(
-                    webdavConfig?.enabled && webdavConfig.url && webdavConfig.username && webdavConfig.password
-                  ),
-                  detail: webdavConfig?.url ? describeWebdavTarget(webdavConfig) : '未配置',
-                  section: 'storage' as SettingsSection
-                },
+                ...INTEGRATIONS.map((def) => ({
+                  key: def.id as string,
+                  name: def.title,
+                  configured: def.isConfigured(state),
+                  detail: def.describe(state),
+                  section: def.section
+                })),
+                // Rows that are not integrations but still part of "what is set up".
                 {
                   key: 'backup',
                   name: '全量备份',
@@ -356,20 +305,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   configured: isExtensionContext(),
                   detail: isExtensionContext() ? '当前运行在扩展环境' : '当前是普通网页，扩展同步不可用',
                   section: 'sync' as SettingsSection
-                },
-                {
-                  key: 'wucai',
-                  name: '五彩划词高亮',
-                  configured: Boolean(state.wucaiConfig?.token),
-                  detail: state.wucaiConfig?.token ? '已填写 Token' : '未填写 Token',
-                  section: 'content' as SettingsSection
-                },
-                {
-                  key: 'ai',
-                  name: 'AI 模型',
-                  configured: Boolean(aiConfig.apiKey),
-                  detail: aiConfig.apiKey ? `${aiConfig.provider} · ${aiConfig.model || '默认模型'}` : '未填写 API Key',
-                  section: 'ai' as SettingsSection
                 },
                 {
                   key: 'index',
@@ -406,51 +341,80 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* ============ 内容来源（从数据互通页收回） ============ */}
+
+          {/* ============ 内容来源（注册表驱动） ============ */}
           {activeTab === 'content' && (
             <div className="space-y-3" data-testid="settings-content">
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
-                <h4 className="text-xs font-semibold text-zinc-200">五彩（Wucai）划词高亮</h4>
-                <p className="text-[11px] text-zinc-500 leading-relaxed">
-                  填入五彩的 API Token 后，可拉取划词高亮并在「多平台数据互通」里检索。
-                </p>
-                <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1">API Token</label>
-                  <input
-                    type="password"
-                    data-testid="wucai-token"
-                    value={wucaiToken}
-                    onChange={(e) => setWucaiToken(e.target.value)}
-                    placeholder="wc_pat_••••••••"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      onUpdateWucai?.({ ...state.wucaiConfig, token: wucaiToken.trim(), enabled: Boolean(wucaiToken.trim()) });
-                      setWucaiSaved(true);
-                      setTimeout(() => setWucaiSaved(false), 2000);
-                    }}
-                    disabled={!onUpdateWucai}
-                    className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] disabled:opacity-50"
-                    data-testid="wucai-save"
-                  >
-                    {wucaiSaved ? '已保存' : '保存 Token'}
-                  </button>
-                  <a
-                    href="https://www.dotalk.cn/s/APIPermission"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[11px] text-sky-400 hover:underline"
-                  >
-                    去五彩获取 Token
-                  </a>
-                </div>
-              </div>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                内容来源的凭据统一在这里维护，业务页面只负责展示数据，不再各自保存一份 Token。
+              </p>
+              {INTEGRATIONS.filter((i) => i.section === 'content').map((def) => (
+                <IntegrationCard key={def.id} def={def} state={state} onSave={onSaveIntegration} />
+              ))}
             </div>
           )}
 
+          {/* ============ 存储与备份：同一套卡片渲染 ============ */}
+          {activeTab === 'storage' && (
+            <div className="space-y-3">
+              {INTEGRATIONS.filter((i) => i.section === 'storage').map((def) => (
+                <IntegrationCard
+                  key={def.id}
+                  def={def}
+                  state={state}
+                  onSave={onSaveIntegration}
+                  actions={
+                    def.id === 'webdav'
+                      ? (draft) => (
+                          <button
+                            onClick={async () => {
+                              setWdTesting(true);
+                              setWdTest(null);
+                              try {
+                                const result = await testWebdav({
+                                  enabled: true,
+                                  url: draft.url || '',
+                                  username: draft.username || '',
+                                  password: draft.password || '',
+                                  pathPrefix: draft.pathPrefix || 'selfhub_sync'
+                                });
+                                setWdTest({ ok: result.ok, message: result.message });
+                              } finally {
+                                setWdTesting(false);
+                              }
+                            }}
+                            disabled={wdTesting}
+                            className="px-2.5 py-1 rounded-lg bg-teal-700 hover:bg-teal-600 text-white text-[11px] font-semibold disabled:opacity-50"
+                            data-testid="webdav-test"
+                          >
+                            {wdTesting ? '测试中…' : '测试连接'}
+                          </button>
+                        )
+                      : undefined
+                  }
+                >
+                  {def.id === 'webdav' && wdTest && (
+                    <span
+                      data-testid="webdav-test-result"
+                      className={`text-[11px] ${wdTest.ok ? 'text-emerald-400' : 'text-rose-400'}`}
+                    >
+                      {wdTest.ok ? '✅ ' : '⚠️ '}
+                      {wdTest.message}
+                    </span>
+                  )}
+                </IntegrationCard>
+              ))}
+            </div>
+          )}
+
+          {/* ============ AI 模型（注册表驱动） ============ */}
+          {activeTab === 'ai' && (
+            <div className="space-y-3">
+              {INTEGRATIONS.filter((i) => i.section === 'ai').map((def) => (
+                <IntegrationCard key={def.id} def={def} state={state} onSave={onSaveIntegration} />
+              ))}
+            </div>
+          )}
           {activeTab === 'sync' && (
             <div className="space-y-3">
               <div className="p-3.5 rounded-xl bg-zinc-900/80 border border-zinc-800 text-xs text-zinc-300 leading-relaxed">
@@ -466,113 +430,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="text-[11px] text-emerald-400 bg-emerald-950/40 p-2 rounded-lg border border-emerald-800/40">
                   ✅ 效果：未经授权的访客打开该域名会被 Cloudflare 边缘直接拦截；只有输入您邮箱的 6 位临时验证码才能进入。
                 </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'storage' && (
-            <div className="space-y-3">
-              <p className="text-xs text-zinc-400">
-                配置您存放 Obsidian Markdown 库的阿里云 OSS Bucket 信息（建议配置只读 AccessKey）：
-              </p>
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">Bucket 名称</label>
-                <input
-                  type="text"
-                  value={ossBucket}
-                  onChange={(e) => setOssBucket(e.target.value)}
-                  placeholder="例如: my-obsidian-vault"
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1">Endpoint (地域节点)</label>
-                  <input
-                    type="text"
-                    value={ossEndpoint}
-                    onChange={(e) => setOssEndpoint(e.target.value)}
-                    placeholder="oss-cn-hangzhou.aliyuncs.com"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1">
-                    同步目录前缀 <span className="text-zinc-500">(留空 = 列出整个 Bucket)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={ossPrefix}
-                    onChange={(e) => setOssPrefix(e.target.value)}
-                    placeholder="留空即可，或填 vault/"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
-                  />
-                  <p className="mt-1 text-[10px] text-zinc-500 leading-relaxed">
-                    只列出该前缀下的对象；填错会造成"看不到任何云端笔记"的假象，不确定就留空。
-                  </p>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1">AccessKeyId (只读)</label>
-                  <input
-                    type="text"
-                    value={ossKeyId}
-                    onChange={(e) => setOssKeyId(e.target.value)}
-                    placeholder="LTAI5t..."
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1">AccessKeySecret</label>
-                  <input
-                    type="password"
-                    value={ossKeySecret}
-                    onChange={(e) => setOssKeySecret(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'ai' && (
-            <div className="space-y-3">
-              <p className="text-xs text-zinc-400">
-                配置用于【AI 智能分拣整理】的大模型接口（默认免配置即可使用内置离线规则引擎）：
-              </p>
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">模型提供商</label>
-                <select
-                  value={aiProvider}
-                  onChange={(e) => setAiProvider(e.target.value as any)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 focus:outline-none"
-                >
-                  <option value="gemini">Google Gemini (推荐: 速度极快)</option>
-                  <option value="deepseek">DeepSeek (性价比高)</option>
-                  <option value="openai">OpenAI / 兼容中转</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">API Key</label>
-                <input
-                  type="password"
-                  value={aiKey}
-                  onChange={(e) => setAiKey(e.target.value)}
-                  placeholder="AIzaSy... 或 sk-..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">模型代号 (Model)</label>
-                <input
-                  type="text"
-                  value={aiModel}
-                  onChange={(e) => setAiModel(e.target.value)}
-                  placeholder="gemini-2.5-flash / deepseek-chat"
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
-                />
               </div>
             </div>
           )}
@@ -806,119 +663,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* ---- WebDAV 连接（替代 OSS 的备份目标） ---- */}
-          {activeTab === 'storage' && (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3" data-testid="webdav-section">
-              <div>
-                <h4 className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-                  <Globe className="w-3.5 h-3.5 text-teal-400" />
-                  WebDAV 连接（可选）
-                </h4>
-                <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
-                  用 WebDAV 网盘（InfiniCLOUD / TeraCloud / Nextcloud 等）作为备份位置。
-                  注意：多数 WebDAV 服务器不返回 CORS 头，
-                  <b className="text-zinc-400">必须在浏览器扩展环境里使用</b>，普通网页标签会被浏览器拦截。
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <label className="block sm:col-span-2">
-                  <span className="block text-[11px] text-zinc-400 mb-1">服务器地址</span>
-                  <input
-                    type="text"
-                    data-testid="webdav-url"
-                    value={wd.url}
-                    onChange={(e) => setWd({ ...wd, url: e.target.value })}
-                    placeholder="https://toi.teracloud.jp/dav/"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
-                  />
-                </label>
-                <label className="block">
-                  <span className="block text-[11px] text-zinc-400 mb-1">连接 ID / 用户名</span>
-                  <input
-                    type="text"
-                    data-testid="webdav-user"
-                    value={wd.username}
-                    onChange={(e) => setWd({ ...wd, username: e.target.value })}
-                    placeholder="your-account-id"
-                    autoComplete="off"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
-                  />
-                </label>
-                <label className="block">
-                  <span className="block text-[11px] text-zinc-400 mb-1">应用密码</span>
-                  <input
-                    type="password"
-                    data-testid="webdav-pass"
-                    value={wd.password}
-                    onChange={(e) => setWd({ ...wd, password: e.target.value })}
-                    placeholder="app password"
-                    autoComplete="new-password"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
-                  />
-                </label>
-                <label className="block sm:col-span-2">
-                  <span className="block text-[11px] text-zinc-400 mb-1">目录（会自动创建）</span>
-                  <input
-                    type="text"
-                    data-testid="webdav-path"
-                    value={wd.pathPrefix}
-                    onChange={(e) => setWd({ ...wd, pathPrefix: e.target.value })}
-                    placeholder="selfhub_sync"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
-                  />
-                </label>
-              </div>
-
-              <p className="text-[10px] font-mono text-zinc-600 break-all">目标：{describeWebdavTarget(wd)}</p>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={async () => {
-                    setWdTesting(true);
-                    setWdTest(null);
-                    try {
-                      const result = await testWebdav(wd);
-                      setWdTest({ ok: result.ok, message: result.message });
-                    } finally {
-                      setWdTesting(false);
-                    }
-                  }}
-                  disabled={wdTesting}
-                  className="px-2.5 py-1 rounded-lg bg-teal-700 hover:bg-teal-600 text-white text-[11px] font-semibold disabled:opacity-50"
-                  data-testid="webdav-test"
-                >
-                  {wdTesting ? '测试中…' : '测试连接'}
-                </button>
-                <button
-                  onClick={() => {
-                    onUpdateWebdav?.({ ...wd, enabled: true });
-                    setWdSaved(true);
-                    setTimeout(() => setWdSaved(false), 2000);
-                  }}
-                  disabled={!onUpdateWebdav}
-                  className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] disabled:opacity-50"
-                  data-testid="webdav-save"
-                >
-                  {wdSaved ? '已保存' : '保存 WebDAV'}
-                </button>
-              </div>
-
-              {wdTest && (
-                <div
-                  data-testid="webdav-test-result"
-                  className={`rounded-lg border px-3 py-2 text-[11px] leading-relaxed ${
-                    wdTest.ok
-                      ? 'border-emerald-900/60 bg-emerald-950/30 text-emerald-300'
-                      : 'border-rose-900/60 bg-rose-950/30 text-rose-300'
-                  }`}
-                >
-                  {wdTest.ok ? '✅ ' : '⚠️ '}
-                  {wdTest.message}
-                </div>
-              )}
-            </div>
-          )}
           </div>
         </div>
 
@@ -943,12 +687,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 };
-
-
-
-
-
-
 
 
 

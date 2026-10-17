@@ -68,7 +68,7 @@ test.describe('统一设置中心', () => {
     await openSettings(page);
 
     await page.locator('[data-overview-item="webdav"] button', { hasText: '配置' }).click();
-    await expect(page.getByTestId('webdav-section')).toBeVisible();
+    await expect(page.locator('[data-integration="webdav"]')).toBeVisible();
   });
 
   test('五彩 Token 只在设置里配置，保存后持久化', async ({ page }) => {
@@ -77,8 +77,8 @@ test.describe('统一设置中心', () => {
     await openSettings(page);
 
     await page.locator('[data-settings-nav="content"]').click();
-    await page.getByTestId('wucai-token').fill('wc_pat_test_token');
-    await page.getByTestId('wucai-save').click();
+    await page.locator('[data-field="wucai.token"]').fill('wc_pat_test_token');
+    await page.locator('[data-save="wucai"]').click();
 
     await expect.poll(async () => (await readState(page)).wucaiConfig?.token).toBe('wc_pat_test_token');
     const saved: any = await readState(page);
@@ -96,17 +96,41 @@ test.describe('统一设置中心', () => {
     expect(tokenInputs).toBe(0);
   });
 
+  test('每个集成只渲染一份表单（防止新旧两套并存）', async ({ page }) => {
+    await seedState(page, state());
+    await page.goto('/');
+    await openSettings(page);
+
+    for (const id of ['oss', 'webdav', 'ai', 'wucai', 'youdao']) {
+      const section = id === 'oss' || id === 'webdav' ? 'storage' : id === 'ai' ? 'ai' : 'content';
+      await page.locator(`[data-settings-nav="${section}"]`).click();
+      await expect(page.locator(`[data-integration="${id}"]`)).toHaveCount(1);
+
+      const fields = await page.locator(`[data-field^="${id}."]`).count();
+      const expected = id === 'youdao' ? 2 : id === 'wucai' ? 1 : id === 'ai' ? 4 : id === 'webdav' ? 4 : 5;
+      expect(fields, `${id} 字段数量`).toBe(expected);
+    }
+
+    // No leftover bespoke inputs outside the registry-driven cards.
+    const allBespoke = await page.locator('input[placeholder="例如: my-obsidian-vault"]').count();
+    expect(allBespoke).toBeLessThanOrEqual(1);
+  });
+
   test('备份与恢复的设置有唯一入口', async ({ page }) => {
     await seedState(page, state());
     await page.goto('/');
     await openSettings(page);
 
     await page.locator('[data-settings-nav="storage"]').click();
+    await expect(page.locator('[data-integration="webdav"]')).toBeVisible();
+    await expect(page.locator('[data-integration="webdav"]')).toBeVisible();
     await expect(page.getByTestId('cloud-backup-section')).toBeVisible();
-    await expect(page.getByTestId('webdav-section')).toBeVisible();
 
     // Export/import lives under data, not duplicated under storage.
     await page.locator('[data-settings-nav="data"]').click();
     await expect(page.getByTestId('cloud-backup-section')).toHaveCount(0);
   });
 });
+
+
+

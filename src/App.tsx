@@ -27,6 +27,7 @@ import { executeCheckIn } from './lib/automation';
 import { recordRun } from './lib/checkInHistory';
 import { notifyDueReminders } from './lib/reminderNotifier';
 import { backupStateToOss, backupStateToWebdav, readLastBackupAt, type BackupResult } from './lib/stateBackup';
+import { applyIntegrationValues } from './lib/integrations';
 import { checkServerHealth, checkServersHealth } from './lib/serverHealth';
 import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X, Activity } from 'lucide-react';
 
@@ -950,21 +951,19 @@ export function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         obsidianConfig={state.obsidianConfig}
-        onUpdateObsidian={(cfg) => updateState((prev) => ({ ...prev, obsidianConfig: cfg }))}
         aiConfig={state.aiConfig}
-        onUpdateAi={(cfg) => updateState((prev) => ({ ...prev, aiConfig: cfg }))}
-        onUpdateWucai={(cfg) => updateState((prev) => ({ ...prev, wucaiConfig: cfg }))}
+        onSaveIntegration={(id, values) => updateState((prev) => applyIntegrationValues(prev, id, values))}
         state={state}
         onRestoreState={handleRestoreState}
         masterPassword={masterPassword}
         backupStatus={backupStatus}
         onBackupNow={(force) => runStateBackup(force)}
         webdavConfig={state.webdavConfig}
-        onUpdateWebdav={(cfg) => updateState((prev) => ({ ...prev, webdavConfig: cfg }))}
       />
     </div>
   );
 }
 
 export default App;
+
 

@@ -17,7 +17,7 @@ async function openBackupTab(page: any) {
   await page.locator('aside button[title*="系统设置"]').click();
   await expect(page.getByText('系统与服务集成设置')).toBeVisible();
   await page.locator('[data-settings-nav="storage"]').click();
-  await expect(page.getByTestId('webdav-section')).toBeVisible();
+  await expect(page.locator('[data-integration="webdav"]')).toBeVisible();
 }
 
 async function mockWebdav(page: any, handler: (method: string, url: string) => { status: number; headers?: Record<string, string> }) {
@@ -47,10 +47,10 @@ test.describe('WebDAV 连接测试', () => {
     await page.goto('/');
     await openBackupTab(page);
 
-    await page.getByTestId('webdav-url').fill('https://toi.teracloud.jp/dav/');
-    await page.getByTestId('webdav-user').fill('gamesheep8246');
-    await page.getByTestId('webdav-pass').fill('app-password');
-    await page.getByTestId('webdav-test').click();
+    await page.locator('[data-field="webdav.url"]').fill('https://toi.teracloud.jp/dav/');
+    await page.locator('[data-field="webdav.username"]').fill('gamesheep8246');
+    await page.locator('[data-field="webdav.password"]').fill('app-password');
+    await page.locator('[data-testid="webdav-test"]').click();
 
     const result = page.getByTestId('webdav-test-result');
     await expect(result).toBeVisible({ timeout: 20_000 });
@@ -64,10 +64,10 @@ test.describe('WebDAV 连接测试', () => {
     await page.goto('/');
     await openBackupTab(page);
 
-    await page.getByTestId('webdav-url').fill('https://toi.teracloud.jp/dav/');
-    await page.getByTestId('webdav-user').fill('gamesheep8246');
-    await page.getByTestId('webdav-pass').fill('wrong');
-    await page.getByTestId('webdav-test').click();
+    await page.locator('[data-field="webdav.url"]').fill('https://toi.teracloud.jp/dav/');
+    await page.locator('[data-field="webdav.username"]').fill('gamesheep8246');
+    await page.locator('[data-field="webdav.password"]').fill('wrong');
+    await page.locator('[data-testid="webdav-test"]').click();
 
     const result = page.getByTestId('webdav-test-result');
     await expect(result).toBeVisible({ timeout: 20_000 });
@@ -81,10 +81,10 @@ test.describe('WebDAV 连接测试', () => {
     await page.goto('/');
     await openBackupTab(page);
 
-    await page.getByTestId('webdav-url').fill('https://toi.teracloud.jp/dav/');
-    await page.getByTestId('webdav-user').fill('u');
-    await page.getByTestId('webdav-pass').fill('p');
-    await page.getByTestId('webdav-test').click();
+    await page.locator('[data-field="webdav.url"]').fill('https://toi.teracloud.jp/dav/');
+    await page.locator('[data-field="webdav.username"]').fill('u');
+    await page.locator('[data-field="webdav.password"]').fill('p');
+    await page.locator('[data-testid="webdav-test"]').click();
 
     const result = page.getByTestId('webdav-test-result');
     await expect(result).toBeVisible({ timeout: 20_000 });
@@ -102,7 +102,7 @@ test.describe('WebDAV 连接测试', () => {
     await page.goto('/');
     await openBackupTab(page);
 
-    await page.getByTestId('webdav-test').click();
+    await page.locator('[data-testid="webdav-test"]').click();
     await expect(page.getByTestId('webdav-test-result')).toContainText('请填写');
     expect(calls).toBe(0);
   });
@@ -113,11 +113,11 @@ test.describe('WebDAV 连接测试', () => {
     await page.goto('/');
     await openBackupTab(page);
 
-    await page.getByTestId('webdav-url').fill('https://toi.teracloud.jp/dav/');
-    await page.getByTestId('webdav-user').fill('gamesheep8246');
-    await page.getByTestId('webdav-pass').fill('app-password');
-    await page.getByTestId('webdav-path').fill('selfhub_sync');
-    await page.getByTestId('webdav-save').click();
+    await page.locator('[data-field="webdav.url"]').fill('https://toi.teracloud.jp/dav/');
+    await page.locator('[data-field="webdav.username"]').fill('gamesheep8246');
+    await page.locator('[data-field="webdav.password"]').fill('app-password');
+    await page.locator('[data-field="webdav.pathPrefix"]').fill('selfhub_sync');
+    await page.locator('[data-save="webdav"]').click();
 
     await expect.poll(async () => {
       const s: any = await readState(page);
@@ -136,9 +136,9 @@ test.describe('WebDAV 连接测试', () => {
     await page.goto('/');
     await openBackupTab(page);
 
-    await page.getByTestId('webdav-url').fill('https://toi.teracloud.jp/dav/');
-    await page.getByTestId('webdav-path').fill('selfhub_sync');
-    await expect(page.getByTestId('webdav-section')).toContainText('https://toi.teracloud.jp/dav/selfhub_sync/state.json');
+    await page.locator('[data-field="webdav.url"]').fill('https://toi.teracloud.jp/dav/');
+    await page.locator('[data-field="webdav.pathPrefix"]').fill('selfhub_sync');
+    await expect(page.locator('[data-integration="webdav"]')).toContainText('https://toi.teracloud.jp/dav/selfhub_sync/state.json');
   });
 
   test('启用 WebDAV 后「立即备份」会 PUT 到 WebDAV 而不是 OSS', async ({ page }) => {
@@ -235,4 +235,5 @@ test.describe('WebDAV 连接测试', () => {
     expect(puts.some((u) => u.endsWith('/selfhub_sync/state.json'))).toBe(false);
   });
 });
+
 
