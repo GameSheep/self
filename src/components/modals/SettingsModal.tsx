@@ -41,6 +41,8 @@ interface SettingsModalProps {
   webdavConfig?: WebdavSyncConfig;
   /** Content sources (五彩 etc.) used to live inside the data page. */
   onUpdateWucai?: (config: WucaiConfig) => void;
+  /** Open directly on a given section (used by the onboarding wizard). */
+  initialSection?: 'overview' | 'storage' | null;
   /** Registry-driven save for every integration card. */
   onSaveIntegration: (id: IntegrationId, values: Record<string, string>) => void;
   /** Module switches (see lib/features). */
@@ -60,7 +62,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   webdavConfig,
   onUpdateWucai,
   onSaveIntegration,
-  onToggleFeature
+  onToggleFeature,
+  initialSection
 }) => {
   type SettingsSection = 'overview' | 'features' | 'storage' | 'sync' | 'content' | 'ai' | 'data';
   const [activeTab, setActiveTab] = useState<SettingsSection>('overview');
@@ -115,6 +118,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (!isOpen) return;
     setCanRollback(hasRollbackSnapshot());
     setSavedSuccess(false);
+    if (initialSection) setActiveTab(initialSection);
     void readExtensionSyncState().then(setExtSync);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
@@ -932,6 +936,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 };
+
 
 
 

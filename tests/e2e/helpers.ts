@@ -25,12 +25,25 @@ export async function readState(page: Page): Promise<StoredState> {
 }
 
 /** Seed localStorage before the app boots (survives reloads in this context). */
-export async function seedState(page: Page, state: unknown) {
+/**
+ * Seed localStorage before the app boots (survives reloads in this context).
+ *
+ * The first-run wizard is an overlay, so leaving it enabled would block every
+ * unrelated test. Profiles seeded for feature tests are therefore marked as
+ * already onboarded; onboarding.spec passes `{ onboarded: false }` explicitly.
+ */
+export async function seedState(
+  page: Page,
+  state: unknown,
+  options: { onboarded?: boolean } = {}
+) {
+  const onboarded = options.onboarded ?? true;
   await page.addInitScript(
-    ([key, value]) => {
+    ([key, value, flag]) => {
       window.localStorage.setItem(key as string, value as string);
+      if (flag) window.localStorage.setItem('selfhub_onboarded', '1');
     },
-    [STORAGE_KEY, JSON.stringify(state)] as const
+    [STORAGE_KEY, JSON.stringify(state), onboarded] as const
   );
 }
 
@@ -39,6 +52,9 @@ export async function resetApp(page: Page) {
   await page.evaluate(() => {
     localStorage.clear();
     sessionStorage.clear();
+    // A reset profile is "already onboarded": the wizard is an overlay and would
+    // otherwise block every test that expects to interact with the app.
+    localStorage.setItem('selfhub_onboarded', '1');
   });
   await page.reload();
   await expect(page.locator('main')).toBeVisible();

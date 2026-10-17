@@ -23,6 +23,7 @@ import { AiIngestModal } from './components/modals/AiIngestModal';
 import { MasterKeyModal } from './components/modals/MasterKeyModal';
 import { AddItemModal } from './components/modals/AddItemModal';
 import { SettingsModal } from './components/modals/SettingsModal';
+import { OnboardingWizard } from './components/OnboardingWizard';
 import { notifyDueReminders } from './lib/reminderNotifier';
 import { backupStateToOss, backupStateToWebdav, readLastBackupAt, type BackupResult } from './lib/stateBackup';
 import { applyIntegrationValues } from './lib/integrations';
@@ -77,6 +78,30 @@ export function App() {
   // Whole-state cloud backup (debounced, conflict-aware).
   const { backupStatus, runStateBackup } = useCloudBackup(state);
 
+  // First-run guide: only for a profile that has not been used yet, so it never
+  // interrupts an established user. Dismissing it records the flag permanently.
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<'overview' | 'storage' | null>(null);
+  useEffect(() => {
+    if (localStorage.getItem('selfhub_onboarded')) return;
+    const looksFresh =
+      (state.sites?.length ?? 0) <= 6 &&
+      (state.servers?.length ?? 0) === 0 &&
+      (state.secrets?.length ?? 0) === 0 &&
+      (state.checkIns?.length ?? 0) === 0 &&
+      (state.inbox?.length ?? 0) === 0 &&
+      (state.projects?.length ?? 0) === 0;
+    if (looksFresh) setShowOnboarding(true);
+  }, []);
+
+  const dismissOnboarding = () => {
+    try {
+      localStorage.setItem('selfhub_onboarded', '1');
+    } catch {
+      // ignore
+    }
+    setShowOnboarding(false);
+  };
   // If the current module was switched off, fall back to the dashboard so the
   // user never lands on a hidden/unreachable view.
   useEffect(() => {
@@ -576,8 +601,23 @@ export function App() {
         onAddNote={(note) => updateState((prev) => ({ ...prev, notes: [note, ...prev.notes] }))}
       />
 
+      <OnboardingWizard
+        isOpen={showOnboarding}
+        features={state.features}
+        onSkip={dismissOnboarding}
+        onFinish={(features) => {
+          updateState((prev) => ({ ...prev, features }));
+          dismissOnboarding();
+        }}
+        onOpenStorage={() => {
+          setSettingsSection('storage');
+          setIsSettingsOpen(true);
+        }}
+      />
+
       <SettingsModal
         isOpen={isSettingsOpen}
+        initialSection={settingsSection}
         onClose={() => setIsSettingsOpen(false)}
         obsidianConfig={state.obsidianConfig}
         aiConfig={state.aiConfig}
@@ -597,6 +637,7 @@ export function App() {
 }
 
 export default App;
+
 
 
 
