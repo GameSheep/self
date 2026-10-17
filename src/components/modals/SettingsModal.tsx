@@ -1,14 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, HardDrive, Sparkles, Download, Upload, Shield, Check, Globe, AlertTriangle, Lock, Key, Database, RefreshCw, RotateCcw, BookOpen
+import { X, Settings, HardDrive, Sparkles, Download, Upload, Shield, Check, Globe, AlertTriangle, Lock, Key, Database, RefreshCw, RotateCcw, BookOpen, SlidersHorizontal
 } from 'lucide-react';
 import { ObsidianConfig, AiConfig, HubState, WebdavSyncConfig, WucaiConfig } from '../../types';
 import { exportBackup, importBackup, INITIAL_STATE, saveHubState, snapshotForRollback, restoreRollbackSnapshot, hasRollbackSnapshot } from '../../lib/storage';
 import { exportEncryptedBackup, importEncryptedBackup, getTrustedSession } from '../../lib/crypto';
 import { deleteAllDatabases } from '../../lib/indexedDb';
-import { backupKeyFor, describeBackupAge, readStateBackup, readStateBackupFromWebdav } from '../../lib/stateBackup';
+import {
+  backupKeyFor,
+  describeBackupAge,
+  mergeRestoredState,
+  readStateBackup,
+  readStateBackupFromWebdav
+} from '../../lib/stateBackup';
 import { testWebdav } from '../../lib/webdavClient';
 import { isExtensionContext } from '../../lib/extensionBridge';
 import { INTEGRATIONS, IntegrationId } from '../../lib/integrations';
+import { FEATURE_DEFS, FeatureId, isFeatureEnabled } from '../../lib/features';
 import { IntegrationCard } from '../settings/IntegrationCard';
 import { estimateStorageQuota } from '../../lib/indexedDb';
 
@@ -29,6 +36,8 @@ interface SettingsModalProps {
   onUpdateWucai?: (config: WucaiConfig) => void;
   /** Registry-driven save for every integration card. */
   onSaveIntegration: (id: IntegrationId, values: Record<string, string>) => void;
+  /** Module switches (see lib/features). */
+  onToggleFeature?: (id: FeatureId, enabled: boolean) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -43,9 +52,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onBackupNow,
   webdavConfig,
   onUpdateWucai,
-  onSaveIntegration
+  onSaveIntegration,
+  onToggleFeature
 }) => {
-  type SettingsSection = 'overview' | 'storage' | 'sync' | 'content' | 'ai' | 'data';
+  type SettingsSection = 'overview' | 'features' | 'storage' | 'sync' | 'content' | 'ai' | 'data';
   const [activeTab, setActiveTab] = useState<SettingsSection>('overview');
   const [wd, setWd] = useState<WebdavSyncConfig>(
     webdavConfig || { enabled: false, url: '', username: '', password: '', pathPrefix: 'selfhub_sync' }
@@ -70,6 +80,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   // Integration fields are registry-driven and keep their own draft state inside
   // <IntegrationCard>, so the modal no longer mirrors config into local state.
+  // Esc closes the modal (matching every other dialog in the app).
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [isOpen, onClose]);
+
   useEffect(() => {
     if (!isOpen) return;
     setCanRollback(hasRollbackSnapshot());
@@ -249,9 +272,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {(
               [
                 { id: 'overview', label: '概览', icon: Shield },
+                { id: 'features', label: '功能开关', icon: SlidersHorizontal },
                 { id: 'storage', label: '存储与备份', icon: HardDrive },
                 { id: 'sync', label: '同步', icon: RefreshCw },
-                { id: 'content', label: '内容来源', icon: BookOpen },
+                { id: 'content', label: '内容来源', icon: BookOpen, SlidersHorizontal },
                 { id: 'ai', label: 'AI 模型', icon: Sparkles },
                 { id: 'data', label: '数据与维护', icon: Database }
               ] as const
@@ -342,6 +366,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
 
+          {/* ============ 功能开关：不用的模块直接收起来 ============ */}
+          {activeTab === 'features' && (
+            <div className="space-y-3" data-testid="settings-features">
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                不是每个模块都要用。关掉的模块会从侧边栏与顶部标签中消失，已存数据不会被删除，随时可以再打开。
+                仪表盘、网站、倒计时与 Obsidian 笔记属于核心功能，不可关闭。
+              </p>
+
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 divide-y divide-zinc-800">
+                {FEATURE_DEFS.map((def) => {
+                  const enabled = isFeatureEnabled(state.features, def.id);
+                  return (
+                    <div key={def.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-xs text-zinc-200">{def.label}</div>
+                        <p className="text-[10px] text-zinc-500 mt-0.5 leading-relaxed">{def.description}</p>
+                      </div>
+                      <button
+                        onClick={() => onToggleFeature?.(def.id, !enabled)}
+                        data-feature-toggle={def.id}
+                        data-enabled={enabled ? 'true' : 'false'}
+                        aria-pressed={enabled}
+                        className={`shrink-0 w-9 h-5 rounded-full transition-colors relative ${
+                          enabled ? 'bg-emerald-600' : 'bg-zinc-700'
+                        }`}
+                        title={enabled ? '点击关闭，从导航中隐藏' : '点击开启'}
+                      >
+                        <span
+                          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${
+                            enabled ? 'left-[18px]' : 'left-0.5'
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {/* ============ 内容来源（注册表驱动） ============ */}
           {activeTab === 'content' && (
             <div className="space-y-3" data-testid="settings-content">
@@ -651,7 +714,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     ) {
                       return;
                     }
-                    onRestoreState(res.backup.envelope.state);
+                    // Credentials never travel in the backup; keep the local ones.
+                    onRestoreState(mergeRestoredState(res.backup.envelope.state, state));
                     alert('✅ 已从云端恢复');
                   }}
                   className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300"
@@ -687,6 +751,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 };
+
+
+
+
 
 
 

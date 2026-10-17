@@ -1,4 +1,5 @@
 import React from 'react';
+import { isTabAllowed, type FeatureFlags } from '../lib/features';
 import { 
   LayoutDashboard, 
   Globe, 
@@ -39,6 +40,7 @@ interface SidebarProps {
   isUnlocked: boolean;
   onLockVault: () => void;
   siteCount: number;
+  features?: Partial<FeatureFlags>;
   serverCount: number;
   secretCount: number;
   checkInCount: number;
@@ -69,9 +71,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   reminderCount,
   notesCount,
   inboxCount = 0,
-  projectCount = 0
+  projectCount = 0,
+  features
 }) => {
-  const menuItems = [
+  const allItems = [
     { id: 'dashboard', label: '仪表盘总览', icon: LayoutDashboard, badge: null },
     { id: 'inbox', label: '统一收件箱', icon: Inbox, badge: inboxCount > 0 ? `${inboxCount}待办` : null },
     { id: 'projects', label: '自研项目空间', icon: FolderKanban, badge: projectCount > 0 ? projectCount : null },
@@ -84,6 +87,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'obsidian', label: '多平台数据互通', icon: Share2, badge: 'OSS·五彩' },
     { id: 'handwriting', label: '交互手绘白板', icon: PenTool, badge: null },
   ];
+  // Modules switched off in settings disappear from the sidebar entirely.
+  const menuItems = allItems.filter((item) => isTabAllowed(item.id, features));
 
   return (
     <aside
@@ -256,3 +261,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </aside>
   );
 };
+
+
+
+
+
+

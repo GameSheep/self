@@ -132,7 +132,7 @@ test.describe('全量数据云备份', () => {
     const put = captured.find((c) => c.key.endsWith(STATE_KEY))!;
     expect(put, `应写入 ${STATE_KEY}`).toBeTruthy();
     const envelope = JSON.parse(put.body);
-    expect(envelope.version).toBe(1);
+    expect(envelope.version).toBe(2); // v2 strips credentials before upload
     expect(envelope.deviceId).toMatch(/^dev-/);
     expect(envelope.state.theme).toBe('light');
   });
@@ -243,6 +243,7 @@ test.describe('全量数据云备份', () => {
     expect(captured.filter((c) => c.key.includes('.selfhub'))).toHaveLength(0);
   });
 });
+
 
 
 

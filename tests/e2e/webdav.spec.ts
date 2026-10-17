@@ -183,7 +183,7 @@ test.describe('WebDAV 连接测试', () => {
     const target = puts[puts.length - 1];
     expect(target).toContain('/dav/selfhub_sync/state.json');
     const envelope = JSON.parse(stored);
-    expect(envelope.version).toBe(1);
+    expect(envelope.version).toBe(2); // v2 strips credentials before upload
     expect(envelope.state).toBeTruthy();
   });
 
@@ -235,5 +235,6 @@ test.describe('WebDAV 连接测试', () => {
     expect(puts.some((u) => u.endsWith('/selfhub_sync/state.json'))).toBe(false);
   });
 });
+
 
 

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { isTabAllowed, type FeatureFlags } from '../lib/features';
 import { 
   ShieldCheck, 
   Sparkles, 
@@ -36,6 +37,7 @@ interface NavbarProps {
   isUnlocked: boolean;
   onLockVault: () => void;
   siteCount: number;
+  features?: Partial<FeatureFlags>;
   serverCount: number;
   secretCount: number;
   reminderCount?: number;
@@ -60,11 +62,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   secretCount,
   reminderCount,
   inboxCount,
-  projectCount
+  projectCount,
+  features
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const navItems = [
+  const allNavItems = [
     { id: 'dashboard', label: '仪表盘', icon: Layers, count: null },
     { id: 'inbox', label: '收件箱', icon: Inbox, count: inboxCount || null },
     { id: 'projects', label: '项目空间', icon: FolderKanban, count: projectCount || null },
@@ -77,6 +80,9 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'obsidian', label: '数据互通', icon: Share2, count: null },
     { id: 'handwriting', label: '画板', icon: PenTool, count: null },
   ];
+
+  // Hidden modules disappear from the tab strip too.
+  const navItems = allNavItems.filter((item) => isTabAllowed(item.id, features));
 
   return (
     <>
@@ -259,3 +265,9 @@ export const Navbar: React.FC<NavbarProps> = ({
     </>
   );
 };
+
+
+
+
+
+

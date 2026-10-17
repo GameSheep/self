@@ -1,5 +1,6 @@
 import { HubState, WucaiConfig, YoudaoConfig, GoTabPreferences } from '../types';
 import { syncStateToIndexedDb } from './indexedDb';
+import { normalizeFeatures } from './features';
 
 const STORAGE_KEY = 'self_hub_data_v2';
 const MASTER_HASH_KEY = 'self_hub_master_auth';
@@ -142,6 +143,17 @@ export const INITIAL_STATE: HubState = {
     password: '',
     pathPrefix: 'selfhub_sync'
   },
+  features: {
+    inbox: true,
+    projects: true,
+    servers: true,
+    secrets: true,
+    notes: true,
+    checkin: true,
+    handwriting: true,
+    wucai: true,
+    youdao: true
+  },
   inbox: [],
   projects: [],
   annotations: [],
@@ -214,6 +226,7 @@ export function normalizeHubState(raw: unknown): HubState {
     aiConfig: mergeObject(INITIAL_STATE.aiConfig, base.aiConfig),
     cloudflareSync: mergeObject(INITIAL_STATE.cloudflareSync, base.cloudflareSync),
     webdavConfig: mergeObject(INITIAL_STATE.webdavConfig, base.webdavConfig),
+    features: normalizeFeatures(base.features),
     gotabPrefs: mergeObject(INITIAL_STATE.gotabPrefs as GoTabPreferences, base.gotabPrefs)
   };
 }
@@ -396,3 +409,4 @@ export function importBackup(jsonString: string): HubState | null {
     return null;
   }
 }
+

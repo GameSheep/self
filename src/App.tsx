@@ -28,6 +28,7 @@ import { recordRun } from './lib/checkInHistory';
 import { notifyDueReminders } from './lib/reminderNotifier';
 import { backupStateToOss, backupStateToWebdav, readLastBackupAt, type BackupResult } from './lib/stateBackup';
 import { applyIntegrationValues } from './lib/integrations';
+import { isTabAllowed } from './lib/features';
 import { checkServerHealth, checkServersHealth } from './lib/serverHealth';
 import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X, Activity } from 'lucide-react';
 
@@ -148,6 +149,12 @@ export function App() {
       if (backupTimerRef.current) window.clearTimeout(backupTimerRef.current);
     };
   }, [state, runStateBackup]);
+
+  // If the current module was switched off, fall back to the dashboard so the
+  // user never lands on a hidden/unreachable view.
+  useEffect(() => {
+    if (!isTabAllowed(activeTab, state.features)) setActiveTab('dashboard');
+  }, [activeTab, state.features]);
 
   // Sync theme class to document root
   useEffect(() => {
@@ -561,6 +568,7 @@ export function App() {
         onOpenMasterKeyModal={() => setIsMasterKeyOpen(true)}
         isUnlocked={Boolean(masterPassword)}
         onLockVault={handleLockVault}
+        features={state.features}
         siteCount={state.sites.length}
         serverCount={state.servers.length}
         secretCount={state.secrets.length}
@@ -585,6 +593,7 @@ export function App() {
           onOpenMasterKeyModal={() => setIsMasterKeyOpen(true)}
           isUnlocked={Boolean(masterPassword)}
           onLockVault={handleLockVault}
+        features={state.features}
           siteCount={state.sites.length}
           serverCount={state.servers.length}
           secretCount={state.secrets.length}
@@ -953,6 +962,9 @@ export function App() {
         obsidianConfig={state.obsidianConfig}
         aiConfig={state.aiConfig}
         onSaveIntegration={(id, values) => updateState((prev) => applyIntegrationValues(prev, id, values))}
+        onToggleFeature={(id, enabled) =>
+          updateState((prev) => ({ ...prev, features: { ...(prev.features || {}), [id]: enabled } }))
+        }
         state={state}
         onRestoreState={handleRestoreState}
         masterPassword={masterPassword}
@@ -965,5 +977,7 @@ export function App() {
 }
 
 export default App;
+
+
 
 

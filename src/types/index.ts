@@ -272,6 +272,10 @@ export interface WebdavSyncConfig {
   lastBackupAt?: number;
 }
 
+export type { FeatureFlags } from '../lib/features';
+
+import type { FeatureFlags } from '../lib/features';
+
 export interface HubState {
   schemaVersion?: number;
   theme: 'dark' | 'light';
@@ -295,6 +299,10 @@ export interface HubState {
   aiConfig: AiConfig;
   cloudflareSync: CloudflareSyncConfig;
   webdavConfig: WebdavSyncConfig;
+  /** Optional module switches (see lib/features.ts). */
+  features?: Partial<FeatureFlags>;
   categories: string[];
 }
+
+
 

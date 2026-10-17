@@ -16,7 +16,7 @@ import { headOssObject, putOssObject, fetchOssObjectBlob, hasRealOssKeys } from 
 import { validateHubState } from './storage';
 import { getWebdavFile, putWebdavFile } from './webdavClient';
 
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
 const DEVICE_KEY = 'selfhub_device_id';
 const LAST_BACKUP_KEY = 'selfhub_last_backup_at';
 const LAST_BASE_KEY = 'selfhub_backup_base_mtime';
@@ -25,8 +25,72 @@ export interface BackupEnvelope {
   version: number;
   updatedAt: number;
   deviceId: string;
+  /**
+   * True when credentials were stripped before upload. Any envelope produced by
+   * this version has it; older ones may contain plaintext secrets.
+   */
+  credentialsStripped?: boolean;
   /** Kept for compatibility with the existing JSON import format. */
   state: HubState;
+}
+
+/**
+ * Remove every credential from a state before it leaves the device.
+ *
+ * A cloud backup sits in the user's own bucket/drive, but that is not the same
+ * as safe: buckets get shared, prefixes get made public for image hosting, keys
+ * leak. Writing the OSS secret *into the bucket it protects* is exactly the kind
+ * of mistake that turns a small leak into a full compromise.
+ *
+ * The encrypted `secrets[]` vault is kept — it is useless without the master
+ * password, which never leaves the browser.
+ */
+export function stripCredentials(state: HubState): HubState {
+  return {
+    ...state,
+    obsidianConfig: { ...state.obsidianConfig, accessKeySecret: '' },
+    webdavConfig: state.webdavConfig ? { ...state.webdavConfig, password: '' } : state.webdavConfig,
+    aiConfig: { ...state.aiConfig, apiKey: '' },
+    wucaiConfig: state.wucaiConfig ? { ...state.wucaiConfig, token: '' } : state.wucaiConfig,
+    youdaoConfig: state.youdaoConfig ? { ...state.youdaoConfig, token: '', cookie: '' } : state.youdaoConfig
+  };
+}
+
+/**
+ * Merge a restored snapshot over the local state.
+ *
+ * Credentials cannot come from the backup (they were stripped), so the local
+ * ones are kept: restoring on a new device must not silently blank out keys the
+ * user just configured there.
+ */
+export function mergeRestoredState(restored: HubState, current: HubState): HubState {
+  return {
+    ...restored,
+    obsidianConfig: {
+      ...restored.obsidianConfig,
+      accessKeySecret: current.obsidianConfig?.accessKeySecret || restored.obsidianConfig?.accessKeySecret || '',
+      accessKeyId: restored.obsidianConfig?.accessKeyId || current.obsidianConfig?.accessKeyId || ''
+    },
+    webdavConfig: restored.webdavConfig
+      ? {
+          ...restored.webdavConfig,
+          password: current.webdavConfig?.password || restored.webdavConfig.password || ''
+        }
+      : current.webdavConfig,
+    aiConfig: {
+      ...restored.aiConfig,
+      apiKey: current.aiConfig?.apiKey || restored.aiConfig?.apiKey || ''
+    },
+    wucaiConfig: {
+      enabled: Boolean(restored.wucaiConfig?.enabled),
+      token: current.wucaiConfig?.token || restored.wucaiConfig?.token || ''
+    },
+    youdaoConfig: {
+      enabled: Boolean(restored.youdaoConfig?.enabled),
+      token: current.youdaoConfig?.token || restored.youdaoConfig?.token || '',
+      cookie: current.youdaoConfig?.cookie || restored.youdaoConfig?.cookie || ''
+    }
+  };
 }
 
 export interface BackupResult {
@@ -98,7 +162,8 @@ function envelopeFor(state: HubState): BackupEnvelope {
     version: BACKUP_VERSION,
     updatedAt: Date.now(),
     deviceId: getDeviceId(),
-    state
+    credentialsStripped: true,
+    state: stripCredentials(state)
   };
 }
 
@@ -261,3 +326,4 @@ export function describeBackupAge(lastAt?: number): string {  if (!lastAt) retur
   if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)} 小时前备份`;
   return `${Math.round(diff / 86_400_000)} 天前备份`;
 }
+
