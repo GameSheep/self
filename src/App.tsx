@@ -35,6 +35,9 @@ export function App() {
   const [externalChange, setExternalChange] = useState(false);
   const [focusNoteId, setFocusNoteId] = useState<string | null>(null);
   const clearFocusNoteId = useCallback(() => setFocusNoteId(null), []);
+  /** Vault note to open in the interop view (set by global search). */
+  const [focusVaultKey, setFocusVaultKey] = useState<string | null>(null);
+  const clearFocusVaultKey = useCallback(() => setFocusVaultKey(null), []);
 
   // Modals state
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -699,6 +702,8 @@ export function App() {
               onUpdateYoudaoConfig={(cfg) => updateState((prev) => ({ ...prev, youdaoConfig: cfg }))}
               onAddQuickNote={handleAddNote}
               onOpenSettings={() => setIsSettingsOpen(true)}
+              focusVaultKey={focusVaultKey}
+              onFocusHandled={clearFocusVaultKey}
             />
           )}
 
@@ -755,6 +760,11 @@ export function App() {
         }}
         onSelectInbox={() => {
           setActiveTab('inbox');
+          setIsSearchOpen(false);
+        }}
+        onSelectVaultNote={(key) => {
+          setFocusVaultKey(key);
+          setActiveTab('obsidian');
           setIsSearchOpen(false);
         }}
       />

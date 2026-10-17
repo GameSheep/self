@@ -17,6 +17,7 @@ import {
 import { NavSite, ServerDeployment, SecretItem, ObsidianNote, ReminderItem, QuickNote, ProjectItem, InboxItem } from '../types';
 import { matchesQuery } from '../lib/searchEngine';
 import { decryptText } from '../lib/crypto';
+import { loadIndex, searchIndex, type IndexedDoc } from '../lib/vaultIndex';
 
 interface GlobalSearchProps {
   isOpen: boolean;
@@ -36,6 +37,8 @@ interface GlobalSearchProps {
   onSelectNote?: (note: QuickNote) => void;
   onSelectProject?: (proj: ProjectItem) => void;
   onSelectInbox?: (item: InboxItem) => void;
+  /** Open a note from the OSS vault by its key (full-text index hit). */
+  onSelectVaultNote?: (key: string) => void;
 }
 
 export const GlobalSearch: React.FC<GlobalSearchProps> = ({
@@ -55,13 +58,27 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
   onSelectServer,
   onSelectNote,
   onSelectProject,
-  onSelectInbox
+  onSelectInbox,
+  onSelectVaultNote
 }) => {
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'site' | 'server' | 'secret' | 'reminder' | 'note' | 'project' | 'inbox'>('all');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [indexDocs, setIndexDocs] = useState<IndexedDoc[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Pull the local full-text index the first time the palette opens.
+  useEffect(() => {
+    if (!isOpen || indexDocs.length > 0) return;
+    let alive = true;
+    loadIndex().then((docs) => {
+      if (alive) setIndexDocs(docs);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [isOpen, indexDocs.length]);
 
   useEffect(() => {
     if (isOpen) {
@@ -122,6 +139,12 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
     .filter(i => matchesQuery(`${i.content} ${i.title || ''} ${i.url || ''} ${i.type}`, q))
     .slice(0, 4);
 
+  /**
+   * Full-text hits over the local vault index. Grouped separately from the
+   * filename-based `obsidianNotes` matches, which only see loaded metadata.
+   */
+  const matchedVault = q.length >= 2 ? searchIndex(indexDocs, q, 6) : [];
+
   // Group all results based on activeFilter
   const allResults = [
     ...(activeFilter === 'all' || activeFilter === 'project' ? matchedProjects.map(p => ({ type: 'project' as const, item: p, title: p.name, sub: p.description, category: `项目·${p.status}` })) : []),
@@ -130,6 +153,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
     ...(activeFilter === 'all' || activeFilter === 'server' ? matchedServers.map(srv => ({ type: 'server' as const, item: srv, title: srv.name, sub: `${srv.publicIp}:${srv.port} (${srv.sshUser})`, category: srv.env.toUpperCase() })) : []),
     ...(activeFilter === 'all' || activeFilter === 'secret' ? matchedSecrets.map(sec => ({ type: 'secret' as const, item: sec, title: sec.name, sub: sec.maskedPreview, category: 'AES加密' })) : []),
     ...(activeFilter === 'all' || activeFilter === 'reminder' ? matchedReminders.map(rem => ({ type: 'reminder' as const, item: rem, title: rem.title, sub: `到期日: ${new Date(rem.targetDate).toLocaleDateString()} ${rem.cost || ''}`, category: '时效提醒' })) : []),
+    ...(activeFilter === 'all' || activeFilter === 'note' ? matchedVault.map(hit => ({ type: 'vault' as const, item: hit, title: hit.title, sub: hit.snippet, category: `正文·${hit.key.split('/').slice(0, -1).join('/') || '根目录'}` })) : []),
     ...(activeFilter === 'all' || activeFilter === 'note' ? matchedNotes.map(n => ({ type: 'note' as const, item: n, title: n.title, sub: n.content.slice(0, 60), category: n.category || '知识文档' })) : []),
     ...(activeFilter === 'all' || activeFilter === 'note' ? matchedObsidian.map(obs => ({ type: 'obsidian' as const, item: obs, title: obs.title, sub: obs.path, category: 'Obsidian' })) : [])
   ];
@@ -162,6 +186,8 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
       onSelectProject(res.item as ProjectItem);
     } else if (res.type === 'inbox' && onSelectInbox) {
       onSelectInbox(res.item as InboxItem);
+    } else if (res.type === 'vault' && onSelectVaultNote) {
+      onSelectVaultNote((res.item as { key: string }).key);
     }
     onClose();
   };

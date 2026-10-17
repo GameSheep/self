@@ -97,6 +97,9 @@ interface DataInteropViewProps {
   onUpdateYoudaoConfig: (config: YoudaoConfig) => void;
   onAddQuickNote: (note: QuickNote) => void;
   onOpenSettings: () => void;
+  /** Vault key to open immediately (from global search). */
+  focusVaultKey?: string | null;
+  onFocusHandled?: () => void;
 }
 
 export const DataInteropView: React.FC<DataInteropViewProps> = ({
@@ -112,7 +115,9 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   onUpdateYoudaoNotes,
   onUpdateYoudaoConfig,
   onAddQuickNote,
-  onOpenSettings
+  onOpenSettings,
+  focusVaultKey,
+  onFocusHandled
 }) => {
   const [activePlatform, setActivePlatform] = useState<'obsidian' | 'wucai' | 'youdao' | 'topology'>('obsidian');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -133,6 +138,11 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   const [isIndexing, setIsIndexing] = useState(false);
   const [indexProgress, setIndexProgress] = useState<BuildProgress | null>(null);
   const [showBacklinks, setShowBacklinks] = useState(true);
+
+  // Mirrors for async callbacks (avoid stale closures without changing identity).
+  const indexRecordsRef = React.useRef<IndexedDoc[]>([]);
+  indexRecordsRef.current = indexRecords;
+  const autoIndexSigRef = React.useRef('');
   const [isEditingObsidian, setIsEditingObsidian] = useState(false);
   const [editObsidianContent, setEditObsidianContent] = useState(obsidianNotes[0]?.content || '');
   const [isSavingObsidian, setIsSavingObsidian] = useState(false);
@@ -291,6 +301,24 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       const cloudKeys = new Set(cloudNotes.map((n) => n.key));
       const localOnly = obsidianNotes.filter((n) => !cloudKeys.has(n.key));
       onUpdateObsidianNotes([...cloudNotes, ...localOnly]);
+
+      // Keep an existing full-text index fresh without asking the user to click
+      // "更新索引" every time. Only changed notes are re-fetched, so this is cheap.
+      const listingSignature = `${list.objects.length}:${list.objects.reduce(
+        (max, o) => (o.lastModified > max ? o.lastModified : max),
+        0
+      )}`;
+      if (indexRecordsRef.current.length > 0 && listingSignature !== autoIndexSigRef.current) {
+        autoIndexSigRef.current = listingSignature;
+        void buildIndex(obsidianConfig, [...cloudNotes, ...localOnly], indexRecordsRef.current)
+          .then((result) => {
+            if (result.fetched > 0) {
+              setIndexRecords(result.records);
+              showToast(`📚 全文索引已增量更新（${result.fetched} 篇有变化）`);
+            }
+          })
+          .catch((err) => console.warn('[Self-Hub] auto index update failed', err));
+      }
 
       if (files === 0 && list.bucketTotalCount) {
         showToast(
@@ -809,6 +837,25 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
     cloudLastModified?: number;
     content: string;
   } | null>(null);
+
+  // Open a note requested from outside (global search / wikilink jump).
+  React.useEffect(() => {
+    if (!focusVaultKey) return;
+    onFocusHandled?.();
+    if (!obsidianConfig.enabled || !obsidianConfig.bucket || !obsidianConfig.accessKeyId) {
+      showToast('⚠️ 请在设置中配置阿里云 OSS 后再打开笔记');
+      return;
+    }
+    void handleOpenOssFile({
+      name: focusVaultKey.split('/').pop() || focusVaultKey,
+      path: focusVaultKey,
+      isDir: false,
+      size: 0,
+      lastModified: Date.now(),
+      children: []
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusVaultKey]);
 
   // Load the bucket tree once on mount so the panel is not empty on first visit.
   const didAutoLoadRef = React.useRef(false);
