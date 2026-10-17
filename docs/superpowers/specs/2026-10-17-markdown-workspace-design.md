@@ -852,3 +852,62 @@ App 现在只剩三件事：**持有状态、路由与副作用编排、渲染�
 ### 28.4 验证
 
 全量 **139 条测试通过**，构建与扩展打包正常。整个拆分过程未改动任何行为，测试全程作为安全网。
+
+---
+
+## 29. 排查「接口频繁 400」（2026-10-17 第二十轮）
+
+### 29.1 先排除 OSS
+
+用真实桶跑完整链路（刷新 1951 对象 → 打开文件 → 建索引 25 秒），捕获所有 ≥400 响应：
+
+```
+failures_after_refresh: 0
+failures_after_open:    0
+failures_after_index:   0
+```
+
+扩展自带 SyncManager 也单独测了：`同步完成`，上下文级捕获 0 失败。**OSS 与 WebDAV 都不是 400 的来源。**
+
+### 29.2 定位到 AI 接口
+
+用**假 Key** 直接请求真实端点，借此区分"请求格式错"与"认证错"：
+
+| 请求 | 返回 |
+| --- | --- |
+| Gemini + 任意模型 + 假 Key | **HTTP 400** `API_KEY_INVALID` / "API key not valid" |
+| DeepSeek + 正确模型 + 假 Key | **HTTP 401** "Authentication Fails" |
+
+结论：**Gemini 把"Key 无效"报成 HTTP 400**（不是 401）。所以"频繁 400"极可能是 Key 无效，而不是请求格式问题。
+
+### 29.3 代码里的三个放大器
+
+1. **错误信息被丢弃**：`throw new Error(\`Gemini API Error: ${res.statusText}\`)`，而 HTTP/2 下 `statusText` **为空**，界面上什么都没有。
+2. **失败被静默吞掉**：`catch` 直接 `return parseTextLocally(rawText)`，用户看到"识别完成"，完全不知道云端已经失败——只在 devtools 里留下 400。
+3. **模型名跨服务商残留**：`model` 字段在切换提供商时保留。选 Gemini 但模型还是 `deepseek-chat`，请求就打到 `models/deepseek-chat:generateContent`（有了有效 Key 时这会是另一个 400 源）。此外 DeepSeek 在 `baseUrl` 为空时会回退到 **OpenAI 的端点**。
+
+### 29.4 修复
+
+新增 `src/lib/aiProviders.ts`：
+
+- `resolveModel()`：模型名与服务商不匹配时**自动回退到该服务商默认模型**，并标记 `substituted`；
+- `resolveEndpoint()`：各服务商各自默认端点（DeepSeek 不再落到 OpenAI）；
+- `buildRequestBody()`：Gemini 用 `contents[]` + `responseMimeType`，OpenAI/DeepSeek 用 `messages[]` + `response_format`；
+- `describeAiError()`：**读响应体**，取 `error.message` / `error.details[].reason`；
+- `explainAiFailure()`：把 `API_KEY_INVALID`、配额、权限、模型不存在等翻译成可操作的中文建议；
+- `testAiProvider()`：发一条极短请求做连通性测试。
+
+界面：
+
+- 设置 → AI 模型新增 **「测试连接」**，失败时显示 `HTTP 400：API key not valid…` + 「API Key 无效，请确认…已启用 Generative Language API」；模型被自动替换时额外提示；
+- 分拣弹窗在云端失败时显示 **「云端 AI 调用失败，已改用本地规则」+ 服务商原文**，不再假装成功。
+
+### 29.5 测试
+
+`tests/e2e/ai-diagnostics.spec.ts`（4 条）：400 显示服务商原文与修复建议、成功显示模型与延迟、模型不匹配自动替换并提示、分拣失败时明确告知回退。
+
+顺带修复：`tests/e2e/pinyin-search.spec.ts` 中一条断言用 `body.innerText` 判定结果，实际把背后的仪表盘也算进去了；给搜索面板加了 `data-testid="global-search-results"` 后按作用域断言。
+
+### 29.6 全量回归
+
+**147 条测试通过**。包体 818KB / gz 245KB（拼音表 27KB 只打包一次，已核实）。

@@ -1,44 +1,66 @@
 /**
  * High-Speed Fuzzy & Pinyin Search Engine
- * Supports Chinese Pinyin Initials, Full Pinyin, English, and Full-Text Content
+ *
+ * Supports:
+ * - direct substring match (Chinese / English / numbers)
+ * - pinyin-initials match, so "rmkj" finds 热门科技
+ * - multi-token AND matching
  */
+import { PINYIN_CHARS, PINYIN_INITIALS } from './pinyinTable';
 
-// Common Chinese character to pinyin initial mapping
-const PINYIN_MAP: Record<string, string> = {
-  '阿': 'a', '里': 'li', '云': 'yun', '百': 'bai', '度': 'du', '腾': 'teng', '讯': 'xun',
-  '微': 'wei', '信': 'xin', '香': 'xiang', '港': 'gang', '生': 'sheng', '产': 'chan',
-  '服': 'fu', '务': 'wu', '器': 'qi', '部': 'bu', '署': 'shu', '控': 'kong', '制': 'zhi',
-  '台': 'tai', '仓': 'cang', '库': 'ku', '掘': 'jue', '金': 'jin', '签': 'qian', '到': 'dao',
-  '笔': 'bi', '记': 'ji', '安': 'an', '全': 'quan', '密': 'mi', '钥': 'yao',
-  '提': 'ti', '醒': 'xing', '续': 'xu', '费': 'fei', '期': 'qi', '少': 'shao',
-  '数': 'shu', '派': 'pai', '常': 'chang', '用': 'yong', '测': 'ce', '试': 'shi'
-};
+/**
+ * char -> first letter of its pinyin, built once from the generated table.
+ * The table covers the 6763 GB2312 hanzi (essentially all characters used in
+ * modern Chinese text), replacing the previous 62-character hand-written map.
+ */
+let pinyinMap: Map<string, string> | null = null;
 
+function getMap(): Map<string, string> {
+  if (pinyinMap) return pinyinMap;
+  const map = new Map<string, string>();
+  // Both strings are indexed in parallel and the chars are sorted by code point.
+  for (let i = 0; i < PINYIN_CHARS.length; i++) {
+    map.set(PINYIN_CHARS[i], PINYIN_INITIALS[i]);
+  }
+  pinyinMap = map;
+  return map;
+}
+
+/** Latin letters of the pinyin initials for a piece of text. */
 export function getPinyinInitials(text: string): string {
+  const map = getMap();
   let initials = '';
   for (const char of text) {
-    if (PINYIN_MAP[char]) {
-      initials += PINYIN_MAP[char][0];
+    const hit = map.get(char);
+    if (hit) {
+      initials += hit;
     } else if (/[a-zA-Z0-9]/.test(char)) {
+      // Latin/digits are their own initials, so "GitHub2" contributes "github2".
       initials += char.toLowerCase();
     }
   }
   return initials;
 }
 
+/**
+ * Full pinyin is deliberately NOT generated: it would multiply the bundle size
+ * for a feature (typing full pinyin) that initials already cover in practice.
+ */
 export function matchesQuery(targetText: string, query: string): boolean {
   if (!query) return true;
   const q = query.toLowerCase().trim();
   const t = targetText.toLowerCase();
 
-  // 1. Direct substring match
   if (t.includes(q)) return true;
 
-  // 2. Acronym / Pinyin initials match
   const initials = getPinyinInitials(targetText);
   if (initials.includes(q)) return true;
 
-  // 3. Sub-word fuzzy match
   const queryTokens = q.split(/\s+/).filter(Boolean);
-  return queryTokens.every(tok => t.includes(tok) || initials.includes(tok));
+  return queryTokens.every((tok) => t.includes(tok) || initials.includes(tok));
+}
+
+/** Exposed for the settings/health views that want to show coverage. */
+export function pinyinTableSize(): number {
+  return PINYIN_CHARS.length;
 }

@@ -1,5 +1,6 @@
 import { NavSite, ServerDeployment, SecretItem, QuickNote, AiConfig } from '../types';
 import { createMaskedPreview, encryptText } from './crypto';
+import { buildRequestBody, describeAiError, resolveEndpoint, resolveModel } from './aiProviders';
 
 export interface ParsedSecret {
   name: string;
@@ -22,6 +23,8 @@ export interface ParsedEntities {
   notes: Partial<QuickNote>[];
   /** Which engine produced this result, so the UI can be honest about it. */
   engine?: 'llm' | 'local';
+  /** Set when the cloud call failed and we fell back to local parsing. */
+  warning?: string;
 }
 
 /**
@@ -360,46 +363,37 @@ ${rawText}
   try {
     let responseText = '';
 
-    if (config.provider === 'gemini') {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.model || 'gemini-2.5-flash'}:generateContent?key=${config.apiKey}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.1,
-            responseMimeType: 'application/json'
-          }
-        })
-      });
-      if (!res.ok) {
-        throw new Error(`Gemini API Error: ${res.statusText}`);
-      }
-      const data = await res.json();
-      responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-    } else {
-      // OpenAI / DeepSeek compatible
-      const endpoint = config.baseUrl ? `${config.baseUrl.replace(/\/$/, '')}/chat/completions` : 'https://api.openai.com/v1/chat/completions';
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.apiKey}`
-        },
-        body: JSON.stringify({
-          model: config.model || (config.provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini'),
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.1,
-          response_format: { type: 'json_object' }
-        })
-      });
-      if (!res.ok) {
-        throw new Error(`AI API Error: ${res.statusText}`);
-      }
-      const data = await res.json();
-      responseText = data.choices?.[0]?.message?.content || '{}';
+    // Provider-correct model + endpoint: sending a leftover model name from
+    // another provider is the most common cause of a 400 here.
+    const { model } = resolveModel(config);
+    const baseEndpoint = resolveEndpoint(config);
+    const body = buildRequestBody(config, prompt, model);
+
+    const url =
+      config.provider === 'gemini'
+        ? `${baseEndpoint}/models/${model}:generateContent?key=${encodeURIComponent(config.apiKey)}`
+        : `${baseEndpoint}/chat/completions`;
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers:
+        config.provider === 'gemini'
+          ? { 'Content-Type': 'application/json' }
+          : { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      // Read the body so the real reason (invalid model, quota, bad key) survives
+      // into the UI instead of a blank statusText.
+      throw new Error(await describeAiError(res, config.provider));
     }
+
+    const data = await res.json();
+    responseText =
+      config.provider === 'gemini'
+        ? data.candidates?.[0]?.content?.parts?.[0]?.text || '{}'
+        : data.choices?.[0]?.message?.content || '{}';
 
     // Clean up code fences if present
     const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -411,11 +405,17 @@ ${rawText}
       secrets: Array.isArray(parsed.secrets) ? parsed.secrets : [],
       notes: Array.isArray(parsed.notes) ? parsed.notes : []
     };
-  } catch (err) {
+  } catch (err: any) {
+    // Do not hide the failure: the caller shows this and the user can act on it
+    // (wrong model, revoked key, quota). Silent fallback looked like success.
     console.warn('AI Parsing failed, falling back to local heuristic parser', err);
-    return parseTextLocally(rawText);
+    const local = parseTextLocally(rawText);
+    return { ...local, engine: 'local', warning: err?.message || '云端 AI 调用失败，已回退到本地规则' };
   }
 }
+
+
+
 
 
 

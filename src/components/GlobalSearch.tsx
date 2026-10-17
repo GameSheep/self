@@ -296,7 +296,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
         </div>
 
         {/* Results List */}
-        <div className="p-2 max-h-[60vh] overflow-y-auto space-y-1">
+        <div className="p-2 max-h-[60vh] overflow-y-auto space-y-1" data-testid="global-search-results">
           {allResults.length === 0 ? (
             <div className="p-8 text-center text-xs text-zinc-500">
               未找到匹配资产，支持输入拼音首字母（如 ali 匹配阿里云，gh 匹配 GitHub）

@@ -370,6 +370,27 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                 </button>
               </div>
 
+              {/* A failed cloud call used to fall back silently, which looked like
+                  success. Say it out loud, with the provider's reason. */}
+              {parsedResult.warning && (
+                <div
+                  className="rounded-xl border border-amber-900/60 bg-amber-950/25 px-3 py-2 text-[11px] text-amber-300 leading-relaxed"
+                  data-testid="ai-fallback-warning"
+                >
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-medium">云端 AI 调用失败，已改用本地规则</div>
+                      <p className="mt-1 font-mono text-[10px] text-amber-200/80 break-all">
+                        {parsedResult.warning}
+                      </p>
+                      <p className="mt-1 text-[10px] text-amber-200/70">
+                        常见原因：模型名与服务商不匹配、Key 失效或额度用尽。可到「系统设置 → AI 模型」核对。
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* Keep the masking notice visible on the result screen too — the user
                   should still be able to see what was withheld from the provider. */}
               {maskInfo && maskInfo.findings.length > 0 && (
@@ -548,6 +569,7 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
     </div>
   );
 };
+
 
 
 

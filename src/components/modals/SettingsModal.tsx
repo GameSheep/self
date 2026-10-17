@@ -13,6 +13,7 @@ import {
   readStateBackupFromWebdav
 } from '../../lib/stateBackup';
 import { testWebdav } from '../../lib/webdavClient';
+import { testAiProvider } from '../../lib/aiProviders';
 import {
   isExtensionContext,
   openExtensionOptions,
@@ -68,6 +69,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   );
   const [wdTest, setWdTest] = useState<{ ok: boolean; message: string } | null>(null);
   const [wdTesting, setWdTesting] = useState(false);
+  const [aiTest, setAiTest] = useState<Awaited<ReturnType<typeof testAiProvider>> | null>(null);
+  const [aiTesting, setAiTesting] = useState(false);
   const [extSync, setExtSync] = useState<ExtensionSyncState>({
     available: false,
     provider: 'none',
@@ -490,7 +493,56 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {activeTab === 'ai' && (
             <div className="space-y-3">
               {INTEGRATIONS.filter((i) => i.section === 'ai').map((def) => (
-                <IntegrationCard key={def.id} def={def} state={state} onSave={onSaveIntegration} />
+                <IntegrationCard
+                  key={def.id}
+                  def={def}
+                  state={state}
+                  onSave={onSaveIntegration}
+                  actions={(draft) => (
+                    <button
+                      onClick={async () => {
+                        setAiTesting(true);
+                        setAiTest(null);
+                        try {
+                          const result = await testAiProvider({
+                            provider: (draft.provider as HubState['aiConfig']['provider']) || 'gemini',
+                            apiKey: draft.apiKey || '',
+                            baseUrl: draft.baseUrl || '',
+                            model: draft.model || '',
+                            cloudAiEnabled: draft.cloudAiEnabled === 'true'
+                          });
+                          setAiTest(result);
+                        } finally {
+                          setAiTesting(false);
+                        }
+                      }}
+                      disabled={aiTesting}
+                      className="px-2.5 py-1 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-[11px] font-semibold disabled:opacity-50"
+                      data-testid="ai-test"
+                    >
+                      {aiTesting ? '测试中…' : '测试连接'}
+                    </button>
+                  )}
+                >
+                  {aiTest && (
+                    <div
+                      data-testid="ai-test-result"
+                      className={`w-full mt-2 rounded-lg border px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap ${
+                        aiTest.ok
+                          ? 'border-emerald-900/60 bg-emerald-950/30 text-emerald-300'
+                          : 'border-rose-900/60 bg-rose-950/30 text-rose-300'
+                      }`}
+                    >
+                      {aiTest.ok ? '✅ ' : '⚠️ '}
+                      {aiTest.message}
+                      {aiTest.modelSubstituted && (
+                        <span className="block mt-1 text-amber-300">
+                          注意：模型名与服务商不匹配，已自动改用 {aiTest.model}。请把模型字段也改成它，避免再次产生 400。
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </IntegrationCard>
               ))}
             </div>
           )}
@@ -880,6 +932,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     </div>
   );
 };
+
 
 
 
