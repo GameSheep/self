@@ -29,6 +29,8 @@ import { notifyDueReminders } from './lib/reminderNotifier';
 import { backupStateToOss, backupStateToWebdav, readLastBackupAt, type BackupResult } from './lib/stateBackup';
 import { applyIntegrationValues } from './lib/integrations';
 import { isTabAllowed } from './lib/features';
+import { useCloudBackup } from './hooks/useCloudBackup';
+import { useReminderNotifications } from './hooks/useReminderNotifications';
 import { checkServerHealth, checkServersHealth } from './lib/serverHealth';
 import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X, Activity } from 'lucide-react';
 
@@ -65,90 +67,11 @@ export function App() {
     };
   }, []);
 
-  // Publish reminders to the extension worker so alarms can fire with no tab open.
-  useEffect(() => {
-    publishRemindersToExtension(state.reminders || []);
-  }, [state.reminders]);
+  // Reminders: publishing to the extension worker + in-page fallback.
+  useReminderNotifications(state.reminders);
 
-  // Fire due-reminder notifications while the app is open (once per reminder per day).
-  const remindersRef = useRef<ReminderItem[]>(state.reminders || []);
-  remindersRef.current = state.reminders || [];
-  useEffect(() => {
-    if (typeof window === 'undefined' || !('Notification' in window)) return;
-    // Inside the extension the service worker owns notifications (it also runs
-    // when no tab is open); running both would double-notify.
-    if (isExtensionContext()) return;
-    const tick = () => {
-      if (Notification.permission !== 'granted') return;
-      try {
-        notifyDueReminders(remindersRef.current);
-      } catch (err) {
-        console.warn('[Self-Hub] reminder notification failed', err);
-      }
-    };
-    tick();
-    const timer = setInterval(tick, 60_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // ---- Full-state cloud backup (whole HubState -> .selfhub/state.json) ----
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  const [backupStatus, setBackupStatus] = useState<{
-    status: 'idle' | 'saving' | 'error' | 'conflict';
-    lastAt?: number;
-    message?: string;
-  }>(() => ({ status: 'idle', lastAt: readLastBackupAt() }));
-
-  const runStateBackup = useCallback(async (force = false) => {
-    const current = stateRef.current;
-    // WebDAV takes precedence when the user enabled it; otherwise use OSS.
-    const wd = current.webdavConfig;
-    const useWebdav = Boolean(wd?.enabled && wd.url && wd.username && wd.password);
-
-    if (!useWebdav) {
-      const cfg = current.obsidianConfig;
-      if (!cfg?.enabled || !cfg.bucket || !cfg.accessKeyId) {
-        return { ok: false, error: '未配置 OSS 或 WebDAV' } as BackupResult;
-      }
-    }
-
-    setBackupStatus((prev) => ({ ...prev, status: 'saving' }));
-    const result = useWebdav
-      ? await backupStateToWebdav(wd, current, force)
-      : await backupStateToOss(current.obsidianConfig, current, force);
-
-    if (result.ok) {
-      setBackupStatus({ status: 'idle', lastAt: readLastBackupAt() });
-    } else {
-      setBackupStatus({
-        status: result.conflict ? 'conflict' : 'error',
-        lastAt: readLastBackupAt(),
-        message: result.error
-      });
-    }
-    return result;
-  }, []);
-
-  // Debounced auto-backup: bursts of edits become one upload.
-  const backupTimerRef = useRef<number | null>(null);
-  const backupHydratedRef = useRef(false);
-  useEffect(() => {
-    if (!backupHydratedRef.current) {
-      backupHydratedRef.current = true;
-      return; // do not write on the very first render
-    }
-    const cfg = state.obsidianConfig;
-    if (!cfg?.enabled || !cfg.bucket || !cfg.accessKeyId || cfg.accessKeyId.includes('•••')) return;
-
-    if (backupTimerRef.current) window.clearTimeout(backupTimerRef.current);
-    backupTimerRef.current = window.setTimeout(() => {
-      void runStateBackup();
-    }, 5000);
-    return () => {
-      if (backupTimerRef.current) window.clearTimeout(backupTimerRef.current);
-    };
-  }, [state, runStateBackup]);
+  // Whole-state cloud backup (debounced, conflict-aware).
+  const { backupStatus, runStateBackup } = useCloudBackup(state);
 
   // If the current module was switched off, fall back to the dashboard so the
   // user never lands on a hidden/unreachable view.
@@ -977,6 +900,7 @@ export function App() {
 }
 
 export default App;
+
 
 
 

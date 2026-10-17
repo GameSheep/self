@@ -176,7 +176,7 @@ test.describe('功能开关', () => {
     await seedState(page, state());
     await page.goto('/');
     await page.locator('nav button', { hasText: '加密安全金库' }).click();
-    await expect(page.locator('main')).toContainText('加密安全金库');
+    await expect(page.locator('main')).toContainText('零知识加密安全金库');
 
     await openSettings(page);
     await page.locator('[data-settings-nav="features"]').click();
@@ -187,6 +187,24 @@ test.describe('功能开关', () => {
     // Falls back to the dashboard, and the secrets entry is gone from the sidebar.
     await expect(page.locator('nav button', { hasText: '加密安全金库' })).toHaveCount(0);
     await expect(page.locator('main')).toContainText('基础设施与部署监控');
+  });
+
+  test('仪表盘也遵守开关：关闭的模块不再显示卡片', async ({ page }) => {
+    await seedState(page, state());
+    await page.goto('/');
+    await expect(page.locator('main')).toContainText('加密金库全览');
+
+    await openSettings(page);
+    await page.locator('[data-settings-nav="features"]').click();
+    await page.locator('[data-feature-toggle="secrets"]').click();
+    await page.locator('[data-feature-toggle="servers"]').click();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+
+    await expect(page.locator('main')).not.toContainText('加密金库全览');
+    await expect(page.locator('main')).not.toContainText('基础设施与部署监控');
+    // Other widgets stay.
+    await expect(page.locator('main')).toContainText('日常自动化与签到中心');
   });
 
   test('核心模块没有开关', async ({ page }) => {
@@ -215,6 +233,8 @@ test.describe('功能开关', () => {
     await expect(page.locator('nav button', { hasText: '自研部署与主机' })).toBeVisible();
   });
 });
+
+
 
 
 

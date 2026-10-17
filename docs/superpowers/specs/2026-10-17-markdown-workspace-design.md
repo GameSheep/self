@@ -594,6 +594,45 @@ WUCAI-SECRET-MARKER-xyz        出现: False
 
 全量 **126 条测试通过**。
 
+---
+
+## 23. 仪表盘跟随开关 + 拆分 App 上帝组件（2026-10-17 第十四轮）
+
+### 23.1 仪表盘也遵守开关
+
+上一轮只做了侧边栏隐藏，仪表盘里的「基础设施与部署监控」「加密安全金库」「日常自动化与签到」三张卡片仍然显示——用户关掉了模块，却还能在首页看到它，等于开关没生效。
+
+修正方式与上次失败的原因有关：上一轮把守卫插在 `{/* WIDGET A */}` 注释之前，JSX 表达式里只剩注释，直接编译失败（已回滚）。这次改为精确包住每个 widget 的 `<div>`：
+
+```jsx
+{isFeatureEnabled(state.features, 'servers') && (
+  <div className="p-4 rounded-2xl ...">…</div>
+)}
+```
+
+测试断言：关闭金库与服务器后，首页既没有「加密金库全览」也没有「基础设施与部署监控」，但签到卡片仍在。
+
+### 23.2 拆分 App
+
+App 曾同时持有备份状态、防抖定时器、服务商路由、提醒推送与通知循环——"改一个功能牵动全身"的直接原因。抽出两个 hook：
+
+- `src/hooks/useCloudBackup.ts`：备份状态、5 秒防抖、OSS/WebDAV 路由、冲突状态
+- `src/hooks/useReminderNotifications.ts`：向扩展 worker 发布提醒 + 网页内通知兜底（扩展环境不重复通知）
+
+App 现在只调用：
+
+```ts
+useReminderNotifications(state.reminders);
+const { backupStatus, runStateBackup } = useCloudBackup(state);
+```
+
+App 从 969 行降到 907 行，关键收益不是行数，而是**备份与提醒的副作用不再散落在业务逻辑之间**。
+
+### 23.3 全量回归
+
+**127 条测试通过**，构建与扩展打包正常。
+
+
 
 
 

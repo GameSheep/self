@@ -1,4 +1,5 @@
 import React from 'react';
+import { isFeatureEnabled } from '../../lib/features';
 import { 
   Globe, 
   Server, 
@@ -183,6 +184,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         
         {/* WIDGET A: Servers & DevOps Monitor */}
+        {isFeatureEnabled(state.features, 'servers') && (
         <div className="p-4 rounded-2xl bg-[#121316] border border-[#22242a] shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80 mb-3">
@@ -258,8 +260,10 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <span className="text-emerald-400">安全就绪</span>
           </div>
         </div>
+        )}
 
         {/* WIDGET B: Zero-Knowledge Secret Vault */}
+        {isFeatureEnabled(state.features, 'secrets') && (
         <div className="p-4 rounded-2xl bg-[#121316] border border-[#22242a] shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80 mb-3">
@@ -332,8 +336,10 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             )}
           </div>
         </div>
+        )}
 
         {/* WIDGET C: Automation & Daily Check-in */}
+        {isFeatureEnabled(state.features, 'checkin') && (
         <div className="p-4 rounded-2xl bg-[#121316] border border-[#22242a] shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80 mb-3">
@@ -401,6 +407,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </button>
           </div>
         </div>
+        )}
 
         {/* WIDGET D: Obsidian S3 Cloud Vault Reader */}
         <div className="p-4 rounded-2xl bg-[#121316] border border-[#22242a] shadow-sm flex flex-col justify-between">
@@ -461,3 +468,4 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     </div>
   );
 };
+
