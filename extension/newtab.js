@@ -1208,6 +1208,43 @@
           renderBody: renderBody
         });
 
+        /**
+         * 布局和 ☆ 都可能被**工作台**改：恢复备份时它会把备份里的布局写回
+         * `chrome.storage.local`。不接住的话，这一页还拿着启动时读到的旧布局，
+         * 用户随后随手拖一下就会把恢复出来的布局覆盖掉。
+         *
+         * 自己写进去的改动也会触发 onChanged，所以先比对一次再决定要不要重画。
+         */
+        function adoptExternalChange(changes, area) {
+          if (area !== 'local') return;
+          if (changes.selfhub_newtab_layout) {
+            var nextLayout = changes.selfhub_newtab_layout.newValue;
+            // adopt() 内部会整页重画（模块可能增删），不需要再 refreshBodies。
+            if (nextLayout && JSON.stringify(nextLayout) !== JSON.stringify(dashboard.getLayout())) {
+              dashboard.adopt(nextLayout);
+            }
+          }
+          if (changes.selfhub_newtab_pins) {
+            var nextPins = changes.selfhub_newtab_pins.newValue;
+            var clean = Array.isArray(nextPins)
+              ? nextPins.filter(function (id) {
+                  return typeof id === 'string';
+                })
+              : [];
+            if (JSON.stringify(clean) !== JSON.stringify(pins)) {
+              pins = clean;
+              if (dashboard) dashboard.refreshBodies(['pinned']);
+            }
+          }
+        }
+        try {
+          if (chrome && chrome.storage && chrome.storage.onChanged) {
+            chrome.storage.onChanged.addListener(adoptExternalChange);
+          }
+        } catch (err) {
+          /* 没有 storage.onChanged 也不影响使用 */
+        }
+
         var reset = document.getElementById('reset-layout');
         if (reset) {
           reset.addEventListener('click', function () {

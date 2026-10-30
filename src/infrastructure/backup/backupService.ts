@@ -65,6 +65,7 @@ export { LOCAL_LIBRARY_ID } from '../../lib/storageMode';
 import { LOCAL_LIBRARY_ID } from '../../lib/storageMode';
 import { readActiveLibraryId } from '../../lib/migrationGate';
 import { readStorageMode } from '../../lib/storageMode';
+import { withFreshNewtabPreferences } from '../../lib/newtabPreferences';
 
 /**
  * Which library this operation is about.
@@ -274,6 +275,13 @@ export async function runV3Backup(options: RunV3Options): Promise<Result<RunV3Ou
   const libraryId = await resolveLibraryId(options.libraryId);
   const deviceId = options.deviceId ?? getDeviceId();
   const password = (options.password ?? '').trim();
+  /**
+   * The new tab owns the dashboard layout; the snapshot serialises the whole state, so it
+   * rides along for free once it is in there. Read it here — at the moment of the run,
+   * not from whatever `options.state` happened to hold — so a card dragged seconds before
+   * the backup is in the package. No-op outside the extension.
+   */
+  const state = await withFreshNewtabPreferences(options.state);
 
   if (!password) {
     return fail(
@@ -284,19 +292,19 @@ export async function runV3Backup(options: RunV3Options): Promise<Result<RunV3Ou
     );
   }
 
-  const built = buildTransportFor(options.state);
+  const built = buildTransportFor(state);
   if (!built.transport) {
     return fail(
       appError('VALIDATION', built.reason || '还没有可用的备份目的地。', { safeDetail: 'no backup transport' })
     );
   }
 
-  const snapshot = collectSnapshot(options.state);
+  const snapshot = collectSnapshot(state);
   const written = await writeGeneration({
     transport: built.transport,
     libraryId,
     deviceId,
-    contentRevision: Number((options.state as { contentRevision?: number }).contentRevision) || 0,
+    contentRevision: Number((state as { contentRevision?: number }).contentRevision) || 0,
     password,
     snapshot,
     onProgress: options.onProgress,

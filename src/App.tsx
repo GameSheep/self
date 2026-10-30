@@ -9,6 +9,8 @@ import { decryptText } from './lib/crypto';
 import { getMasterAuth } from './lib/storage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { isExtensionContext, mirrorStateToExtension, readExtensionCaptures, acknowledgeQuickNoteImported, importExtensionAnnotations, readPendingNotes, acknowledgePendingNotes, type AnnotationSyncResult } from './lib/extensionBridge';
+import { canCarryNewtabPreferences, readNewtabPreferences, writeNewtabPreferences, onNewtabPreferencesChanged, sameNewtabPreferences } from './lib/newtabPreferences';
+import type { NewtabPreferences } from './types';
 import { isFeatureEnabled } from './lib/features';
 import { fetchWucaiHighlights } from './lib/wucaiClient';
 import { Sidebar } from './components/Sidebar';
@@ -1072,6 +1074,36 @@ export function App() {
   }, [storageMode, v3Status, updateState]);
   const batchImport = useBatchImport(updateState);
 
+  /**
+   * Carry the new-tab layout into the hub state so that backups include it.
+   *
+   * The new tab is a separate extension page and is the only writer of
+   * `selfhub_newtab_layout` / `selfhub_newtab_pins`. The workbench merely records what is
+   * there — on boot, and live via `storage.onChanged` while this tab is open — so the next
+   * file export or v3 batch carries the dashboard the user arranged. It never writes back
+   * from here; that would make two writers for one key. The restore direction lives in
+   * `handleRestoreState`, which is the one moment the state legitimately knows better.
+   *
+   * A plain web build has no `chrome.storage`, so this is a no-op there and
+   * `newtabPreferences` simply stays absent from the payload.
+   */
+  useEffect(() => {
+    if (!canCarryNewtabPreferences()) return;
+    let cancelled = false;
+    const adopt = (prefs: NewtabPreferences | null) => {
+      if (cancelled || !prefs) return;
+      updateState((prev) =>
+        sameNewtabPreferences(prev.newtabPreferences, prefs) ? prev : { ...prev, newtabPreferences: prefs }
+      );
+    };
+    void readNewtabPreferences().then(adopt);
+    const stop = onNewtabPreferencesChanged(adopt);
+    return () => {
+      cancelled = true;
+      stop();
+    };
+  }, [storageMode, v3Status, updateState]);
+
   const handleLockVault = () => {
     setMasterPassword(null);
     void clearTrustedSession();
@@ -1092,6 +1124,18 @@ export function App() {
    */
   const handleRestoreState = async (restored: HubState): Promise<boolean | void> => {
     const next = normalizeHubState(restored);
+    /**
+     * Push the new-tab layout back into `chrome.storage.local`.
+     *
+     * This is the only place the workbench writes those keys, and it is deliberate: a
+     * restore is the one moment the state legitimately knows better than the device's
+     * local storage. `writeNewtabPreferences` leaves absent fields alone, so a backup
+     * taken before the field existed cannot wipe the layout the user already has.
+     *
+     * Fire-and-forget on purpose — the new tab picks it up via `storage.onChanged`, and a
+     * failed write must not turn a successful data restore into an error.
+     */
+    if (next.newtabPreferences) void writeNewtabPreferences(next.newtabPreferences);
     if (storageMode !== 'v3') {
       setState(next);
       return undefined;

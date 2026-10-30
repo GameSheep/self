@@ -11,7 +11,7 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests/e2e',
-  testMatch: ['newtab-dashboard.spec.ts', 'extension-protocol.spec.ts'],
+  testMatch: ['newtab-dashboard.spec.ts', 'newtab-backup.spec.ts', 'extension-protocol.spec.ts'],
   timeout: 90_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,

@@ -153,6 +153,7 @@ const KNOWN_ROOT_KEYS = new Set([
   'webdavConfig',
   'backupPolicy',
   'homeBlocks',
+  'newtabPreferences',
   'connectionTests',
   'purposes',
   'sampleBatch',
@@ -161,8 +162,30 @@ const KNOWN_ROOT_KEYS = new Set([
 ]);
 
 /**
+ * Keep only the parts of the new-tab preference object that can be handed back to the
+ * extension. The layout is opaque here, but "opaque" must not mean "anything": a corrupted
+ * or hand-edited backup could put a string where the dashboard engine expects an object,
+ * and the engine would then render an empty dashboard on every new tab.
+ */
+function normalizeNewtabPreferences(value: unknown): HubState['newtabPreferences'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as { layout?: unknown; pins?: unknown };
+  const layout =
+    raw.layout && typeof raw.layout === 'object' && !Array.isArray(raw.layout)
+      ? (raw.layout as Record<string, unknown>)
+      : undefined;
+  const pins = Array.isArray(raw.pins)
+    ? raw.pins.filter((id: unknown): id is string => typeof id === 'string')
+    : undefined;
+  if (!layout && !pins) return undefined;
+  return {
+    ...(layout ? { layout } : {}),
+    ...(pins ? { pins } : {})
+  };
+}
+
+/**
  * Coerce arbitrary (possibly imported / legacy / hand-edited) data into a complete HubState.
- *
  * Every consumer of a restored backup must go through this: importBackup() and
  * importEncryptedBackup() only validate a subset of the fields, so a backup missing
  * `checkIns`/`handwritings`/`obsidianConfig`/`categories` used to reach the views and
@@ -216,6 +239,11 @@ export function normalizeHubState(raw: unknown): HubState {
     // re-derived from field presence at every call site.
     backupPolicy: normalizeBackupPolicy(base.backupPolicy, obsidianConfig, webdavConfig),
     homeBlocks: normalizeHomeBlocks(base.homeBlocks),
+    // The new tab owns the shape of this object; the workbench only has to guarantee
+    // that a round trip through load/save does not drop it. A backup that was taken
+    // before this field existed simply has none, and a restore then leaves the
+    // device's current layout alone.
+    newtabPreferences: normalizeNewtabPreferences(base.newtabPreferences),
     connectionTests:
       base.connectionTests && typeof base.connectionTests === 'object' && !Array.isArray(base.connectionTests)
         ? (base.connectionTests as HubState['connectionTests'])

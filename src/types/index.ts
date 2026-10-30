@@ -443,6 +443,19 @@ export type { FeatureFlags } from '../lib/features';
 export type { BackupPolicy } from '../lib/backupPolicy';
 export type { HomeBlockPreference, HomeBlockId } from '../domain/home';
 
+/**
+ * The new-tab page's own preferences, carried inside the hub state so backups include them.
+ *
+ * `layout` is the dashboard engine's own structure (column ratios, module order, per-module
+ * height and data source). The workbench stores it verbatim and never interprets it: the
+ * engine in `extension/newtab-dashboard.js` validates and normalises whatever it reads back.
+ */
+export interface NewtabPreferences {
+  layout?: Record<string, unknown>;
+  /** Site ids the user starred on the new tab (its 常用网站 module). */
+  pins?: string[];
+}
+
 import type { FeatureFlags } from '../lib/features';
 import type { BackupPolicy } from '../lib/backupPolicy';
 import type { HomeBlockPreference } from '../domain/home';
@@ -496,6 +509,18 @@ export interface HubState {
    * hiding a block never disables the feature behind it.
    */
   homeBlocks?: HomeBlockPreference[];
+  /**
+   * New-tab page preferences: the module dashboard's layout and the sites the user
+   * starred there.
+   *
+   * These two live in `chrome.storage.local` because the new tab is a separate
+   * extension page and is their only writer — the workbench never authors them.
+   * They are mirrored into the hub state purely so that a backup carries them:
+   * a file export or a v3 batch serialises the whole state, and a restore writes
+   * this object back to `chrome.storage.local`. Treat `layout` as opaque; the
+   * dashboard engine owns its shape.
+   */
+  newtabPreferences?: NewtabPreferences;
   /**
    * Last connection test per integration id, bound to the tested config version.
    * Absent means "never tested" — which is not the same as "configured".

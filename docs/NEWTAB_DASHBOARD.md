@@ -96,6 +96,33 @@ HTML5 的 `dragover` **只在指针移动时**触发。指针停在栏底部不�
 - 窄屏（≤1180px）每栏 `overflow: visible`，真正滚的是 window，那条路单独处理
   （滚动后同步平移栏的视口矩形）。
 
+## 布局跟着备份走
+
+新标签页是独立页面，`selfhub_newtab_layout` 和 `selfhub_newtab_pins` 一直只存在
+`chrome.storage.local` 里 —— 所以以前备份带走了所有笔记和网站，却带不走你花时间排好的面板：
+换台电脑恢复，布局没了。
+
+现在这两份偏好会镜像进 `HubState.newtabPreferences`（和 `homeBlocks` 同一个思路：偏好属于
+数据）。文件导出和 v3 加密批次本来就把整个 state 序列化，所以它们**自动**带上布局，不需要
+改备份格式。
+
+**方向只有两个，不会出现两个写入方：**
+
+| 方向 | 时机 | 为什么 |
+| --- | --- | --- |
+| 拉（chrome.storage → state） | 工作台启动、`storage.onChanged` | 新标签页改了布局，工作台记下来 |
+| 推（state → chrome.storage） | 只有恢复之后 | 这是唯一一次 state 比本地存储更可信 |
+
+细节：
+
+- 备份前会再读一次 `chrome.storage`（`withFreshNewtabPreferences`），覆盖"刚拖完卡片就点
+  备份、`storage.onChanged` 还没回来"的竞态。
+- 老备份没有这个字段时**不清空**本机布局：`writeNewtabPreferences` 只写存在的字段。
+- 恢复后新标签页如果正开着，会通过 `storage.onChanged` 接住新布局并重画；不接的话用户下一次
+  拖卡片就会把旧布局写回去，覆盖掉刚恢复的那份。
+- 纯网页版没有 `chrome.storage`，这些函数全部退化成 no-op，payload 里就没有这个字段。
+- `layout` 在工作台侧是**不透明**的：引擎拥有它的形状，工作台只负责存和还。
+
 ## 代码结构
 
 - `extension/newtab-dashboard.js` — 布局引擎：列宽 / 高度拖拽、HTML5 拖拽换位、
@@ -105,7 +132,9 @@ HTML5 的 `dragover` **只在指针移动时**触发。指针停在栏底部不�
   搜索、主题、待导入笔记队列。
 - `extension/newtab.css` — 面板、拖拽条、模块卡、幽灵卡片 / 虚线槽 / 尺寸气泡、嵌套网站卡。
 - `src/lib/extensionBridge.ts` — `readPendingNotes` / `acknowledgePendingNotes`。
-- `src/App.tsx` — 启动 + `storage.onChanged` 时把队列收进 `notes`。
+- `src/lib/newtabPreferences.ts` — 布局 / ☆ 的读写桥：拉进 `HubState`、恢复后推回、
+  以及备份前的 `withFreshNewtabPreferences`。
+- `src/App.tsx` — 启动 + `storage.onChanged` 时把队列收进 `notes`，把布局镜像进 state。
 
 ## 约束
 
@@ -131,6 +160,10 @@ npx playwright test --config=playwright.extension.config.ts
 布局回到原位、拖到栏底自动往下滚（指针不动也滚、离开边缘就停、落点跟着滚动走）、
 加文本框并把内容变成笔记、按文件夹换来源、网站卡片套卡片与分类 chip、
 文本框 → 打开工作台能看到这条笔记且队列清空、删模块持久化与重置布局。
+
+`tests/e2e/newtab-backup.spec.ts`（3 条）覆盖布局跟着备份走的两个方向：新标签页改的布局
+被工作台收进 payload（含常用网站 id）、工作台关着时改的布局在下次打开时补上、导入备份把
+布局和 ☆ 写回 `chrome.storage`，以及**老备份没有这个字段时不会清掉本机布局**。
 
 拖动性能的量化手段（临时脚本，不进仓库）：包一层 `Element.prototype.getBoundingClientRect`
 和 `clientWidth` 的 getter 数读次数，再用合成 `PointerEvent` / `DragEvent` 跑 60 帧。

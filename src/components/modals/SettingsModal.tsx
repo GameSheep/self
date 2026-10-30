@@ -45,6 +45,7 @@ import { Hint } from '../../shared/Hint';
 import { capabilityLabel, connectionStatus, fingerprintOf, runConnectionTest } from '../../lib/connectionState';
 import { resolveBackupTarget, type BackupPolicy, type BackupTarget } from '../../lib/backupPolicy';
 import { getSessionBackupPassword, hasSessionBackupPassword } from '../../infrastructure/backup/backupSession';
+import { withFreshNewtabPreferences } from '../../lib/newtabPreferences';
 import type { V3BackupPanelState } from '../../hooks/useV3Backup';
 
 /* -------------------------------------------------------------------------- */
@@ -483,7 +484,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     try {
       setIsExportingEncrypted(true);
-      const encryptedJson = await exportEncryptedBackup(state, pwd);
+      // The new tab owns the dashboard layout; read it now so the file carries the
+      // arrangement the user is looking at, not the one from the last state sync.
+      const encryptedJson = await exportEncryptedBackup(await withFreshNewtabPreferences(state), pwd);
       const blob = new Blob([encryptedJson], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1415,7 +1418,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       ) {
                         return;
                       }
-                      exportBackup(state);
+                      // Same reason as the encrypted export: pick up the current new-tab
+                      // layout at the moment of the export.
+                      void withFreshNewtabPreferences(state).then((fresh) => exportBackup(fresh));
                     }}
                   >
                     导出明文

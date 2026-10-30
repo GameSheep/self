@@ -1094,6 +1094,21 @@
         return layout;
       },
       render: render,
+      /**
+       * Take a layout that came from outside this page.
+       *
+       * The workbench writes `selfhub_newtab_layout` back when the user restores a backup,
+       * so the new tab must be able to adopt that instead of keeping the copy it loaded at
+       * boot — otherwise the next card the user drags would write the pre-restore layout
+       * straight back over the restored one.
+       */
+      adopt: function (next) {
+        var clean = normalize(next);
+        if (!clean) return false;
+        layout = clean;
+        render();
+        return true;
+      },
       refreshBodies: refreshBodies,
       save: function () {
         saveLayout(layout);
@@ -1108,8 +1123,10 @@
 
   window.SelfHubDashboard = {
     DEFAULT_LAYOUT: DEFAULT_LAYOUT,
+    LAYOUT_KEY: LAYOUT_KEY,
     loadLayout: loadLayout,
     saveLayout: saveLayout,
+    normalize: normalize,
     mount: mount
   };
 })();
