@@ -48,6 +48,41 @@ id 从队列里删掉（重新读队列再过滤，避免把导入期间新写�
 - 工作台没开着也不会丢：下次打开工作台时导入。
 - 导入后队列清空，不会重复导入同一条。
 
+## 记一笔 → 收件箱：为什么不是走队列
+
+「记一笔」走的是另一条路：`CAPTURE_ENTRY` → 后台 → `ExtensionStore.captureEntry`，
+落在扩展自己的 v3 收件箱（IndexedDB `selfhub_extension` → `inbox`）。popup、右键菜单
+「保存至统一收件箱」也写这里。
+
+这条链曾经断在工作台这一侧，而且断了很久——**它确实存下来了，只是存到了一个没人看的地方**：
+
+1. 桥接层 `readExtensionCaptures()` 读的还是 `chrome.storage.local.selfhub_inbox`。
+   那是 v2 时代的位置，`CAPTURE_ENTRY` 改成写 v3 库之后就没人写了，于是读到的永远是空。
+2. 即使读到了，旧代码只在**启动时**导一次。工作台一般是一直开着的，所以用户记完
+   切过去看，什么都没有——要刷新才出现。
+3. `captureEntry` 把 `sender.tab.url` 当成捕获的来源 URL，而新标签页自己也是一个 tab，
+   于是每条速记的 url 都是 `chrome-extension://<id>/newtab.html`。收件箱的行只要
+   `url` 存在就**只渲染链接、不渲染正文**，结果是一条指向新标签页的空行——看起来
+   就像"什么都没记"。
+
+现在的形状：
+
+- **读对了**：`readExtensionInbox()` 走 `QUERY_INBOX` 拿真正的行；老的
+  `chrome.storage` key 仍然读，作为升级前的遗留数据兜底。
+- **实时**：后台每次写入都 `broadcastChange(['inbox_v3'], …, 'capture')`，工作台监听
+  `SELFHUB_CHANGED` 就地导入；再加 visibility / focus 补一次（页面睡着时消息不排队）。
+- **一次性**：导入后把扩展侧的行标成 `status: 'imported'`。不标的话，用户在工作台把
+  它转成笔记（行没了）之后，下次启动又会导回来——收件箱永远清不空。`imported` 是
+  导入的墓碑，不是删除：侧边栏查全部状态，照样看得到。
+- **URL 只认真实网页**：`CAPTURE_ENTRY` 只在 `sender.tab.url` 是 http(s) 时才借它当
+  来源；扩展页面自己的地址不再冒充。读的时候也再过滤一遍，历史脏数据同样能正常显示。
+- **正文和链接可以共存**：收件箱的行现在会同时渲染链接和正文（两者不同时），
+  一条"从某个页面记下的文字"不会再被链接挤掉。
+
+> 这是同一个坑的第二次：`docs/AUDIT_REPORT_2026-10-16.md` 里记着上一版——
+> popup / 右键菜单 / 新标签页都提示"已保存"，但没有任何界面能读到。当时补了侧边栏，
+> 这次补的是工作台，并且加了用例盯住它。
+
 ## 拖动为什么能跟手（Grafana 那套）
 
 ![拖动中的幽灵卡片与虚线槽](newtab-drag.png)
@@ -167,6 +202,9 @@ id 从队列里删掉（重新读队列再过滤，避免把导入期间新写�
    不要再写 `width`——两个属性 = 两次样式失效。
 7. 换位**不要**回到 HTML5 拖放（`draggable` / `dragover`）：它的坐标被系统限频，
    幽灵卡片必然拖在后面。要 1:1 跟手只能用 `pointermove`。
+8. 涉及工作台的用例读的是 `extension/app` 里**打包好的** bundle，不是 `src/`。
+   改完 `src/` 先 `npm run package:extension`；`tests/e2e/packagedApp.ts` 会检查
+   产物是否比源码新，忘了打包会直接红，而不是拿着旧代码给出假绿。
 
 ## 验证
 
@@ -174,11 +212,12 @@ id 从队列里删掉（重新读队列再过滤，避免把导入期间新写�
 npx playwright test --config=playwright.extension.config.ts
 ```
 
-`tests/e2e/newtab-dashboard.spec.ts`（12 条）覆盖：拖高 / 拖列宽（刷新后仍在，且列宽只写
+`tests/e2e/newtab-dashboard.spec.ts`（13 条）覆盖：拖高 / 拖列宽（刷新后仍在，且列宽只写
 `flex-basis`）、拖标题换栏、拖动中出现幽灵卡片 + 虚线槽且松手前数据不动、拖到一半放弃
 （`pointercancel`）布局回到原位、拖到栏底自动往下滚（指针不动也滚、离开边缘就停、
 落点跟着滚动走）、加文本框并把内容变成笔记、按文件夹换来源、网站卡片套卡片与分类 chip、
-文本框 → 打开工作台能看到这条笔记且队列清空、删模块持久化与重置布局。
+文本框 → 打开工作台能看到这条笔记且队列清空、**记一笔 → 工作台收件箱（不刷新就出现，
+且扩展侧标成 `imported` 不会重复导入）**、删模块持久化与重置布局。
 
 `tests/e2e/newtab-backup.spec.ts`（3 条）覆盖布局跟着备份走的两个方向：新标签页改的布局
 被工作台收进 payload（含常用网站 id）、工作台关着时改的布局在下次打开时补上、导入备份把

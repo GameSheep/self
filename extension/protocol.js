@@ -228,7 +228,16 @@ export function validatePayload(command, payload) {
       break;
     }
     case 'UPDATE_INBOX_STATUS': {
-      if (!['inbox', 'processed', 'archived'].includes(payload.status)) {
+      /**
+       * `imported` = the workbench has taken this row into its own inbox.
+       *
+       * It is a tombstone for the *import* only, not for the item: `QUERY_INBOX`
+       * with `status: 'inbox'` stops returning it, so a capture the user already
+       * dealt with cannot come back on the next boot, while the side panel (which
+       * queries every status) still lists it. Distinct from `processed`, which
+       * means the user triaged it inside the extension.
+       */
+      if (!['inbox', 'processed', 'imported', 'archived'].includes(payload.status)) {
         return { ok: false, code: ERRORS.INVALID_PAYLOAD, message: 'status 取值不合法' };
       }
       break;

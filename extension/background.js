@@ -281,8 +281,21 @@ async function execute(command, payload, sender, senderKind) {
     }
 
     case 'CAPTURE_ENTRY': {
+      /**
+       * Only a real web page may lend its URL to a capture.
+       *
+       * `sender.tab` is populated for extension pages too, so the new-tab 「记一笔」
+       * module used to store `chrome-extension://<id>/newtab.html` as the URL of every
+       * quick note. The inbox renders a row that has a URL as a link *instead of* its
+       * text, so those captures appeared as a blank row pointing at the new-tab page —
+       * which reads exactly like "it was never saved".
+       */
+      const pageUrl =
+        typeof sender.tab?.url === 'string' && /^https?:\/\//i.test(sender.tab.url)
+          ? sender.tab.url
+          : undefined;
       const captured = await ExtensionStore.captureEntry(
-        { text: payload.text, url: payload.url || sender.tab?.url, source: senderKind },
+        { text: payload.text, url: payload.url || pageUrl, source: senderKind },
         operationIdOf({ payload })
       );
       await broadcastChange(['inbox_v3'], [captured.id], 'capture');

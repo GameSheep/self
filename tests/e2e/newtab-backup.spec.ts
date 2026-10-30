@@ -2,6 +2,7 @@ import { test, expect, chromium, type BrowserContext, type Page } from '@playwri
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import { assertPackagedAppFresh } from './packagedApp';
 
 /**
  * The new-tab dashboard layout travelling with the backup.
@@ -54,6 +55,8 @@ let extensionId = '';
 
 test.beforeAll(async () => {
   expect(fs.existsSync(path.join(EXT_PATH, 'manifest.json')), '扩展目录必须存在').toBe(true);
+  // 这些用例读的是打包进扩展的工作台，不是 src/：产物旧了就会测到旧代码。
+  assertPackagedAppFresh(EXT_PATH);
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'selfhub-newtab-backup-'));
   context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',

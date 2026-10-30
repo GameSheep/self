@@ -8,7 +8,7 @@ import { clearTrustedSession, restoreTrustedSession } from './lib/crypto';
 import { decryptText } from './lib/crypto';
 import { getMasterAuth } from './lib/storage';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { isExtensionContext, mirrorStateToExtension, readExtensionCaptures, acknowledgeQuickNoteImported, importExtensionAnnotations, readPendingNotes, acknowledgePendingNotes, type AnnotationSyncResult } from './lib/extensionBridge';
+import { isExtensionContext, mirrorStateToExtension, readExtensionCaptures, acknowledgeQuickNoteImported, markExtensionInboxImported, importExtensionAnnotations, readPendingNotes, acknowledgePendingNotes, type AnnotationSyncResult } from './lib/extensionBridge';
 import { canCarryNewtabPreferences, readNewtabPreferences, writeNewtabPreferences, onNewtabPreferencesChanged, sameNewtabPreferences } from './lib/newtabPreferences';
 import type { NewtabPreferences } from './types';
 import { isFeatureEnabled } from './lib/features';
@@ -788,33 +788,87 @@ export function App() {
     useInboxActions(state, updateState, { addNote, addSite });
 
   /**
-   * Bring across captures the extension made on its own (new-tab quick note and
-   * content-script inbox entries). Only runs inside the extension origin, is
-   * idempotent through `operationId`, and never touches the extension's own
-   * `selfhub_inbox` so the side panel keeps working.
+   * Bring across captures the extension made on its own (new-tab 「记一笔」, the
+   * popup, and right-click 「保存至统一收件箱」).
+   *
+   * Those all write the extension's own v3 inbox, which lives in a *different*
+   * IndexedDB database from the app's (`selfhub_extension` vs `self_hub_idb`).
+   * Nothing on this side ever asked for those rows, so a capture made on the new
+   * tab reported 「已进收件箱」 and then was nowhere to be found in the workbench.
+   *
+   * Idempotent by `operationId`, and the rows are marked `imported` afterwards so
+   * the same capture cannot come back once the user has dealt with it.
    */
-  const extensionImportedRef = useRef(false);
-  useEffect(() => {
-    if (extensionImportedRef.current || !isExtensionContext()) return;
+  const runCaptureImport = useCallback(async () => {
+    if (!isExtensionContext()) return;
     // Same v3 guard as the annotation/wucai imports: without it this merge runs
     // before the boot-time library read, the captured entries are merged into
-    // the in-memory v2 state, the quick note is acknowledged (deleted on the
-    // extension side), and the finished hydration then overwrites `inbox` with
-    // the library's copy — the capture silently disappears from both ends.
+    // the in-memory v2 state, and the finished hydration then overwrites `inbox`
+    // with the library's copy — the capture silently disappears from both ends.
     if (storageMode === 'v3' && !v3ReadyRef.current) return;
-    extensionImportedRef.current = true;
-    void (async () => {
-      const captures = await readExtensionCaptures();
-      if (captures.length === 0) return;
-      const current = stateRef.current;
-      const { items, imported, quickNoteImported } = mergeExtensionCaptures(current.inbox, captures);
-      if (imported === 0) return;
+    const batch = await readExtensionCaptures();
+    if (batch.captures.length === 0) return;
+    const current = stateRef.current;
+    const { items, imported, quickNoteImported } = mergeExtensionCaptures(current.inbox, batch.captures);
+    if (imported > 0) {
       const next: HubState = { ...current, inbox: items };
       stateRef.current = next;
       setState(next);
       if (quickNoteImported) await acknowledgeQuickNoteImported();
-    })();
+    }
+    await markExtensionInboxImported(batch.inboxIds);
   }, [storageMode, v3Status]);
+
+  const extensionImportedRef = useRef(false);
+  useEffect(() => {
+    if (extensionImportedRef.current || !isExtensionContext()) return;
+    if (storageMode === 'v3' && !v3ReadyRef.current) return;
+    extensionImportedRef.current = true;
+    void runCaptureImport();
+  }, [storageMode, v3Status, runCaptureImport]);
+
+  /**
+   * Live capture import while the workbench stays open.
+   *
+   * The boot pass runs once, so a capture made *after* the workbench tab was
+   * opened stayed invisible until a full reload — which is exactly when a user
+   * goes looking for it ("我刚记的那条呢？"). The background broadcasts
+   * `SELFHUB_CHANGED` with `kind: 'capture'` on every write; a visibility/focus
+   * pass covers broadcasts that fired while this tab was asleep. Both are cheap:
+   * the import is idempotent and a no-op when nothing new arrived.
+   */
+  useEffect(() => {
+    if (!isExtensionContext()) return;
+    const chromeApi = (
+      globalThis as unknown as {
+        chrome?: {
+          runtime?: {
+            onMessage?: {
+              addListener?: (cb: (msg: unknown) => void) => void;
+              removeListener?: (cb: (msg: unknown) => void) => void;
+            };
+          };
+        };
+      }
+    ).chrome;
+    const onBroadcast = (msg: unknown) => {
+      const event = msg as { type?: string; kind?: string; stores?: string[] };
+      if (event?.type !== 'SELFHUB_CHANGED') return;
+      if (event.kind !== 'capture' && !(event.stores || []).includes('inbox_v3')) return;
+      void runCaptureImport();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void runCaptureImport();
+    };
+    chromeApi?.runtime?.onMessage?.addListener?.(onBroadcast);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      chromeApi?.runtime?.onMessage?.removeListener?.(onBroadcast);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [runCaptureImport]);
 
   /**
    * Notes typed in the new tab's 「文本框」 module.

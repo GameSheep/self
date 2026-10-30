@@ -484,15 +484,27 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
                   {/* Body Content */}
                   {item.url ? (
-                    <a
-                      href={item.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs font-mono text-sky-400 hover:underline flex items-center gap-1.5 break-all p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800/80 mb-2"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                      <span>{item.url}</span>
-                    </a>
+                    <>
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-mono text-sky-400 hover:underline flex items-center gap-1.5 break-all p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800/80 mb-2"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                        <span>{item.url}</span>
+                      </a>
+                      {/*
+                        A capture can be both: text the user typed *and* a link it came
+                        from. Rendering only the link hid the text entirely — which is
+                        how 「记一笔」 ended up looking like it saved nothing.
+                      */}
+                      {item.content && item.content.trim() && item.content.trim() !== item.url.trim() ? (
+                        <div className="p-3 rounded-xl bg-sh-bg border border-zinc-800/60 font-mono text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap select-text max-h-36 overflow-y-auto">
+                          {item.content}
+                        </div>
+                      ) : null}
+                    </>
                   ) : (
                     <div className="p-3 rounded-xl bg-sh-bg border border-zinc-800/60 font-mono text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap select-text max-h-36 overflow-y-auto">
                       {item.content}

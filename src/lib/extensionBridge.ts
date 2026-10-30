@@ -264,6 +264,98 @@ export function publishRemindersToExtension(reminders: ReminderItem[]): boolean 
 }
 
 /* -------------------------------------------------------------------------- */
+/* The extension's own inbox                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One row of the extension's unified inbox (`selfhub_extension` → `inbox`).
+ *
+ * Everything the extension collects by itself lands here: the new-tab
+ * 「记一笔」 module, the toolbar popup and the right-click 「保存至统一收件箱」
+ * all send `CAPTURE_ENTRY`, and the background writes this store.
+ *
+ * It is a *different* database from the app's (`selfhub_extension` vs
+ * `self_hub_idb`), which is why the app has to ask for the rows instead of
+ * reading them: a capture used to stop at the extension and never reach the
+ * workbench at all.
+ */
+export interface ExtensionInboxRecord {
+  id: string;
+  content: string;
+  title?: string;
+  url?: string;
+  createdAt: number;
+  status?: string;
+  operationId?: string;
+}
+
+/**
+ * Rows the workbench has not taken yet.
+ *
+ * Asks for `status === 'inbox'` only, so a capture that was already imported
+ * (and marked below) cannot come back on the next boot. Anything that goes wrong
+ * — older extension build without `QUERY_INBOX`, worker asleep, plain web page —
+ * degrades to an empty list rather than a failed import.
+ */
+export async function readExtensionInbox(): Promise<ExtensionInboxRecord[]> {
+  try {
+    const data = await sendExtensionCommand<{ items?: Array<Record<string, unknown>> }>('QUERY_INBOX', {
+      status: 'inbox'
+    });
+    const rows = Array.isArray(data?.items) ? data.items : [];
+    const out: ExtensionInboxRecord[] = [];
+    for (const row of rows) {
+      if (!row || typeof row.id !== 'string' || !row.id) continue;
+      const content = typeof row.content === 'string' ? row.content : '';
+      const title = typeof row.title === 'string' ? row.title : undefined;
+      if (!content.trim() && !(title || '').trim()) continue;
+      out.push({
+        id: row.id,
+        content,
+        title,
+        // A row whose URL is the extension itself (`chrome-extension://…/newtab.html`)
+        // is not a link the workbench can open — it is noise left by an older build
+        // that borrowed `sender.tab.url` from the new-tab page. Drop it so the row
+        // falls back to showing the text the user actually typed.
+        url: typeof row.url === 'string' && /^https?:\/\//i.test(row.url) ? row.url : undefined,
+        createdAt: typeof row.createdAt === 'number' ? row.createdAt : Date.now(),
+        status: typeof row.status === 'string' ? row.status : undefined,
+        operationId: typeof row.operationId === 'string' ? row.operationId : undefined
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Mark extension-inbox rows as taken.
+ *
+ * Without this the import is only *idempotent*, not *one-shot*: the app copies a
+ * capture into its own inbox, the user turns it into a note (which removes the
+ * row here), and the next boot finds the original still sitting in the extension
+ * and copies it in again — the inbox refills with work the user already did.
+ *
+ * `imported` is a tombstone, not a delete: the side panel still lists the row
+ * (`QUERY_INBOX` without a status returns everything), so nothing disappears
+ * from under the user. The operation id is derived from the row id so a retry
+ * replays instead of writing twice.
+ */
+export async function markExtensionInboxImported(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  await Promise.all(
+    ids.map((id) =>
+      sendExtensionCommand('UPDATE_INBOX_STATUS', {
+        id,
+        status: 'imported',
+        operationId: `app-inbox-import-${id}`
+      }).catch(() => undefined)
+    )
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /* Captures made inside the extension                                          */
 /* -------------------------------------------------------------------------- */
 
@@ -276,6 +368,12 @@ export interface ExtensionCapture {
   origin: 'newtab-quicknote' | 'extension-inbox';
 }
 
+export interface ExtensionCaptureBatch {
+  captures: ExtensionCapture[];
+  /** Extension-inbox row ids behind these captures, for post-import acknowledgement. */
+  inboxIds: string[];
+}
+
 interface ExtensionCapturePayload {
   quickNote?: string;
   quickNoteUpdatedAt?: number;
@@ -285,13 +383,40 @@ interface ExtensionCapturePayload {
 /**
  * Read what the extension captured on its own.
  *
- * The new-tab page writes `selfhub_quicknote` and the content script / side panel
- * append to `selfhub_inbox`, but the bundled app never read either key — so a
- * note typed on the new tab was invisible in the inbox, and the app's sites
- * mirror went the other way. They are still two different local stores, but the
- * captures can at least be brought across explicitly.
+ * Two sources, because the extension has two generations of capture storage:
+ *
+ * 1. **The v3 inbox** (`QUERY_INBOX`) — where 记一笔 / popup / 右键菜单 write today.
+ *    This is the one that matters; a capture made on the new tab used to land
+ *    here and stop, because nothing on the app side ever asked for these rows.
+ * 2. **The legacy `chrome.storage.local` keys** (`selfhub_quicknote`,
+ *    `selfhub_inbox`) — written by older builds, kept so an upgrade does not
+ *    strand whatever was captured before the store moved.
+ *
+ * `inboxIds` comes back alongside the captures so the caller can mark those rows
+ * as taken once they are safely in the app's state.
  */
-export async function readExtensionCaptures(): Promise<ExtensionCapture[]> {
+export async function readExtensionCaptures(): Promise<ExtensionCaptureBatch> {
+  const [legacy, inbox] = await Promise.all([readLegacyCaptures(), readExtensionInbox()]);
+
+  const inboxIds: string[] = [];
+  const fromInbox: ExtensionCapture[] = [];
+  for (const row of inbox) {
+    const text = (row.content || row.title || '').trim();
+    if (!text) continue;
+    inboxIds.push(row.id);
+    fromInbox.push({
+      operationId: `ext-inbox-${row.id}`,
+      text,
+      url: row.url,
+      createdAt: row.createdAt,
+      origin: 'extension-inbox'
+    });
+  }
+
+  return { captures: [...fromInbox, ...legacy], inboxIds };
+}
+
+async function readLegacyCaptures(): Promise<ExtensionCapture[]> {
   const api = chromeSyncApi();
   if (!api?.storage?.local?.get) return [];
   const get = api.storage!.local!.get!.bind(api.storage!.local);

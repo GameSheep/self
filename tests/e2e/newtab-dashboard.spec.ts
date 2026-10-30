@@ -2,6 +2,7 @@ import { test, expect, chromium, type BrowserContext, type Page } from '@playwri
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import { assertPackagedAppFresh } from './packagedApp';
 
 /**
  * 新标签页的「可自定义模块面板」。
@@ -47,6 +48,13 @@ const SEED = {
   ],
   checkIns: []
 };
+
+/**
+ * 工作台的用例跑的是 `extension/app` 里**打包好的**那份 bundle，不是 `src/`。
+ * 改完 `src/` 忘了 `npm run package:extension`，测的就是旧代码 —— 这两条跨页面
+ * 用例先验一下产物比源码新（见 packagedApp.ts）。
+ */
+const freshBuild = () => assertPackagedAppFresh(EXT_PATH);
 
 async function openNewTab(seed: typeof SEED = SEED): Promise<Page> {
   const page = await context!.newPage();
@@ -448,6 +456,7 @@ test.describe('模块面板：自定义与数据来源', () => {
 
   test('文本框写的笔记，打开工作台就在笔记里（队列导入一次即清空）', async () => {
     test.setTimeout(90_000);
+    freshBuild();
     const page = await openNewTab();
     await page.locator('[data-add-col="0"]').click();
     await page.locator('.pop [data-add-type="quicknote"]').click();
@@ -475,6 +484,64 @@ test.describe('模块面板：自定义与数据来源', () => {
         })
     );
     expect(queued.length).toBe(0);
+    await app.close();
+    await page.close();
+  });
+
+  /**
+   * 用户报的 bug：「记一笔」记完之后，工作台里哪里都找不到。
+   *
+   * 原因是记一笔走 `CAPTURE_ENTRY`，写的是扩展自己的 v3 收件箱
+   * （`selfhub_extension` 库），而工作台读的是另一套存储；桥接层当时还在读
+   * 一个早就不写了的老 key `chrome.storage.local.selfhub_inbox`。所以它确实
+   * 存下来了，只是存到了一个没人看的地方。
+   */
+  test('记一笔：新标签页记的内容会进工作台收件箱，工作台开着也立刻出现', async () => {
+    test.setTimeout(90_000);
+    freshBuild();
+    // 工作台先开在收件箱页，模拟"一直开着"——用户通常就是这样去翻的。
+    const app = await context!.newPage();
+    await app.goto(`chrome-extension://${extensionId}/app/index.html#/inbox`);
+    const skip = app.getByRole('button', { name: /跳过|开始使用/ });
+    if (await skip.count()) await skip.first().click();
+    await expect(app.getByText('统一极速收件箱').first()).toBeVisible({ timeout: 20_000 });
+
+    const text = `记一笔-${Date.now()}`;
+    const page = await openNewTab();
+    await page.locator('[data-module-id="m-capture"] #capture-input').fill(text);
+    await page.locator('[data-module-id="m-capture"] #capture-submit').click();
+    await expect(page.locator('[data-module-id="m-capture"] #capture-status')).toHaveText('已进收件箱');
+
+    // 关键：**不刷新工作台**。后台写完后会广播 SELFHUB_CHANGED，工作台接住就导。
+    await expect(app.getByText(text).first()).toBeVisible({ timeout: 20_000 });
+
+    // 导完要在扩展侧标成「已收下」：否则用户把它转成笔记之后，下次启动又会被
+    // 导回来，收件箱永远清不空。
+    const status = await app.evaluate(
+      (needle) =>
+        new Promise<string>((resolve) => {
+          chrome.runtime.sendMessage(
+            {
+              protocolVersion: 1,
+              requestId: `req-check-${Date.now()}`,
+              command: 'QUERY_INBOX',
+              payload: {}
+            },
+            (res: { ok?: boolean; data?: { items?: Array<{ content?: string; status?: string }> } }) => {
+              const row = (res?.data?.items || []).find((item) => item.content === needle);
+              resolve(row?.status || 'missing');
+            }
+          );
+        }),
+      text
+    );
+    expect(status).toBe('imported');
+
+    // 再开一次工作台不会重复导入。
+    await app.reload();
+    await expect(app.getByText(text).first()).toBeVisible({ timeout: 20_000 });
+    await expect(app.getByText(text)).toHaveCount(1);
+
     await app.close();
     await page.close();
   });
