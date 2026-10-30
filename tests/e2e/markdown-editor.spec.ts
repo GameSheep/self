@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState, readState } from './helpers';
+import { seedState, baseState, readState, gotoTab } from './helpers';
 import { RICH_MARKDOWN, RICH_NOTE_KEY } from './fixtures';
 
 const ENDPOINT = 'oss-cn-beijing.aliyuncs.com';
@@ -10,10 +10,10 @@ async function seedForEdit(page: any, opts: { withOss?: boolean; content?: strin
     baseState({
       obsidianConfig: {
         enabled: Boolean(opts.withOss),
-        bucket: 'uiuecho-obsidian',
+        bucket: 'example-obsidian-vault',
         endpoint: ENDPOINT,
         region: 'oss-cn-beijing',
-        accessKeyId: opts.withOss ? 'LTAI5t8JAm7fyYaDsK5ECJer' : '',
+        accessKeyId: opts.withOss ? 'LTAI5tEXAMPLE000000000' : '',
         accessKeySecret: opts.withOss ? 'test-secret' : '',
         prefix: ''
       },
@@ -30,7 +30,7 @@ async function seedForEdit(page: any, opts: { withOss?: boolean; content?: strin
     })
   );
   await page.goto('/');
-  await page.locator('nav button', { hasText: '多平台数据互通' }).click();
+  await gotoTab(page, '多平台数据互通');
   await expect(page.locator('.md-body')).toBeVisible();
 }
 

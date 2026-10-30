@@ -4,6 +4,7 @@ import { AiConfig, NavSite, ServerDeployment, SecretItem, QuickNote, ReminderIte
 import { parseTextWithLLM, ParsedEntities } from '../../lib/aiParser';
 import { maskSecrets, rehydrateValue, describeFindings, type MaskResult } from '../../lib/secretMask';
 import { encryptText, createMaskedPreview } from '../../lib/crypto';
+import { SiteIcon } from '../SiteIcon';
 
 interface AiIngestModalProps {
   isOpen: boolean;
@@ -124,29 +125,33 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
 
     setImporting(true);
 
-    // 1. Prepare sites with customized categories
-    const newSites: NavSite[] = parsedResult.sites.map((s, idx) => ({
-      id: `site-${Date.now()}-${idx}`,
-      title: s.title || '未命名网站',
-      url: s.url || '#',
-      category: siteCategories[idx] || s.category || categories[1] || '常用工具',
-      description: s.description || '',
-      createdAt: Date.now()
-    }));
+    // The import body awaits crypto (encryptText). If that throws — a non-secure
+    // context has no crypto.subtle — the button used to stay stuck on
+    // "正在加密入库..." forever with no error anywhere.
+    try {
+      // 1. Prepare sites with customized categories
+      const newSites: NavSite[] = parsedResult.sites.map((s, idx) => ({
+        id: `site-${Date.now()}-${idx}`,
+        title: s.title || '未命名网站',
+        url: s.url || '#',
+        category: siteCategories[idx] || s.category || categories[1] || '常用工具',
+        description: s.description || '',
+        createdAt: Date.now()
+      }));
 
-    // 2. Prepare servers with customized environments
-    const newServers: ServerDeployment[] = parsedResult.servers.map((srv, idx) => ({
-      id: `srv-${Date.now()}-${idx}`,
-      name: srv.name || '自研服务',
-      publicIp: srv.publicIp || '127.0.0.1',
-      port: srv.port || 22,
-      env: serverEnvs[idx] || srv.env || 'prod',
-      sshUser: srv.sshUser || 'root',
-      sshCommand: srv.sshCommand || `ssh ${srv.sshUser || 'root'}@${srv.publicIp || '127.0.0.1'}`,
-      notes: srv.notes || '',
-      status: 'unknown',
-      createdAt: Date.now()
-    }));
+      // 2. Prepare servers with customized environments
+      const newServers: ServerDeployment[] = parsedResult.servers.map((srv, idx) => ({
+        id: `srv-${Date.now()}-${idx}`,
+        name: srv.name || '自研服务',
+        publicIp: srv.publicIp || '127.0.0.1',
+        port: srv.port || 22,
+        env: serverEnvs[idx] || srv.env || 'prod',
+        sshUser: srv.sshUser || 'root',
+        sshCommand: srv.sshCommand || `ssh ${srv.sshUser || 'root'}@${srv.publicIp || '127.0.0.1'}`,
+        notes: srv.notes || '',
+        status: 'unknown',
+        createdAt: Date.now()
+      }));
 
     // 3. Prepare secrets (AES-256 encrypted)
     const newSecrets: SecretItem[] = [];
@@ -213,16 +218,18 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
       updatedAt: Date.now()
     }));
 
-    // 5. Detect and prepare reminders from text
+    // 5. Detect and prepare reminders from text. The date is a heuristic — the
+    // parser cannot read real dates yet, so label the estimate instead of
+    // presenting a made-up day as fact.
     const newReminders: ReminderItem[] = [];
     if (rawText.includes('续费') || rawText.includes('到期') || rawText.includes('Plus') || rawText.includes('扣款')) {
       newReminders.push({
         id: `rem-ai-${Date.now()}`,
-        title: 'AI 自动提取续费提醒项',
+        title: 'AI 自动提取续费提醒项（到期日为估算，请核对修改）',
         category: 'subscription',
         targetDate: Date.now() + 86400000 * 30,
         recurring: 'monthly',
-        notes: '由 AI 智能整理自动识别并关联的时效提醒',
+        notes: '由 AI 智能整理自动识别的时效提醒。暂未解析文中的真实日期，默认按 30 天后估算，请在提醒页改成准确日期。',
         createdAt: Date.now()
       });
     }
@@ -238,17 +245,34 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
     onClose();
     setParsedResult(null);
     setRawText('');
-    setImporting(false);
+    } catch (err: any) {
+      setErrorMsg(`入库失败：${err?.message || err}`);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // Closing guard: the backdrop used to discard a finished parse (or typed
+  // text) with a single stray click, with no way back.
+  const requestClose = () => {
+    if ((rawText.trim() || parsedResult) && !importing &&
+        !window.confirm('当前内容尚未入库，关闭会丢弃这些内容，确定吗？')) {
+      return;
+    }
+    onClose();
   };
 
   return (
-    <div 
-      onClick={onClose}
+    <div
+      onClick={requestClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="AI 内容整理"
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
     >
       <div 
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-4xl max-h-[90vh] bg-[#121316] border border-zinc-800 rounded-2xl flex flex-col shadow-2xl overflow-hidden"
+        className="w-full max-w-4xl max-h-[90vh] bg-sh-surface border border-zinc-800 rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-in slide-in-from-bottom-2"
       >
         
         {/* Header */}
@@ -260,12 +284,12 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
             <div>
               <h2 className="text-xs sm:text-sm font-semibold text-zinc-100">AI 高精准分拣与存储位置指定</h2>
               <p className="text-[11px] sm:text-xs text-zinc-400">
-                支持粘贴有道云、微信与乱七八糟笔记，AI 解析后由您在预览中自主选择存储分区
+                支持粘贴微信、聊天记录与乱七八糟笔记，AI 解析后由您在预览中自主选择存储分区
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white">
-            <X className="w-4 h-4" />
+          <button onClick={requestClose} aria-label="关闭整理窗口" className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white">
+            <X className="w-4 h-4" aria-hidden />
           </button>
         </div>
 
@@ -327,7 +351,7 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                   <span>
                     当前会把下面这段文字发送到 <b>{aiConfig.provider}</b>。请确认其中没有真实的 API Key、
                     SSH 密码或数据库连接串——这类内容一旦发送就离开了本机。
-                    可在「系统设置 → AI 模型」里关闭云端 AI，改用本地规则。
+                    可在「设置 → 连接与任务 → AI 模型」里关闭云端 AI，改用本地规则。
                   </span>
                 </div>
               )}
@@ -385,7 +409,7 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                         {parsedResult.warning}
                       </p>
                       <p className="mt-1 text-[10px] text-amber-200/70">
-                        常见原因：模型名与服务商不匹配、Key 失效或额度用尽。可到「系统设置 → AI 模型」核对。
+                        常见原因：模型名与服务商不匹配、Key 失效或额度用尽。可到「设置 → 连接与任务 → AI 模型」核对。
                       </p>
                     </div>
                   </div>
@@ -425,9 +449,12 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                   <div className="space-y-2">
                     {parsedResult.sites.map((s, i) => (
                       <div key={i} className="p-3 rounded-xl bg-zinc-900/70 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                        <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-zinc-200 text-xs truncate">{s.title}</div>
-                          <div className="text-zinc-400 font-mono text-[11px] truncate">{s.url}</div>
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <SiteIcon url={s.url || ''} title={s.title} size={28} rounded="md" />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-zinc-200 text-xs truncate">{s.title}</div>
+                            <div className="text-zinc-400 font-mono text-[11px] truncate">{s.url}</div>
+                          </div>
                         </div>
 
                         {/* Storage Category Selector */}

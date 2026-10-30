@@ -41,6 +41,8 @@ export const NotesView: React.FC<NotesViewProps> = ({
 }) => {
   const [selectedNoteId, setSelectedNoteId] = useState<string>(notes[0]?.id || '');
   const [searchQuery, setSearchQuery] = useState('');
+  /** Text pasted into the pane-level paste box (creates a note on submit). */
+  const [pasteText, setPasteText] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editorMode, setEditorMode] = useState<'split' | 'edit' | 'preview'>('split');
@@ -121,6 +123,24 @@ export const NotesView: React.FC<NotesViewProps> = ({
     return () => clearTimeout(timer);
   }, [editTitle, editContent, editCategory, editTags, isEditing, editingExistingId]);
 
+  // Snapshot of the editor contents when the editing session began. The cancel
+  // and switch guards diff against it so a rename or re-tag counts as unsaved
+  // work, not just a content change.
+  const editBaselineRef = useRef<{ id: string | null; title: string; content: string; category: string; tags: string } | null>(null);
+
+  const hasUnsavedEditorChanges = (): boolean => {
+    if (!isEditing) return false;
+    const base = editBaselineRef.current;
+    if (!base) return false;
+    if (base.id !== editingExistingId) return true;
+    return (
+      editTitle !== base.title ||
+      editContent !== base.content ||
+      editCategory !== base.category ||
+      editTags !== base.tags
+    );
+  };
+
   const handleRestoreDraft = () => {
     try {
       const saved = localStorage.getItem('selfhub_note_draft');
@@ -135,6 +155,13 @@ export const NotesView: React.FC<NotesViewProps> = ({
         setEditContent(parsed.content || '');
         setEditCategory(parsed.category || '通用知识');
         setEditTags(parsed.tags || '');
+        editBaselineRef.current = {
+          id: parsed.id || null,
+          title: parsed.title || '',
+          content: parsed.content || '',
+          category: parsed.category || '通用知识',
+          tags: parsed.tags || ''
+        };
         setIsEditing(true);
         setHasUnsavedDraft(false);
       }
@@ -183,6 +210,13 @@ ${note.content}
     setEditContent(note.content);
     setEditCategory(note.category || '通用知识');
     setEditTags((note.tags || []).join(', '));
+    editBaselineRef.current = {
+      id: note.id,
+      title: note.title,
+      content: note.content,
+      category: note.category || '通用知识',
+      tags: (note.tags || []).join(', ')
+    };
     setIsEditing(true);
   };
 
@@ -192,11 +226,22 @@ ${note.content}
     setEditContent('### 笔记标题\n\n- 记录详细知识点、技术规范、代码片段与部署备忘...\n\n```bash\n# 示例指令\necho "Hello World"\n```\n');
     setEditCategory('常用技术');
     setEditTags('架构, 备忘');
+    editBaselineRef.current = {
+      id: null,
+      title: '新建知识笔记',
+      content: '### 笔记标题\n\n- 记录详细知识点、技术规范、代码片段与部署备忘...\n\n```bash\n# 示例指令\necho "Hello World"\n```\n',
+      category: '常用技术',
+      tags: '架构, 备忘'
+    };
     setIsEditing(true);
   };
 
   const handleSave = () => {
-    if (!editTitle.trim()) return;
+    if (!editTitle.trim()) {
+      // Silent returns here made the save button feel dead; say what is missing.
+      window.alert('标题不能为空：请填写标题后再保存。');
+      return;
+    }
 
     const tagsArray = editTags.split(/[,，\s]+/).map(t => t.trim()).filter(Boolean);
 
@@ -237,9 +282,15 @@ ${note.content}
 
   const handleCopyContent = () => {
     if (!selectedNote) return;
-    navigator.clipboard.writeText(selectedNote.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    navigator.clipboard
+      .writeText(selectedNote.content)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {
+        window.alert('复制失败：浏览器拒绝了剪贴板访问。请手动选中内容复制。');
+      });
   };
 
   return (
@@ -269,32 +320,79 @@ ${note.content}
       )}
 
       {/* View Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#121316] p-4 sm:p-5 rounded-2xl border border-[#22242a]">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-sh-surface p-4 sm:p-5 rounded-2xl border border-sh-line">
         <div>
-          <h2 className="text-sm sm:text-base font-semibold text-zinc-100 flex items-center gap-2">
-            <FileText className="w-4 h-4 text-purple-400" />
-            <span>深度知识库与长文档手册</span>
-            <span className="text-xs font-mono text-zinc-400">({notes.length} 篇备忘)</span>
+          <h2 className="text-sm sm:text-base font-semibold text-sh-fg flex items-center gap-2">
+            <FileText className="w-4 h-4 text-sh-info" />
+            <span>笔记</span>
+            <span className="text-xs font-mono text-sh-muted">({notes.length} 篇)</span>
           </h2>
-          <p className="text-xs text-zinc-400 mt-1">
-            完整保存深度架构文档、Linux 指令规范、Docker 编排配置与长文资料，支持实时分屏预览、代码一键复制与 Markdown 导出
-          </p>
+          <p className="text-xs text-sh-muted mt-1">直接粘贴，第一行当标题；支持 Markdown 预览与导出。</p>
         </div>
-
-        <button
-          onClick={handleStartNew}
-          className="px-3.5 py-2 rounded-xl bg-zinc-100 text-zinc-900 font-semibold text-xs flex items-center gap-1.5 hover:bg-white shadow-sm shrink-0"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>新建知识文档</span>
-        </button>
       </div>
+
+      {/*
+        粘贴即入库。
+        There is deliberately no 「新建」 button: the pane opens with a text field you can paste
+        into immediately, which is how this gets used (copy from a chat, paste, done). The first
+        line becomes the title; the whole text is the body.
+      */}
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          const text = pasteText.trim();
+          if (!text) return;
+          const lines = text.split('\n');
+          const title = (lines[0] || '').replace(/^#+\s*/, '').trim().slice(0, 80) || '未命名笔记';
+          // Single-line paste: the line is the title, not extra body.
+          const body = lines.length > 1 ? lines.slice(1).join('\n').trim() : '';
+          const note: QuickNote = {
+            id: `note-${Date.now()}`,
+            title,
+            content: body,
+            category: '速记',
+            tags: [],
+            updatedAt: Date.now()
+          };
+          onAddNote(note);
+          setSelectedNoteId(note.id);
+          setPasteText('');
+          setIsEditing(false);
+        }}
+        className="rounded-2xl border border-sh-line bg-sh-surface p-3 space-y-2"
+        data-testid="notes-paste"
+      >
+        <textarea
+          value={pasteText}
+          onChange={(e) => setPasteText(e.target.value)}
+          placeholder="直接把要存的内容粘进来…（第一行会成为标题，Ctrl/⌘ + Enter 保存）"
+          rows={4}
+          data-testid="notes-paste-input"
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+              e.currentTarget.form?.requestSubmit();
+            }
+          }}
+          className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-sm text-sh-fg focus:outline-none focus:border-sh-line-strong resize-y"
+        />
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] text-sh-subtle">粘贴的内容会立刻成为一篇笔记，不会经过"新建"流程。</span>
+          <button
+            type="submit"
+            disabled={!pasteText.trim()}
+            data-testid="notes-paste-save"
+            className="px-3 py-1.5 rounded-lg bg-sh-accent text-sh-accent-fg text-xs font-semibold disabled:opacity-50"
+          >
+            存为笔记
+          </button>
+        </div>
+      </form>
 
       {/* 2-Column Responsive Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[calc(100vh-230px)] min-h-[550px]">
         
         {/* Left Column: Note Navigation List (4 cols) */}
-        <div className="lg:col-span-4 bg-[#121316] border border-[#22242a] rounded-2xl p-3 flex flex-col overflow-hidden">
+        <div className="lg:col-span-4 bg-sh-surface border border-sh-line rounded-2xl p-3 flex flex-col overflow-hidden">
           {/* Search bar */}
           <div className="relative mb-3">
             <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-2.5" />
@@ -303,6 +401,7 @@ ${note.content}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="全文检索文档标题、内容或标签..."
+              aria-label="搜索笔记"
               className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-zinc-700"
             />
           </div>
@@ -319,12 +418,9 @@ ${note.content}
                 return (
                   <div
                     key={note.id}
+                    data-testid={`note-row-${note.id}`}
                     onClick={() => {
-                      if (
-                        isEditing &&
-                        editContent !== (selectedNote?.content || '') &&
-                        !confirm('当前编辑内容尚未保存，切换文档会放弃这些改动，确定继续吗？')
-                      ) {
+                      if (hasUnsavedEditorChanges() && !confirm('当前编辑内容尚未保存，切换文档会放弃这些改动，确定继续吗？')) {
                         return;
                       }
                       setSelectedNoteId(note.id);
@@ -361,7 +457,7 @@ ${note.content}
         </div>
 
         {/* Right Column: Markdown Reader / Editor Workspace (8 cols) */}
-        <div className="lg:col-span-8 bg-[#121316] border border-[#22242a] rounded-2xl flex flex-col overflow-hidden">
+        <div className="lg:col-span-8 bg-sh-surface border border-sh-line rounded-2xl flex flex-col overflow-hidden">
           {isEditing ? (
             /* Editing Mode */
             <div className="flex-1 flex flex-col p-4 sm:p-5 space-y-3 overflow-y-auto">
@@ -415,11 +511,7 @@ ${note.content}
 
                   <button
                     onClick={() => {
-                      if (
-                        isEditing &&
-                        editContent !== (selectedNote?.content || '') &&
-                        !confirm('当前编辑内容尚未保存，确定放弃吗？')
-                      ) {
+                      if (hasUnsavedEditorChanges() && !confirm('当前编辑内容尚未保存，确定放弃吗？')) {
                         return;
                       }
                       setIsEditing(false);
@@ -480,7 +572,7 @@ ${note.content}
                     </div>
                     <div className="flex flex-col">
                       <div className="text-[11px] text-zinc-500 mb-1 font-mono">实时渲染预览</div>
-                      <div className="flex-1 bg-[#0d0e11] border border-zinc-800/80 rounded-xl p-4 overflow-y-auto text-xs min-h-[300px]">
+                      <div className="flex-1 bg-sh-bg border border-zinc-800/80 rounded-xl p-4 overflow-y-auto text-xs min-h-[300px]">
                         <Markdown content={editContent} />
                       </div>
                     </div>
@@ -501,7 +593,7 @@ ${note.content}
                 ) : (
                   <div className="flex flex-col flex-1">
                     <div className="text-[11px] text-zinc-500 mb-1 font-mono">预览渲染效果</div>
-                    <div className="flex-1 bg-[#0d0e11] border border-zinc-800/80 rounded-xl p-5 overflow-y-auto text-xs min-h-[350px]">
+                    <div className="flex-1 bg-sh-bg border border-zinc-800/80 rounded-xl p-5 overflow-y-auto text-xs min-h-[350px]">
                       <Markdown content={editContent} />
                     </div>
                   </div>
@@ -577,14 +669,15 @@ ${note.content}
                     }}
                     className="p-1.5 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-red-400 transition-colors"
                     title="删除"
+                    aria-label={`删除笔记 ${selectedNote.title}`}
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 className="w-3.5 h-3.5" aria-hidden />
                   </button>
                 </div>
               </div>
 
               {/* Rich Markdown Rendered Body */}
-              <div className="flex-1 p-5 sm:p-6 overflow-y-auto leading-relaxed select-text bg-[#0d0e11]">
+              <div className="flex-1 p-5 sm:p-6 overflow-y-auto leading-relaxed select-text bg-sh-bg">
                 <Markdown content={selectedNote.content} />
               </div>
 

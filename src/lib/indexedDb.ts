@@ -3,9 +3,19 @@
  * Provides item-level transactions, persistent Blob storage, and quota estimation
  */
 import { HubState } from '../types';
+import { V3_DB_NAME, V3_DB_VERSION } from '../infrastructure/storage/idbV3';
+import { V3_STORES } from '../repositories/schema';
 
-const DB_NAME = 'self_hub_idb';
-const DB_VERSION = 1;
+const DB_NAME = V3_DB_NAME;
+/**
+ * 1 = the P1-era mirror stores. 2 adds the `_v3` stores beside them (P2-01).
+ *
+ * This module is the **only** opener of the database. A second module opening
+ * the same database at a different version would be blocked by this connection
+ * (which is cached and never closed), so `idbV3.ts` deliberately delegates here
+ * instead of calling `indexedDB.open` itself.
+ */
+const DB_VERSION = V3_DB_VERSION;
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -111,6 +121,22 @@ export async function getDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains('blobs')) {
         db.createObjectStore('blobs', { keyPath: 'id' });
       }
+
+      // 4. v3 stores (P2-01). Created *beside* the mirror stores above rather
+      //    than replacing them: the old stores stay readable until the migration
+      //    in P2-02 has been proven, and creating a store never rewrites a
+      //    record. Existing stores are left completely alone — changing a
+      //    keyPath or an index here would silently orphan data.
+      for (const def of V3_STORES) {
+        if (db.objectStoreNames.contains(def.name)) continue;
+        const store = db.createObjectStore(def.name, { keyPath: def.keyPath as string | string[] });
+        for (const index of def.indexes) {
+          store.createIndex(index.name, index.keyPath as string | string[], {
+            unique: Boolean(index.unique),
+            multiEntry: Boolean(index.multiEntry)
+          });
+        }
+      }
     };
 
     request.onsuccess = () => {
@@ -125,135 +151,60 @@ export async function getDb(): Promise<IDBDatabase> {
 }
 
 /**
- * Save single item into IndexedDB store
- */
-export async function saveItemToDb<T>(storeName: string, item: T): Promise<void> {
-  const db = await getDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, 'readwrite');
-    const store = tx.objectStore(storeName);
-    const req = store.put(item);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-
-/**
- * Delete single item from IndexedDB store
- */
-export async function deleteItemFromDb(storeName: string, id: string): Promise<void> {
-  const db = await getDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, 'readwrite');
-    const store = tx.objectStore(storeName);
-    const req = store.delete(id);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-
-/**
- * Get all items from an IndexedDB store
- */
-export async function getAllFromDb<T>(storeName: string): Promise<T[]> {
-  const db = await getDb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(storeName, 'readonly');
-    const store = tx.objectStore(storeName);
-    const req = store.getAll();
-    req.onsuccess = () => resolve(req.result || []);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-/**
  * Sync entire HubState into IndexedDB
+ *
+ * The mirror is a migration data source, so it must reflect deletions too:
+ * putting only the current items would leave removed records behind and a
+ * later v3 migration would resurrect deleted notes/secrets. Each store is
+ * reconciled — put current items, delete ids that are no longer in the state.
  */
 export async function syncStateToIndexedDb(state: HubState): Promise<void> {
-  try {
-    const db = await getDb();
-    const tx = db.transaction(
-      ['notes', 'sites', 'servers', 'secrets', 'reminders', 'inbox', 'projects', 'annotations', 'metadata'],
-      'readwrite'
-    );
+  const db = await getDb();
+  const tx = db.transaction(
+    ['notes', 'sites', 'servers', 'secrets', 'reminders', 'inbox', 'projects', 'annotations', 'metadata'],
+    'readwrite'
+  );
 
-    // Save metadata snapshot
-    tx.objectStore('metadata').put({ key: 'last_sync', value: Date.now() });
-    tx.objectStore('metadata').put({ key: 'schema_version', value: 2 });
-    tx.objectStore('metadata').put({ key: 'theme', value: state.theme });
-    tx.objectStore('metadata').put({ key: 'categories', value: state.categories });
+  // Save metadata snapshot
+  tx.objectStore('metadata').put({ key: 'last_sync', value: Date.now() });
+  tx.objectStore('metadata').put({ key: 'schema_version', value: 2 });
+  tx.objectStore('metadata').put({ key: 'theme', value: state.theme });
+  tx.objectStore('metadata').put({ key: 'categories', value: state.categories });
 
-    // Sync collections
-    const putAll = (storeName: string, items: any[] | undefined) => {
-      if (!items || !Array.isArray(items)) return;
-      const store = tx.objectStore(storeName);
-      for (const it of items) {
+  const reconcile = (storeName: string, items: any[] | undefined, keyField: string) => {
+    const store = tx.objectStore(storeName);
+    const currentIds = new Set<string>();
+    for (const it of items || []) {
+      if (it && it[keyField] != null) {
+        currentIds.add(String(it[keyField]));
         store.put(it);
       }
-    };
-
-    putAll('notes', state.notes);
-    putAll('sites', state.sites);
-    putAll('servers', state.servers);
-    putAll('secrets', state.secrets);
-    putAll('reminders', state.reminders);
-    putAll('inbox', state.inbox);
-    putAll('projects', state.projects);
-    putAll('annotations', state.annotations);
-
-    return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch (err) {
-    console.warn('Failed to sync to IndexedDB', err);
-  }
-}
-
-/**
- * Load complete HubState from IndexedDB (N04 recovery engine)
- */
-export async function loadStateFromIndexedDb(): Promise<HubState | null> {
-  try {
-    const db = await getDb();
-    const [notes, sites, servers, secrets, reminders, inbox, projects, annotations] = await Promise.all([
-      getAllFromDb<any>('notes'),
-      getAllFromDb<any>('sites'),
-      getAllFromDb<any>('servers'),
-      getAllFromDb<any>('secrets'),
-      getAllFromDb<any>('reminders'),
-      getAllFromDb<any>('inbox'),
-      getAllFromDb<any>('projects'),
-      getAllFromDb<any>('annotations')
-    ]);
-
-    if (!sites || sites.length === 0) {
-      return null;
     }
-
-    return {
-      schemaVersion: 2,
-      theme: 'dark',
-      categories: ['全部', '常用工具', '云平台与运维', '自研与部署', 'API与服务', '日常资讯'],
-      sites,
-      servers,
-      secrets,
-      reminders,
-      notes,
-      inbox,
-      projects,
-      annotations,
-      checkIns: [],
-      handwritings: [],
-      obsidianConfig: { enabled: false, bucket: '', endpoint: '', region: '', accessKeyId: '', accessKeySecret: '', prefix: '' },
-      aiConfig: { provider: 'gemini', apiKey: '', baseUrl: '', model: '', cloudAiEnabled: false },
-      cloudflareSync: { enabled: false, workerUrl: '', syncKey: '', autoSync: false },
-      webdavConfig: { enabled: false, url: '', username: '', password: '', pathPrefix: 'selfhub_sync' }
+    const cursorRequest = store.openCursor();
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (!cursor) return;
+      if (!currentIds.has(String(cursor.key))) {
+        cursor.delete();
+      }
+      cursor.continue();
     };
-  } catch (err) {
-    console.warn('Failed to load state from IndexedDB', err);
-    return null;
-  }
+  };
+
+  reconcile('notes', state.notes, 'id');
+  reconcile('sites', state.sites, 'id');
+  reconcile('servers', state.servers, 'id');
+  reconcile('secrets', state.secrets, 'id');
+  reconcile('reminders', state.reminders, 'id');
+  reconcile('inbox', state.inbox, 'id');
+  reconcile('projects', state.projects, 'id');
+  reconcile('annotations', state.annotations, 'id');
+
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error || new Error('sync transaction aborted'));
+    tx.onerror = () => reject(tx.error);
+  });
 }
 
 /**

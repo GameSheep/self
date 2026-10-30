@@ -44,6 +44,50 @@ if (skipBuild && !fs.existsSync(distIndex)) {
   needsBuild = true;
 }
 
+// 2.5 版本号自增：每次完整打包（非 --skip-build）patch +1。
+// chrome://extensions 列表里显示的版本号因此成为“浏览器里跑的是哪一版”的可见凭据——
+// 排查“改了没生效”时，先对版本号，再谈别的。
+if (!skipBuild) {
+  const parts = manifest.version.split('.').map(Number);
+  parts[2] = (parts[2] || 0) + 1;
+  manifest.version = parts.join('.');
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+  console.log(`🔖 版本号自增 → ${manifest.version}`);
+}
+
+/**
+ * `--skip-build` must not ship a build older than the sources.
+ *
+ * This is the failure that actually happened: the embedded workspace sat three batches
+ * behind `src/`, because `dist/` was built earlier and nobody compared. Copying `dist` into
+ * `extension/app` cannot reveal that on its own — the two agree by construction.
+ */
+if (!needsBuild) {
+  const newest = (dir) => {
+    let latest = 0;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        latest = Math.max(latest, newest(full));
+      } else {
+        latest = Math.max(latest, fs.statSync(full).mtimeMs);
+      }
+    }
+    return latest;
+  };
+  const srcTime = newest(path.join(rootDir, 'src'));
+  const configTime = Math.max(
+    fs.statSync(path.join(rootDir, 'package.json')).mtimeMs,
+    fs.statSync(path.join(rootDir, 'vite.config.ts')).mtimeMs
+  );
+  const distTime = fs.statSync(distIndex).mtimeMs;
+  if (distTime < Math.max(srcTime, configTime)) {
+    console.error('❌ dist/ 比源码旧：--skip-build 会打包出过期的工作台。');
+    console.error('   去掉 --skip-build 重新打包。');
+    process.exit(1);
+  }
+}
+
 if (needsBuild) {
   console.log('📦 正在编译 Self-Hub 主工作台前端（可用 --skip-build 跳过）...');
   execSync('npm run build', { cwd: rootDir, stdio: 'inherit' });
@@ -58,6 +102,39 @@ if (fs.existsSync(appDir)) {
 }
 fs.cpSync(distDir, appDir, { recursive: true });
 console.log('✅ 已将 Self-Hub 主工作台成功内嵌至扩展程序 (extension/app)');
+
+/**
+ * Verify the copy instead of trusting it.
+ *
+ * `--skip-build` exists to save time, but it also means the package can embed whatever
+ * `dist/` happened to contain — and nothing said so. That actually happened: the embedded
+ * workspace sat three batches behind the source, and it was only noticed by reading the
+ * chunk names. Two checks, both cheap:
+ *
+ *   1. the copied `index.html` must be byte-identical to `dist/index.html`;
+ *   2. every script/preload/stylesheet it references must exist under `app/`.
+ *
+ * A broken or stale package fails here instead of shipping.
+ */
+const copiedIndex = fs.readFileSync(path.join(appDir, 'index.html'), 'utf8');
+const distIndexHtml = fs.readFileSync(distIndex, 'utf8');
+const problems = [];
+if (copiedIndex !== distIndexHtml) {
+  problems.push('extension/app/index.html 与 dist/index.html 不一致（内嵌产物不是当前构建）');
+}
+const referenced = [...copiedIndex.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map((match) => match[1]);
+for (const reference of referenced) {
+  if (!fs.existsSync(path.join(appDir, reference))) {
+    problems.push(`index.html 引用了不存在的文件：${reference}`);
+  }
+}
+if (problems.length > 0) {
+  console.error('\n❌ 内嵌工作台校验失败：');
+  for (const problem of problems) console.error(`   · ${problem}`);
+  console.error('   请重新运行 npm run package:extension（不要加 --skip-build）。');
+  process.exit(1);
+}
+console.log(`✅ 内嵌工作台校验通过（${referenced.length} 个引用全部存在，index.html 与 dist 一致）`);
 
 // 4. 删除旧 zip 包
 if (fs.existsSync(zipFile)) {

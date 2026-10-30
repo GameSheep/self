@@ -3,11 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "sideEffects": [
+    "**/*.css"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "measure:first-load": "node scripts/measure-entry-graph.mjs dist",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "gen:icons": "node scripts/create-brand-icons.js",

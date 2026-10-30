@@ -208,11 +208,15 @@ export function parseTextLocally(rawText: string): ParsedEntities {
   // 1. Detect API Keys & Secrets
   const apiKeyPatterns = [
     { regex: /(sk-[a-zA-Z0-9_-]{20,})/i, name: 'API Key (OpenAI/Compatible)' },
-    { regex: /(AIzaSy[a-zA-Z0-9_-]{33})/i, name: 'Google Gemini API Key' },
+    // AIzaSy keys are 39 chars total; the old exact {33} missed real-world lengths.
+    { regex: /(AIzaSy[a-zA-Z0-9_-]{20,})/i, name: 'Google Gemini API Key' },
     { regex: /(LTAI[a-zA-Z0-9]{16,24})/i, name: '阿里云 AccessKeyId' },
     { regex: /(ghp_[a-zA-Z0-9]{36})/i, name: 'GitHub Personal Token' },
     { regex: /(AKIA[0-9A-Z]{16})/i, name: 'AWS AccessKeyId' },
-    { regex: /(api[-_]?key|secret|token|password|密码)[:=\s]+([^\s,;]+)/i, name: '凭据密钥' }
+    // "API Key:" (with a space) is the most common written form — the old
+    // `[-_]?` rejected it, so the demo sample's own credential line slipped
+    // into a plain note instead of the vault.
+    { regex: /(api[-_ ]?key|secret|token|password|密码|密钥)[:=\s]+([^\s,;]+)/i, name: '凭据密钥' }
   ];
 
   lines.forEach((line, idx) => {
@@ -272,21 +276,31 @@ export function parseTextLocally(rawText: string): ParsedEntities {
 
     const urls = line.match(urlPattern);
     if (urls && urls.length > 0) {
-      for (const urlStr of urls) {
+      // Split once so each URL gets the text *around itself*: building the title
+      // from the whole line made the second URL on a line inherit the other
+      // URL's context (or blow past the length cap and fall back to "V"-style fragments).
+      const segments = line.split(urlPattern);
+      for (let urlIdx = 0; urlIdx < urls.length; urlIdx++) {
+        const urlStr = urls[urlIdx];
         const cleanUrl = urlStr.replace(/[.,;:"')]+$/, '').trim();
         if (!cleanUrl || seenUrls.has(cleanUrl)) continue;
         seenUrls.add(cleanUrl);
 
         try {
           const u = new URL(cleanUrl);
-          // Clean up titles: strip JSON syntax like "url": " or "name": "
-          let title = line.replace(cleanUrl, '');
-          title = title.replace(/^["':\s,\-–—{}]+|["':\s,\-–—{}]+$/g, '').trim();
+          // urlPattern has no capture groups, so split() yields pure text
+          // segments: url_i sits between segments[i] and segments[i + 1].
+          const before = (segments[urlIdx] || '').trim();
+          const after = (segments[urlIdx + 1] || '').trim();
+          let title = (before || after)
+            .replace(/^["'（(\[{\s]+|["'）)\]}\s]+$/g, '')
+            .replace(/[：:，,、。\s]+$/g, '')
+            .trim();
           if (title.startsWith('"url"') || title.startsWith('url:') || title === '"' || !title || title.length > 40) {
             title = u.hostname;
           }
           result.sites.push({
-            id: `site-${Date.now()}-${idx}`,
+            id: `site-${Date.now()}-${idx}-${urlIdx}`,
             title,
             url: cleanUrl,
             category: 'AI整理导入',

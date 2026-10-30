@@ -4,15 +4,19 @@
  * Reminders could only be seen by opening the app, which defeats the purpose of
  * a renewal reminder. This wires the browser Notification API.
  *
- * Honest limitation: a web page can only fire notifications while it is open.
- * We therefore (a) say so in the UI, (b) dedupe per reminder per day so opening
- * several tabs does not spam, and (c) also expose the due list for an in-app
- * banner when permission is denied.
+ * Honest limitations, stated the same way in the UI:
+ * - a plain web page can only notify **while a page is open**;
+ * - inside the extension the background worker owns notifications and can fire
+ *   while the browser is running, but only if the notification permission is
+ *   granted;
+ * - nothing here can promise a reminder while the browser is closed.
+ *
+ * Dedupe key is `reminderId + occurrence due date + stage`, stored per tab
+ * session, so a re-render or a repeated effect cannot notify twice while a new
+ * day/occurrence still gets its own notification.
  */
 import { ReminderItem } from '../types';
 import { daysUntil } from './dates';
-
-const NOTIFIED_KEY_PREFIX = 'selfhub_reminder_notified_';
 
 export interface DueReminder {
   reminder: ReminderItem;
@@ -20,6 +24,11 @@ export interface DueReminder {
   /** overdue (< 0) / today (0) / soon (1..horizon) */
   kind: 'overdue' | 'today' | 'soon';
 }
+
+/** Notification stage. Today each due reminder fires once per occurrence. */
+export type NotifyStage = 'due_soon';
+
+const NOTIFIED_KEY_PREFIX = 'selfhub_reminder_notified_';
 
 export function notificationsSupported(): boolean {
   return typeof window !== 'undefined' && 'Notification' in window;
@@ -62,29 +71,73 @@ export function collectDueReminders(
   return out.sort((a, b) => a.daysLeft - b.daysLeft);
 }
 
-function notifiedKey(id: string, dateKey: string): string {
-  return `${NOTIFIED_KEY_PREFIX}${id}_${dateKey}`;
+/** Local `YYYY-MM-DD` of a timestamp (the occurrence identity). */
+export function localDayKey(ts: number): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return 'invalid';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-/** Has this reminder already produced a notification today? */
-export function wasNotifiedToday(id: string, now: number = Date.now()): boolean {
+function notifiedKey(id: string, dueAt: number, stage: NotifyStage): string {
+  return `${NOTIFIED_KEY_PREFIX}${id}_${localDayKey(dueAt)}_${stage}`;
+}
+
+/**
+ * Has this reminder already been announced for this occurrence and stage in the
+ * current tab session? Session-scoped on purpose: notifications are a "while I
+ * am here" capability, so a fresh session legitimately re-announces.
+ */
+export function wasNotified(id: string, dueAt: number, stage: NotifyStage = 'due_soon'): boolean {
   try {
-    return localStorage.getItem(notifiedKey(id, localDayKey(now))) === '1';
+    const session = typeof sessionStorage !== 'undefined' ? sessionStorage : null;
+    const key = notifiedKey(id, dueAt, stage);
+    if (session?.getItem(key) === '1') return true;
+    // Legacy day-scoped marker written by older versions: keep it working.
+    return localStorage.getItem(`${NOTIFIED_KEY_PREFIX}${id}_${localDayKey(dueAt)}`) === '1';
   } catch {
     return false;
   }
 }
 
-function localDayKey(ts: number): string {
-  const d = new Date(ts);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function markNotified(id: string, now: number): void {
+function markNotified(id: string, dueAt: number, stage: NotifyStage): void {
   try {
-    localStorage.setItem(notifiedKey(id, localDayKey(now)), '1');
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(notifiedKey(id, dueAt, stage), '1');
+    }
+  } catch {
+    // ignore quota / privacy-mode errors
+  }
+  try {
+    const key = `${NOTIFIED_KEY_PREFIX}${id}_${localDayKey(dueAt)}`;
+    localStorage.setItem(key, '1');
+    pruneNotifiedKeys();
   } catch {
     // ignore quota errors
+  }
+}
+
+/**
+ * Day-scoped markers have no per-key delete anywhere, so they accumulated
+ * forever and squeezed the 5 MB localStorage budget. Keep the last 30 days.
+ */
+function pruneNotifiedKeys(): void {
+  const cutoffDay = localDayKey(Date.now() - 30 * 86400000);
+  // Session keys are `id_<day>_<stage>`; legacy keys are `id_<day>`. Match the
+  // date part directly instead of splitting on `_`.
+  const dayPattern = /(\d{4}-\d{2}-\d{2})/;
+  const stale: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(NOTIFIED_KEY_PREFIX)) continue;
+    const day = key.match(dayPattern)?.[1];
+    if (day && day < cutoffDay) stale.push(key);
+  }
+  for (const key of stale) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -98,20 +151,22 @@ export function dueTitle(due: DueReminder): string {
 export interface NotifyResult {
   /** Reminders that actually produced a notification. */
   notified: DueReminder[];
-  /** Due but already notified today. */
+  /** Due but already announced for this occurrence in this session. */
   skipped: DueReminder[];
   /** Due but no permission / unsupported. */
   blocked: DueReminder[];
 }
 
 /**
- * Fire one notification per due reminder, at most once per day each.
- * Callers should also render `blocked` as an in-app banner.
+ * Fire one notification per due reminder, at most once per occurrence per
+ * session. Callers should also render `blocked` as an in-app banner — a denied
+ * permission must not swallow the reminder.
  */
 export function notifyDueReminders(
   reminders: ReminderItem[],
   now: number = Date.now(),
-  horizonDays = 3
+  horizonDays = 3,
+  stage: NotifyStage = 'due_soon'
 ): NotifyResult {
   const due = collectDueReminders(reminders, now, horizonDays);
   const result: NotifyResult = { notified: [], skipped: [], blocked: [] };
@@ -120,7 +175,8 @@ export function notifyDueReminders(
   const permitted = notificationsSupported() && Notification.permission === 'granted';
 
   for (const item of due) {
-    if (wasNotifiedToday(item.reminder.id, now)) {
+    const dueAt = item.reminder.targetDate;
+    if (wasNotified(item.reminder.id, dueAt, stage)) {
       result.skipped.push(item);
       continue;
     }
@@ -132,10 +188,10 @@ export function notifyDueReminders(
       // `tag` collapses duplicates that other tabs may have created.
       new Notification('Self-Hub 时效提醒', {
         body: `${dueTitle(item)}${item.reminder.cost ? ` · ${item.reminder.cost}` : ''}`,
-        tag: `selfhub-reminder-${item.reminder.id}`,
+        tag: `selfhub-reminder-${item.reminder.id}-${localDayKey(dueAt)}`,
         requireInteraction: false
       });
-      markNotified(item.reminder.id, now);
+      markNotified(item.reminder.id, dueAt, stage);
       result.notified.push(item);
     } catch {
       result.blocked.push(item);

@@ -1,31 +1,82 @@
-import React, { useState, useMemo, useDeferredValue } from 'react';
-import { 
-  Globe, 
-  Plus, 
-  Search, 
-  LayoutGrid, 
-  List, 
-  ChevronDown, 
-  ChevronRight, 
-  ExternalLink, 
-  Copy, 
-  Check, 
-  Trash2, 
-  Pin,
+/**
+ * 快捷导航 (P1-04).
+ *
+ * Responsibilities:
+ * - open a site by clicking its body (new tab, rel="noreferrer"), never by a
+ *   management action: edit / move / copy / pin / reorder / delete all live in
+ *   the per-site ⋯ menu and are confirmed or reported inline;
+ * - grouping + stable ordering. The design requires a non-drag alternative, so
+ *   上移 / 下移 / 移动到分组 and drag-and-drop both call the same helpers in
+ *   `src/features/navigation/siteOrdering.ts` and write real `order` numbers;
+ * - make "filter my saved sites" and "search the web" two visibly different
+ *   things. The local filter never issues a request; the external box states
+ *   which engine the query goes to and only fires on an explicit action;
+ * - import bookmarks through a preview dialog that can be undone in one batch.
+ */
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ChevronDown,
+  Compass,
+  Globe,
+  LayoutGrid,
+  List,
+  Pencil,
+  Plus,
+  Search,
   Sparkles,
   Upload
 } from 'lucide-react';
-import { NavSite } from '../../types';
+import { NavSite, QuickNote, AiConfig } from '../../types';
 import { SiteCard } from '../cards/SiteCard';
+import { PasteCapture } from '../../features/navigation/PasteCapture';
+import {
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  Field,
+  PageHeader,
+  StatusPill,
+  inputClass
+} from '../../shared/ui';
+import { matchesQuery } from '../../lib/searchEngine';
+import {
+  BookmarkImportDialog,
+  BookmarkImportResult,
+  normalizeUrl
+} from '../../features/navigation/BookmarkImportDialog';
+import {
+  categoryKey,
+  moveSite,
+  moveSiteOnto,
+  moveSiteToCategory,
+  renumberCategory,
+  sortSites
+} from '../../features/navigation/siteOrdering';
 
-/** Normalise a URL for duplicate detection (ignore protocol, www, trailing slash). */
-function normalizeUrl(raw: string): string {
-  try {
-    const u = new URL(raw);
-    return `${u.hostname.replace(/^www\./, '')}${u.pathname.replace(/\/$/, '')}${u.search}`.toLowerCase();
-  } catch {
-    return raw.trim().toLowerCase();
-  }
+const PAGE_SIZE = 60;
+const ALL = '全部';
+
+/**
+ * External search engines. Kept next to the UI so the label the user sees and
+ * the URL that actually receives the query cannot drift apart.
+ */
+export const SEARCH_ENGINES = [
+  { id: 'google', name: 'Google', url: 'https://www.google.com/search?q=' },
+  { id: 'bing', name: 'Bing', url: 'https://www.bing.com/search?q=' },
+  { id: 'baidu', name: '百度', url: 'https://www.baidu.com/s?wd=' }
+] as const;
+
+type SearchEngineId = (typeof SEARCH_ENGINES)[number]['id'];
+
+/**
+ * True when a group's members already carry exactly 0..n-1. Used to keep `order`
+ * values contiguous without rewriting an untouched group (which would change
+ * object identity for every site and re-render the whole grid on any edit).
+ */
+function isContiguouslyNumbered(sites: NavSite[], category: string): boolean {
+  const group = sortSites(sites.filter((site) => categoryKey(site) === category));
+  if (group.length === 0) return true;
+  return group.every((site, index) => site.order === index);
 }
 
 interface SitesViewProps {
@@ -33,8 +84,21 @@ interface SitesViewProps {
   categories: string[];
   onVisit: (id: string) => void;
   onDelete: (id: string) => void;
-  onOpenAddModal: () => void;
+  onOpenAddModal: (type?: 'site' | 'server' | 'secret' | 'checkin' | 'note') => void;
   onOpenAiIngest: () => void;
+  /** Paste-to-recognise: writes sites / inbox / note after the user confirms destinations. */
+  onPasteRecognized?: {
+    onAddSites: (sites: NavSite[]) => void;
+    onCaptureInbox: (raw: string) => void;
+    onAddNote: (note: QuickNote) => void;
+    /** Passed through so the dialog can offer cloud classification only when it is enabled. */
+    aiConfig?: AiConfig;
+  };
+  /**
+   * Batch writer. App wires this to `useSiteActions.importBookmarks`, which
+   * replaces the sites collection with the array it receives (and merges the
+   * categories). Every reorder / pin / move / import goes through it.
+   */
   onImportBookmarks: (newSites: NavSite[]) => void;
 }
 
@@ -45,337 +109,1017 @@ export const SitesView: React.FC<SitesViewProps> = ({
   onDelete,
   onOpenAddModal,
   onOpenAiIngest,
+  onPasteRecognized,
   onImportBookmarks
 }) => {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('全部');
+  const [selectedCategory, setSelectedCategory] = useState(ALL);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  // Per-site management state.
+  const [editing, setEditing] = useState<NavSite | null>(null);
+  const [moving, setMoving] = useState<NavSite | null>(null);
+  const [deleting, setDeleting] = useState<NavSite | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copyFailedId, setCopyFailedId] = useState<string | null>(null);
+  const [copyNotice, setCopyNotice] = useState('');
 
-  const toggleGroup = (cat: string) => {
-    setCollapsedGroups(prev => ({ ...prev, [cat]: !prev[cat] }));
-  };
+  // Drag and drop.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const dragBlockedRef = useRef(false);
 
-  const handleCopy = async (e: React.MouseEvent, site: NavSite) => {
-    e.stopPropagation();
-    try {
-      await navigator.clipboard.writeText(site.url);
-      setCopiedId(site.id);
-      setTimeout(() => setCopiedId(null), 2000);
-    } catch {
-      alert('复制失败：浏览器拒绝了剪贴板访问，请手动复制。');
-    }
-  };
+  // External (web) search — deliberately separate from the local filter above.
+  const [engine, setEngine] = useState<SearchEngineId>('google');
+  const [webQuery, setWebQuery] = useState('');
 
-  // Typing in the search box must not block on filtering thousands of bookmarks.
   const deferredQuery = useDeferredValue(searchQuery);
 
-  // Render a page at a time: mounting 300+ cards took ~500ms of main thread,
-  // which froze the tab for imported bookmark libraries.
-  const PAGE_SIZE = 60;
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  React.useEffect(() => {
+  useEffect(() => {
     setVisibleCount(PAGE_SIZE);
   }, [deferredQuery, selectedCategory]);
 
-  // Filtered sites
-  const filteredSites = useMemo(() => {
-    const q = deferredQuery.trim().toLowerCase();
-    return sites.filter(s => {
-      const matchCat = selectedCategory === '全部' || s.category === selectedCategory;
-      if (!matchCat) return false;
-      if (!q) return true;
-      return (
-        (s.title || '').toLowerCase().includes(q) ||
-        (s.url || '').toLowerCase().includes(q) ||
-        (s.description ? s.description.toLowerCase().includes(q) : false)
-      );
-    });
-  }, [sites, selectedCategory, deferredQuery]);
+  /* ---------------------------------------------------------------------- */
+  /* Data                                                                   */
+  /* ---------------------------------------------------------------------- */
 
-  // Group by category
+  // One sorted view of the whole library: numbered sites first, everything else
+  // in array order, with a stable tie-break so a render never reshuffles it.
+  const orderedSites = useMemo(() => sortSites(sites), [sites]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, NavSite[]>();
+    orderedSites.forEach((site) => {
+      const key = categoryKey(site);
+      const bucket = map.get(key);
+      if (bucket) bucket.push(site);
+      else map.set(key, [site]);
+    });
+    return map;
+  }, [orderedSites]);
+
+  const groupNames = useMemo(() => Array.from(groups.keys()), [groups]);
+
+  /**
+   * The left-hand category rail: every configured category first, then any
+   * category that only exists on a site (for example after an import). `全部`
+   * is always first and is never duplicated.
+   */
+  const categoryTabs = useMemo(() => {
+    const seen = new Set<string>();
+    const names: string[] = [];
+    const add = (value: string) => {
+      const name = value.trim();
+      if (!name || name === ALL || seen.has(name)) return;
+      seen.add(name);
+      names.push(name);
+    };
+    categories.forEach(add);
+    groupNames.forEach(add);
+    return [ALL, ...names];
+  }, [categories, groupNames]);
+
+  /**
+   * Real, assignable groups. `全部` is the "no filter" tab, not a group a site can
+   * belong to, so it must never be offered as a move/create target.
+   */
+  const tagOptions = useMemo(() => {
+    const set = new Set<string>();
+    categories.forEach((category) => {
+      if (category && category !== ALL) set.add(category);
+    });
+    sites.forEach((site) => set.add(categoryKey(site)));
+    return Array.from(set);
+  }, [categories, sites]);
+
+  const localMatches = useMemo(() => {
+    const query = deferredQuery.trim();
+    return orderedSites.filter((site) => {
+      if (selectedCategory !== ALL && categoryKey(site) !== selectedCategory) return false;
+      if (!query) return true;
+      // Title + URL + description + tags, with the shared pinyin-aware matcher.
+      const haystack = [
+        site.title || '',
+        site.url || '',
+        site.description || '',
+        (site.tags || []).join(' '),
+        categoryKey(site)
+      ].join(' ');
+      return matchesQuery(haystack, query);
+    });
+  }, [orderedSites, selectedCategory, deferredQuery]);
+
+  const filteredByGroup = useMemo(() => {
+    const map = new Map<string, NavSite[]>();
+    localMatches.forEach((site) => {
+      const key = categoryKey(site);
+      const bucket = map.get(key);
+      if (bucket) bucket.push(site);
+      else map.set(key, [site]);
+    });
+    return map;
+  }, [localMatches]);
+
   const activeCategories = useMemo(
-    () =>
-      selectedCategory === '全部'
-        ? Array.from(new Set(sites.map(s => s.category || '默认分类')))
-        : [selectedCategory],
-    [sites, selectedCategory]
+    () => (selectedCategory === ALL ? groupNames : [selectedCategory]),
+    [selectedCategory, groupNames]
   );
 
-  // Chrome / GoTab HTML bookmarks importer
-  const handleBookmarkUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  /* ---------------------------------------------------------------------- */
+  /* Writers                                                                */
+  /* ---------------------------------------------------------------------- */
 
-    const reader = new FileReader();
-    reader.onerror = () => alert('❌ 读取书签文件失败，请确认文件完整后重试。');
-    reader.onload = (event) => {
-      const htmlText = event.target?.result as string;
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(htmlText, 'text/html');
-      const anchors = doc.querySelectorAll('a');
+  /** Every mutation funnels through here so `order` is always contiguous. */
+  const commit = useCallback(
+    (next: NavSite[]) => {
+      const touched = new Set(next.filter((s) => s.order !== undefined).map((s) => categoryKey(s)));
+      if (touched.size === 0) {
+        onImportBookmarks(sortSites(next));
+        return;
+      }
+      const alreadyNumbered = new Set(
+        sortSites(next)
+          .filter((site) => typeof site.order === 'number')
+          .map((site) => categoryKey(site))
+      );
+      const needsRenumber = Array.from(touched).filter(
+        (category) => !alreadyNumbered.has(category) || !isContiguouslyNumbered(next, category)
+      );
+      if (needsRenumber.length === 0) {
+        onImportBookmarks(sortSites(next));
+        return;
+      }
+      let normalized = sortSites(next);
+      needsRenumber.forEach((category) => {
+        normalized = renumberCategory(normalized, category);
+      });
+      onImportBookmarks(normalized);
+    },
+    [onImportBookmarks]
+  );
 
-      // De-duplicate against both the file itself and the existing library,
-      // otherwise importing the same export twice doubles every bookmark.
-      const existingUrls = new Set(sites.map(s => normalizeUrl(s.url)));
-      const seen = new Set<string>();
-      const imported: NavSite[] = [];
-      let duplicates = 0;
+  const handleMove = useCallback(
+    (site: NavSite, direction: -1 | 1) => {
+      commit(moveSite(sites, site.id, direction));
+    },
+    [commit, sites]
+  );
 
-      anchors.forEach((a, i) => {
-        const href = a.getAttribute('href');
-        const title = a.textContent?.trim();
-        if (!href || !href.startsWith('http') || !title) return;
-        const key = normalizeUrl(href);
-        if (seen.has(key) || existingUrls.has(key)) {
-          duplicates++;
+  const handleTogglePin = useCallback(
+    (site: NavSite) => {
+      commit(sites.map((s) => (s.id === site.id ? { ...s, pinned: !s.pinned } : s)));
+    },
+    [commit, sites]
+  );
+
+  const handleSaveEdit = useCallback(
+    (id: string, patch: Partial<NavSite>) => {
+      // A category change is a move: let moveSiteToCategory place the record at
+      // the end of the target group, then apply the remaining fields on top.
+      const base =
+        patch.category !== undefined
+          ? moveSiteToCategory(sites, id, patch.category)
+          : sites;
+      const next = base.map((site) =>
+        site.id === id
+          ? {
+              ...site,
+              ...patch,
+              // These are managed by the ordering helpers / visit counter.
+              id: site.id,
+              category: site.category,
+              order: site.order,
+              visitCount: site.visitCount,
+              lastVisited: site.lastVisited
+            }
+          : site
+      );
+      commit(next);
+    },
+    [commit, sites]
+  );
+
+  const handleMoveToCategory = useCallback(
+    (site: NavSite, category: string) => {
+      commit(moveSiteToCategory(sites, site.id, category));
+    },
+    [commit, sites]
+  );
+
+  const handleDelete = useCallback(
+    (site: NavSite) => {
+      onDelete(site.id);
+    },
+    [onDelete]
+  );
+
+  const handleOpen = useCallback(
+    (site: NavSite) => {
+      onVisit(site.id);
+      window.open(site.url, '_blank', 'noopener,noreferrer');
+    },
+    [onVisit]
+  );
+
+  /**
+   * Copy reports success/failure in the page (StatusPill / inline text) rather
+   * than with `alert()`, which used to be the only feedback for a failed copy.
+   */
+  const handleCopyLink = useCallback(async (site: NavSite) => {
+    try {
+      await navigator.clipboard.writeText(site.url);
+      setCopiedId(site.id);
+      setCopyFailedId(null);
+      setCopyNotice(`已复制 ${site.title || site.url} 的链接`);
+      window.setTimeout(() => setCopiedId((current) => (current === site.id ? null : current)), 2000);
+    } catch {
+      setCopyFailedId(site.id);
+      setCopiedId(null);
+      setCopyNotice(`复制失败：浏览器拒绝了剪贴板访问，请手动复制 ${site.url}`);
+    }
+  }, []);
+
+  const handleAddSite = useCallback(
+    (draft: { title: string; url: string; category: string; description?: string; tags?: string[] }) => {
+      const category = draft.category.trim() || '默认分类';
+      const inGroup = sites.filter((site) => categoryKey(site) === category);
+      const highest = inGroup.reduce<number>(
+        (max, site) => (typeof site.order === 'number' && site.order > max ? site.order : max),
+        inGroup.length - 1
+      );
+      const site: NavSite = {
+        id: `site-${Date.now()}`,
+        title: draft.title.trim(),
+        url: draft.url,
+        category,
+        description: draft.description?.trim() || undefined,
+        tags: draft.tags?.length ? draft.tags : undefined,
+        visitCount: 0,
+        createdAt: Date.now(),
+        order: highest + 1
+      };
+      commit([...sites, site]);
+    },
+    [commit, sites]
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* Drag and drop — same helpers as the buttons                           */
+  /* ---------------------------------------------------------------------- */
+
+  const handleDragStart = useCallback((site: NavSite) => (e: React.DragEvent) => {
+    e.dataTransfer.effectAllowed = 'move';
+    setDragId(site.id);
+    dragBlockedRef.current = true;
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDragId(null);
+    setDropTarget(null);
+    // A drag that happens to end over the card must not be read as a click.
+    window.setTimeout(() => {
+      dragBlockedRef.current = false;
+    }, 0);
+  }, []);
+
+  const handleDrop = useCallback(
+    (target: NavSite) => (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const sourceId = dragId;
+      setDragId(null);
+      setDropTarget(null);
+      if (!sourceId || sourceId === target.id) return;
+      // Same helper the 上移 / 下移 buttons end up in, so a drop and repeated
+      // button presses produce identical `order` values.
+      commit(moveSiteOnto(sites, sourceId, target.id));
+    },
+    [commit, dragId, sites]
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* Bookmark import                                                        */
+  /* ---------------------------------------------------------------------- */
+
+  const handleImport = useCallback(
+    (incoming: NavSite[], options: { allowDuplicates: boolean }): BookmarkImportResult => {
+      const known = new Set(sites.map((site) => normalizeUrl(site.url)));
+      const added: NavSite[] = [];
+      let skipped = 0;
+
+      incoming.forEach((candidate) => {
+        const key = normalizeUrl(candidate.url);
+        // Default: an existing URL is never touched (skipped, not overwritten).
+        // With `allowDuplicates` the user explicitly asked for a copy, so the
+        // duplicate check is bypassed instead of silently dropping the row the
+        // preview promised to import.
+        if (!options.allowDuplicates && known.has(key)) {
+          skipped += 1;
           return;
         }
-        seen.add(key);
-        imported.push({
-          id: `site-bm-${Date.now()}-${i}`,
-          title,
-          url: href,
-          category: '浏览器书签导入',
-          visitCount: 0,
-          createdAt: Date.now()
-        });
+        known.add(key);
+        // Never reuse an id that already exists.
+        const id = sites.some((site) => site.id === candidate.id) ? `${candidate.id}-${added.length}` : candidate.id;
+        added.push({ ...candidate, id });
       });
 
-      if (imported.length > 0) {
-        onImportBookmarks(imported);
-        alert(
-          `✅ 成功导入 ${imported.length} 个网址` +
-            (duplicates > 0 ? `，已自动跳过 ${duplicates} 个重复书签。` : '。')
-        );
-      } else {
-        alert(
-          duplicates > 0
-            ? `未导入新书签：文件中的 ${duplicates} 个链接已存在于资料库中。`
-            : '未在文件中检测到有效书签超链接'
-        );
-      }
-      // Allow re-selecting the same file.
-      e.target.value = '';
-    };
-    reader.readAsText(file);
+      if (added.length > 0) commit([...sites, ...added]);
+      return { added: added.length, addedIds: added.map((site) => site.id), skipped };
+    },
+    [commit, sites]
+  );
+
+  const handleUndoImport = useCallback(
+    (ids: string[]): number => {
+      const doomed = new Set(ids);
+      const remaining = sites.filter((site) => !doomed.has(site.id));
+      const removed = sites.length - remaining.length;
+      if (removed > 0) commit(remaining);
+      return removed;
+    },
+    [commit, sites]
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* Render helpers                                                         */
+  /* ---------------------------------------------------------------------- */
+
+  const toggleGroup = (cat: string) => setCollapsedGroups((prev) => ({ ...prev, [cat]: !prev[cat] }));
+
+  const runWebSearch = () => {
+    const query = webQuery.trim();
+    if (!query) return;
+    const target = SEARCH_ENGINES.find((e) => e.id === engine) ?? SEARCH_ENGINES[0];
+    // Explicit action only: the local filter above never reaches this code path.
+    window.open(`${target.url}${encodeURIComponent(query)}`, '_blank', 'noopener,noreferrer');
   };
+
+  const menuActions = {
+    onEdit: setEditing,
+    onMoveToCategory: setMoving,
+    onCopyLink: (site: NavSite) => void handleCopyLink(site),
+    onTogglePin: handleTogglePin,
+    onMove: handleMove,
+    onDelete: setDeleting
+  };
+
+  const renderCard = (site: NavSite) => {
+    const group = groups.get(categoryKey(site)) || [];
+    const index = group.findIndex((entry) => entry.id === site.id);
+    return (
+      <SiteCard
+        key={site.id}
+        site={site}
+        layout={viewMode === 'grid' ? 'card' : 'row'}
+        onOpen={handleOpen}
+        {...menuActions}
+        canMoveUp={index > 0}
+        canMoveDown={index >= 0 && index < group.length - 1}
+        copied={copiedId === site.id}
+        copyFailed={copyFailedId === site.id}
+        draggable
+        dragging={dragId === site.id}
+        dropHint={dropTarget === site.id && dragId !== null && dragId !== site.id}
+        onDragStart={handleDragStart(site)}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (dropTarget !== site.id) setDropTarget(site.id);
+        }}
+        onDrop={handleDrop(site)}
+        onDragEnd={handleDragEnd}
+      />
+    );
+  };
+
+  const hasSites = sites.length > 0;
+  const hasLocalMatches = localMatches.length > 0;
 
   return (
     <div className="space-y-5">
-      
-      {/* View Header with Control Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#121316] p-3 sm:p-4 rounded-2xl border border-[#22242a]">
-        <div>
-          <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-            <Globe className="w-4 h-4 text-sky-400 shrink-0" />
-            <span>网站与平台工作区</span>
-            <span className="text-xs font-mono text-zinc-400">({sites.length} 个站点)</span>
-          </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
-            支持分类折叠、高密度数据列表、书签一键导入与快捷检索
-          </p>
-        </div>
-
-        {/* Toolbar */}
-        <div className="flex items-center flex-wrap gap-2">
-          {/* Chrome/GoTab HTML Bookmarks Importer */}
-          <label className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white text-xs flex items-center gap-1.5 cursor-pointer transition-colors">
-            <Upload className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">导入 GoTab/Chrome 书签</span>
-            <input type="file" accept=".html" onChange={handleBookmarkUpload} className="hidden" />
-          </label>
-
-          <button
-            onClick={onOpenAiIngest}
-            className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-amber-400 hover:text-amber-300 text-xs flex items-center gap-1.5 transition-colors"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>AI 分拣</span>
-          </button>
-
-          <button
-            onClick={onOpenAddModal}
-            className="px-3 py-1.5 rounded-xl bg-zinc-100 text-zinc-900 hover:bg-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>添加网站</span>
-          </button>
-
-          {/* View Mode Toggle */}
-          <div className="flex items-center bg-zinc-900 p-0.5 rounded-lg border border-zinc-800 text-xs ml-1">
-            <button
-              onClick={() => setViewMode('grid')}
-              className={`p-1 rounded ${viewMode === 'grid' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
-              title="网格卡片视图"
+      <PageHeader
+        title="快捷导航"
+        description={`${sites.length} 个网站 · 点击打开，更多操作在 ⋯ 菜单中。`}
+        actions={
+          <div className="flex items-center flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              icon={<Upload className="w-3.5 h-3.5" />}
+              data-testid="open-bookmark-import"
+              onClick={() => setImportOpen(true)}
             >
-              <LayoutGrid className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setViewMode('list')}
-              className={`p-1 rounded ${viewMode === 'list' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
-              title="紧凑列表视图 (适合海量内容)"
+              导入书签
+            </Button>
+            {onPasteRecognized && <Button
+              variant="secondary"
+              icon={<Sparkles className="w-3.5 h-3.5" />}
+              data-testid="nav-ai-focus"
+              aria-expanded={pasteOpen}
+              aria-controls="site-paste-panel"
+              onClick={() => setPasteOpen(!pasteOpen)}
             >
-              <List className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Filter & Category Strip */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-[#121316] p-2.5 rounded-xl border border-[#22242a]">
-        <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-colors shrink-0 ${
-                selectedCategory === cat
-                  ? 'bg-zinc-100 text-zinc-900 shadow-sm font-semibold'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-              }`}
+              {pasteOpen ? '收起粘贴' : '粘贴识别'}
+            </Button>}
+            <Button
+              variant="primary"
+              icon={<Plus className="w-3.5 h-3.5" />}
+              data-testid="new-site"
+              onClick={() => setAdding(true)}
             >
-              {cat}
-            </button>
-          ))}
-        </div>
-
-        <div className="relative w-full sm:w-64 shrink-0">
-          <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-2.5" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索网址或标题..."
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-8 pr-3 py-1 text-xs text-zinc-200 focus:outline-none focus:border-zinc-700"
-          />
-        </div>
-      </div>
-
-      {/* Grouped Foldable Accordion Sections */}
-      {(() => {
-        let budget = visibleCount;
-        return activeCategories.map((cat) => {
-        const groupSitesAll = filteredSites.filter(s => (s.category || '默认分类') === cat);
-        if (groupSitesAll.length === 0) return null;
-
-        const groupSites = groupSitesAll.slice(0, Math.max(0, budget));
-        budget -= groupSites.length;
-        if (groupSites.length === 0) return null;
-
-        const isCollapsed = Boolean(collapsedGroups[cat]);
-
-        return (
-          <div key={cat} className="space-y-3">
-            {/* Folder Header */}
-            <div 
-              onClick={() => toggleGroup(cat)}
-              className="flex items-center justify-between px-3 py-2 rounded-xl bg-zinc-900/40 hover:bg-zinc-900/80 border border-zinc-800/60 cursor-pointer select-none transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                {isCollapsed ? <ChevronRight className="w-4 h-4 text-zinc-400" /> : <ChevronDown className="w-4 h-4 text-zinc-400" />}
-                <span className="text-xs font-semibold text-zinc-200">{cat}</span>
-                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/60">
-                  {groupSites.length}
-                </span>
-              </div>
-              <span className="text-[11px] text-zinc-400">
-                {isCollapsed ? '点击展开' : '点击折叠'}
-              </span>
+              新建网站
+            </Button>
+            <div className="flex items-center bg-sh-surface2 p-0.5 rounded-lg border border-sh-line text-xs">
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                aria-pressed={viewMode === 'grid'}
+                className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-sh-surface text-sh-fg' : 'text-sh-muted hover:text-sh-fg'}`}
+                title="网格卡片视图"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('list')}
+                aria-pressed={viewMode === 'list'}
+                className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-sh-surface text-sh-fg' : 'text-sh-muted hover:text-sh-fg'}`}
+                title="紧凑列表视图"
+              >
+                <List className="w-3.5 h-3.5" />
+              </button>
             </div>
-
-            {/* Folder Content */}
-            {!isCollapsed && (
-              <div>
-                {viewMode === 'grid' ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                    {groupSites.map((site) => (
-                      <SiteCard
-                        key={site.id}
-                        site={site}
-                        onVisit={onVisit}
-                        onDelete={onDelete}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  /* Compact Dense List View */
-                  <div className="rounded-xl border border-zinc-800/80 bg-[#121316] overflow-hidden divide-y divide-zinc-800/60">
-                    {groupSites.map((site) => {
-                      const isCopied = copiedId === site.id;
-                      return (
-                        <div
-                          key={site.id}
-                          onClick={() => {
-                            onVisit(site.id);
-                            window.open(site.url, '_blank', 'noopener,noreferrer');
-                          }}
-                          className="px-3.5 py-2.5 hover:bg-zinc-900/80 cursor-pointer flex items-center justify-between gap-3 text-xs transition-colors group"
-                        >
-                          <div className="flex items-center gap-3 min-w-0 flex-1">
-                            <div className="w-6 h-6 rounded-md bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
-                              <Globe className="w-3.5 h-3.5 text-zinc-400 group-hover:text-sky-400" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <span className="font-semibold text-zinc-200 group-hover:text-white truncate block">
-                                {site.title}
-                              </span>
-                              <span className="text-[10px] text-zinc-400 font-mono truncate block">
-                                {site.url}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-3 shrink-0">
-                            <span className="text-[10px] font-mono text-zinc-400 hidden sm:inline">
-                              {site.visitCount || 0} 次访问
-                            </span>
-                            <button
-                              onClick={(e) => handleCopy(e, site)}
-                              className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white"
-                              title="复制网址"
-                            >
-                              {isCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (confirm(`确定删除 ${site.title} 吗？`)) onDelete(site.id);
-                              }}
-                              className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-red-400"
-                              title="删除"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                            <ExternalLink className="w-3 h-3 text-zinc-400 group-hover:text-white" />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
-        );
-        });
-      })()}
+        }
+      />
 
-      {filteredSites.length > visibleCount && (
-        <div className="flex flex-col items-center gap-2 py-4">
-          <span className="text-[11px] text-zinc-500 font-mono">
-            已显示 {Math.min(visibleCount, filteredSites.length)} / {filteredSites.length} 个站点
-          </span>
-          <button
-            onClick={() => setVisibleCount((c) => c + PAGE_SIZE * 2)}
-            className="px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white hover:border-zinc-700 text-xs font-medium transition-colors"
-          >
-            加载更多
-          </button>
+      {/* 粘贴识别 (2): recognise links locally, then confirm where the content goes. */}
+      {onPasteRecognized && (
+        <div id="site-paste-panel" hidden={!pasteOpen}>
+        <PasteCapture
+          categories={categories}
+          aiConfig={onPasteRecognized.aiConfig}
+          onAddSites={onPasteRecognized.onAddSites}
+          onCaptureInbox={onPasteRecognized.onCaptureInbox}
+          onAddNote={onPasteRecognized.onAddNote}
+        />
         </div>
       )}
 
+      {/*
+        Browse layout: categories are a vertical rail on the left at desktop
+        widths, and a horizontal scroller on phones. The sites — the reason this
+        page exists — keep the whole right-hand column.
+      */}
+      <div
+        className={
+          hasSites
+            ? 'grid gap-5 lg:grid-cols-[12.5rem_minmax(0,1fr)] lg:items-start'
+            : 'grid gap-5'
+        }
+      >
+        {hasSites && (
+          <aside data-testid="site-category-rail" className="min-w-0 lg:sticky lg:top-20">
+            <nav aria-label="网站分类" className="rounded-2xl border border-sh-line bg-sh-surface p-1.5">
+              <div className="hidden items-center justify-between px-2.5 pb-1.5 pt-1 lg:flex">
+                <span className="text-[11px] font-semibold text-sh-muted">分类</span>
+                <span className="font-mono text-[10px] tabular-nums text-sh-subtle">{categoryTabs.length - 1} 组</span>
+              </div>
+              <div className="flex gap-1 overflow-x-auto pb-0.5 lg:flex-col lg:overflow-visible lg:pb-0">
+                {categoryTabs.map((cat) => {
+                  const count = cat === ALL ? sites.length : groups.get(cat)?.length ?? 0;
+                  const active = selectedCategory === cat;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      data-testid={`site-category-${cat}`}
+                      aria-current={active ? 'page' : undefined}
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`group flex shrink-0 items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-medium transition-colors lg:w-full ${
+                        active
+                          ? 'bg-sh-accent text-sh-accent-fg'
+                          : 'text-sh-muted hover:bg-sh-surface2 hover:text-sh-fg'
+                      }`}
+                    >
+                      <span className="truncate">{cat}</span>
+                      <span
+                        className={`ml-auto shrink-0 rounded-md px-1.5 py-0.5 font-mono text-[10px] tabular-nums ${
+                          active
+                            ? 'bg-white/15 text-sh-accent-fg dark:bg-black/10'
+                            : 'bg-sh-surface2 text-sh-subtle group-hover:text-sh-fg'
+                        }`}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </nav>
+            <p className="hidden px-1.5 pt-2 text-[10px] leading-4 text-sh-subtle lg:block">
+              选一个分类，右侧只显示这一组网站。
+            </p>
+          </aside>
+        )}
+
+        <div data-testid="site-content" className="min-w-0 space-y-4">
+          {/* Local filter — clearly labelled as local, and never a network request. */}
+          <section className="space-y-3" aria-label="筛选网站">
+            <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+              <div className="w-full sm:max-w-sm">
+                <label htmlFor="site-local-filter" className="mb-1 block text-[11px] font-medium text-sh-muted">
+                  在快捷导航中筛选
+                </label>
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-sh-subtle" aria-hidden />
+                  <input
+                    id="site-local-filter"
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="输入名称、网址或标签…"
+                    className={`${inputClass} pl-8`}
+                  />
+                </div>
+                <p className="mt-1 text-[10px] leading-4 text-sh-subtle">
+                  这里输入的内容只在本机筛选，不会发送给搜索引擎。
+                </p>
+              </div>
+              {hasSites && (
+                <p className="pb-2 text-[11px] tabular-nums text-sh-subtle" role="status" aria-live="polite">
+                  {hasLocalMatches ? `${localMatches.length} / ${sites.length} 个网站` : `0 / ${sites.length} 个网站`}
+                </p>
+              )}
+            </div>
+
+            {/* External search — separate box, visible engine tabs, explicit action. */}
+            <details className="group rounded-xl border border-sh-line bg-sh-surface">
+              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl px-3 py-2.5 text-xs text-sh-muted transition-colors hover:text-sh-fg [&::-webkit-details-marker]:hidden">
+                <Globe className="h-3.5 w-3.5" aria-hidden />
+                <span>去网上搜索</span>
+                <span className="ml-auto text-[10px] text-sh-subtle">明确提交后才发送</span>
+                <ChevronDown className="h-3.5 w-3.5 text-sh-subtle transition-transform group-open:rotate-180" aria-hidden />
+              </summary>
+              <div className="space-y-2.5 border-t border-sh-line p-3">
+                <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+                  <div className="flex items-center gap-1" role="tablist" aria-label="外部搜索引擎">
+                    {SEARCH_ENGINES.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={engine === item.id}
+                        data-testid={`engine-${item.id}`}
+                        onClick={() => setEngine(item.id)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] transition-colors ${
+                          engine === item.id
+                            ? 'bg-sh-surface2 border border-sh-line text-sh-fg font-semibold'
+                            : 'text-sh-muted hover:text-sh-fg'
+                        }`}
+                      >
+                        {item.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-1 flex-wrap items-center gap-2 sm:flex-nowrap min-w-0">
+                    <input
+                      type="text"
+                      value={webQuery}
+                      onChange={(e) => setWebQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') runWebSearch();
+                      }}
+                      placeholder="外部搜索关键词（回车才会发送）"
+                      aria-label="外部搜索关键词"
+                      data-testid="web-search-input"
+                      className={inputClass}
+                    />
+                    <Button
+                      variant="secondary"
+                      data-testid="web-search-submit"
+                      onClick={runWebSearch}
+                      icon={<Globe className="w-3.5 h-3.5" />}
+                    >
+                      用 {SEARCH_ENGINES.find((e) => e.id === engine)?.name} 搜索
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-[11px] text-sh-subtle">
+                  点“用 {SEARCH_ENGINES.find((e) => e.id === engine)?.name} 搜索”或按回车后，关键词会发送到该搜索引擎的外部网站。
+                </p>
+              </div>
+            </details>
+
+            {copyNotice && (
+              <div className="flex items-center gap-2 text-[11px] text-sh-muted" role="status">
+                <StatusPill tone={copyFailedId ? 'danger' : 'ok'} label={copyFailedId ? '复制失败' : '已复制'} />
+                <span className="truncate">{copyNotice}</span>
+              </div>
+            )}
+          </section>
+
+          {!hasSites && (
+            <EmptyState
+              icon={<Compass className="w-6 h-6" />}
+              title="还没有保存任何网站"
+              description="先添加一个常用网站，或从浏览器导出的书签 HTML 批量导入。导入前会先给你看清楚数量和重复项。"
+              action={
+                <>
+                  <Button variant="primary" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => setAdding(true)}>
+                    添加第一个网站
+                  </Button>
+                  <Button variant="secondary" icon={<Upload className="w-3.5 h-3.5" />} onClick={() => setImportOpen(true)}>
+                    导入书签
+                  </Button>
+                </>
+              }
+            />
+          )}
+
+          {hasSites && !hasLocalMatches && (
+            <EmptyState
+              icon={<Search className="w-6 h-6" />}
+              title="没有匹配的网站"
+              description={
+                searchQuery
+                  ? `本机筛选“${searchQuery}”没有结果。可以清空筛选，或用上面的外部搜索框到搜索引擎查找。`
+                  : '当前分组下没有网站，换个分组看看。'
+              }
+              action={
+                searchQuery ? (
+                  <Button variant="secondary" onClick={() => setSearchQuery('')}>
+                    清空筛选
+                  </Button>
+                ) : (
+                  <Button variant="secondary" onClick={() => setSelectedCategory(ALL)}>
+                    查看全部
+                  </Button>
+                )
+              }
+            />
+          )}
+
+          {/* Grouped, foldable sections */}
+          {hasLocalMatches &&
+            (() => {
+              let budget = visibleCount;
+              return activeCategories.map((cat) => {
+                const groupSitesAll = filteredByGroup.get(cat) || [];
+                if (groupSitesAll.length === 0) return null;
+
+                const groupSites = groupSitesAll.slice(0, Math.max(0, budget));
+                budget -= groupSites.length;
+                if (groupSites.length === 0) return null;
+
+                const isCollapsed = Boolean(collapsedGroups[cat]);
+
+                return (
+                  <div key={cat} className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(cat)}
+                      aria-expanded={!isCollapsed}
+                      className="flex w-full items-center justify-between gap-3 border-b border-sh-line px-1 py-2.5 text-left select-none"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-xs font-semibold text-sh-fg">{cat}</span>
+                        <span className="rounded bg-sh-surface2 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-sh-muted">
+                          {groupSitesAll.length}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-[11px] text-sh-subtle">{isCollapsed ? '展开' : '折叠'}</span>
+                    </button>
+
+                    {/* Dense list: no `overflow-hidden`, it would clip the row's ⋯ menu. */}
+                    {!isCollapsed &&
+                      (viewMode === 'grid' ? (
+                        <div data-testid="site-grid" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                          {groupSites.map(renderCard)}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-sh-line bg-sh-surface divide-y divide-sh-line">
+                          {groupSites.map(renderCard)}
+                        </div>
+                      ))}
+                  </div>
+                );
+              });
+            })()}
+
+          {localMatches.length > visibleCount && (
+            <div className="flex flex-col items-center gap-2 py-4">
+              <span className="text-[11px] text-sh-subtle font-mono">
+                已显示 {Math.min(visibleCount, localMatches.length)} / {localMatches.length} 个站点
+              </span>
+              <Button variant="secondary" onClick={() => setVisibleCount((c) => c + PAGE_SIZE * 2)}>
+                加载更多
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Dialogs                                                            */}
+      {/* ------------------------------------------------------------------ */}
+
+      {adding && (
+        <SiteEditorDialog
+          mode="create"
+          groups={tagOptions}
+          onCancel={() => setAdding(false)}
+          onSubmit={(values) => {
+            handleAddSite(values);
+            setAdding(false);
+          }}
+        />
+      )}
+
+      {editing && (
+        <SiteEditorDialog
+          mode="edit"
+          site={editing}
+          groups={tagOptions}
+          onCancel={() => setEditing(null)}
+          onSubmit={(values) => {
+            handleSaveEdit(editing.id, {
+              title: values.title.trim(),
+              url: values.url,
+              category: values.category.trim() || categoryKey(editing),
+              description: values.description?.trim() || undefined,
+              tags: values.tags?.length ? values.tags : undefined
+            });
+            setEditing(null);
+          }}
+        />
+      )}
+
+      {moving && (
+        <MoveToGroupDialog
+          site={moving}
+          groups={tagOptions.filter((group) => group !== categoryKey(moving))}
+          onCancel={() => setMoving(null)}
+          onSubmit={(category) => {
+            handleMoveToCategory(moving, category);
+            setMoving(null);
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        open={Boolean(deleting)}
+        tone="danger"
+        title={deleting ? `删除「${deleting.title || deleting.url}」？` : ''}
+        description={
+          deleting ? (
+            <>
+              将从快捷导航中移除这个网站条目：<span className="font-mono">{deleting.url}</span>
+              （分组「{categoryKey(deleting)}」、访问次数 {deleting.visitCount || 0} 次的记录会一起删除）。
+              <br />
+              不会删除浏览器书签，也不会影响其它网站；此操作无法撤销。
+            </>
+          ) : null
+        }
+        confirmLabel="删除这个网站"
+        onConfirm={() => {
+          if (deleting) handleDelete(deleting);
+          setDeleting(null);
+        }}
+        onCancel={() => setDeleting(null)}
+      />
+
+      <BookmarkImportDialog
+        open={importOpen}
+        sites={sites}
+        onImport={handleImport}
+        onUndo={handleUndoImport}
+        onClose={() => setImportOpen(false)}
+      />
     </div>
   );
 };
+
+/* -------------------------------------------------------------------------- */
+/* Inline create / edit dialog                                                */
+/* -------------------------------------------------------------------------- */
+
+interface SiteEditorValues {
+  title: string;
+  url: string;
+  category: string;
+  description?: string;
+  tags?: string[];
+}
+
+const SiteEditorDialog: React.FC<{
+  mode: 'create' | 'edit';
+  site?: NavSite;
+  groups: string[];
+  onCancel: () => void;
+  onSubmit: (values: SiteEditorValues) => void;
+}> = ({ mode, site, groups, onCancel, onSubmit }) => {
+  const [title, setTitle] = useState(site?.title || '');
+  const [url, setUrl] = useState(site?.url || '');
+  const [category, setCategory] = useState(site?.category || groups[0] || '默认分类');
+  const [description, setDescription] = useState(site?.description || '');
+  const [tags, setTags] = useState((site?.tags || []).join(', '));
+  const [error, setError] = useState('');
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim()) {
+      setError('名称不能为空，它用来在这张网格里认出这个网站。');
+      return;
+    }
+    const normalized = /^https?:\/\//i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
+    try {
+      // eslint-disable-next-line no-new
+      new URL(normalized);
+    } catch {
+      setError('网址格式不正确，例如 https://example.com');
+      return;
+    }
+    onSubmit({
+      title,
+      url: normalized,
+      category,
+      description,
+      tags: tags
+        .split(/[,，]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ background: 'var(--sh-overlay)' }}
+      onClick={onCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-label={mode === 'create' ? '新建网站' : '编辑网站'}
+    >
+      <form
+        onSubmit={submit}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-2xl border border-sh-line bg-sh-surface p-4 space-y-3 shadow-2xl"
+      >
+        <h3 className="text-sm font-semibold text-sh-fg flex items-center gap-2">
+          <Pencil className="w-4 h-4 text-sh-info" aria-hidden />
+          {mode === 'create' ? '新建网站' : '编辑网站'}
+        </h3>
+        <p className="text-[11px] text-sh-muted">名称和网址是必填项，分组、描述、标签可以后补。</p>
+
+        <Field label="名称" htmlFor="site-editor-title" required>
+          <input
+            id="site-editor-title"
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="例如: GitHub 个人中心"
+            className={inputClass}
+          />
+        </Field>
+        <Field label="网址" htmlFor="site-editor-url" required>
+          <input
+            id="site-editor-url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://..."
+            className={`${inputClass} font-mono`}
+          />
+        </Field>
+        <Field label="分组" htmlFor="site-editor-category" hint="可以直接输入新的分组名。">
+          <input
+            id="site-editor-category"
+            list="site-editor-groups"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className={inputClass}
+          />
+          <datalist id="site-editor-groups">
+            {groups.map((group) => (
+              <option key={group} value={group} />
+            ))}
+          </datalist>
+        </Field>
+        <Field label="描述（可选）" htmlFor="site-editor-desc">
+          <input
+            id="site-editor-desc"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="标签（可选）" htmlFor="site-editor-tags" hint="用逗号分隔。本机筛选会匹配标签。">
+          <input
+            id="site-editor-tags"
+            value={tags}
+            onChange={(e) => setTags(e.target.value)}
+            className={inputClass}
+          />
+        </Field>
+
+        {error && (
+          <p className="text-[11px] text-sh-danger" role="alert">
+            {error}
+          </p>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <Button variant="secondary" onClick={onCancel}>
+            取消
+          </Button>
+          <Button variant="primary" type="submit">
+            {mode === 'create' ? '保存网站' : '保存修改'}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+const MoveToGroupDialog: React.FC<{
+  site: NavSite;
+  groups: string[];
+  onCancel: () => void;
+  onSubmit: (category: string) => void;
+}> = ({ site, groups, onCancel, onSubmit }) => {
+  const [value, setValue] = useState(groups[0] || '');
+  const [isNew, setIsNew] = useState(groups.length === 0);
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ background: 'var(--sh-overlay)' }}
+      onClick={onCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-label="移动到分组"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-2xl border border-sh-line bg-sh-surface p-4 space-y-3 shadow-2xl"
+      >
+        <h3 className="text-sm font-semibold text-sh-fg">移动到分组</h3>
+        <p className="text-[11px] text-sh-muted">
+          把「{site.title || site.url}」从「{categoryKey(site)}」移到别处，它会排在该分组末尾。
+        </p>
+
+        {groups.length > 0 && (
+          <div className="space-y-1">
+            {groups.map((group) => (
+              <label key={group} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-sh-surface2 cursor-pointer text-xs text-sh-fg">
+                <input
+                  type="radio"
+                  name="move-target"
+                  checked={!isNew && value === group}
+                  onChange={() => {
+                    setIsNew(false);
+                    setValue(group);
+                  }}
+                />
+                {group}
+              </label>
+            ))}
+            <label className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-sh-surface2 cursor-pointer text-xs text-sh-fg">
+              {/* Clear the prefilled name: submitting a "new group" that still
+                  holds the first existing group's name would silently move the
+                  site into that group instead. */}
+              <input type="radio" name="move-target" checked={isNew} onChange={() => { setIsNew(true); setValue(''); }} />
+              新建分组…
+            </label>
+          </div>
+        )}
+
+        {isNew && (
+          <Field label="新分组名称" htmlFor="move-new-group">
+            <input
+              id="move-new-group"
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <Button variant="secondary" onClick={onCancel}>
+            取消
+          </Button>
+          <Button variant="primary" disabled={!value.trim()} onClick={() => onSubmit(value.trim())}>
+            移动
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default SitesView;

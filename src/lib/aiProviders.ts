@@ -130,7 +130,7 @@ export function buildRequestBody(config: AiConfig, prompt: string, model: string
   return body;
 }
 
-export { DEFAULTS as PROVIDER_DEFAULTS, supportsJsonMode, modelBelongsToProvider };
+export { supportsJsonMode, modelBelongsToProvider };
 
 /**
  * Human-readable explanation for a provider failure.

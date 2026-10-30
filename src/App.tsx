@@ -1,34 +1,29 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { HubState } from './types';
-import { loadHubState, saveHubState, normalizeHubState, getStorageKey } from './lib/storage';
+import React, { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
+import { AlertTriangle, Loader2, RefreshCw, X } from 'lucide-react';
+import { HubState, InboxItem, ReminderItem, ServerDeployment, WebPageAnnotation } from './types';
+import { loadHubState, saveHubState, normalizeHubState, STORAGE_CAP_BYTES, getStorageKey, writeV2Rollback, readV2Rollback } from './lib/storage';
+import { readStorageMode, writeStorageMode, LOCAL_LIBRARY_ID, type StorageMode } from './lib/storageMode';
+import { checkWritable } from './lib/schemaGeneration';
 import { clearTrustedSession, restoreTrustedSession } from './lib/crypto';
+import { decryptText } from './lib/crypto';
+import { getMasterAuth } from './lib/storage';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { mirrorStateToExtension, isExtensionContext, publishRemindersToExtension } from './lib/extensionBridge';
+import { isExtensionContext, mirrorStateToExtension, readExtensionCaptures, acknowledgeQuickNoteImported, importExtensionAnnotations, type AnnotationSyncResult } from './lib/extensionBridge';
+import { isFeatureEnabled } from './lib/features';
+import { fetchWucaiHighlights } from './lib/wucaiClient';
 import { Sidebar } from './components/Sidebar';
-import { Navbar } from './components/Navbar';
-import { DashboardOverview } from './components/views/DashboardOverview';
-import { SitesView } from './components/views/SitesView';
-import { RemindersView } from './components/views/RemindersView';
-import { NotesView } from './components/views/NotesView';
+import { TopBar } from './components/TopBar';
 import { InboxView } from './components/views/InboxView';
 import { ProjectsView } from './components/views/ProjectsView';
-import { ServerCard } from './components/cards/ServerCard';
-import { SecretCard } from './components/cards/SecretCard';
-import { CheckInCard } from './components/cards/CheckInCard';
-import { HandwritingCard } from './components/cards/HandwritingCard';
-import { ObsidianCard } from './components/cards/ObsidianCard';
-import { DataInteropView } from './components/views/DataInteropView';
+import { RemindersView } from './components/views/RemindersView';
+import { SitesView } from './components/views/SitesView';
 import { GlobalSearch } from './components/GlobalSearch';
-import { AiIngestModal } from './components/modals/AiIngestModal';
+import type { SearchHit } from './domain/search';
 import { MasterKeyModal } from './components/modals/MasterKeyModal';
-import { AddItemModal } from './components/modals/AddItemModal';
-import { SettingsModal } from './components/modals/SettingsModal';
 import { OnboardingWizard } from './components/OnboardingWizard';
-import { notifyDueReminders } from './lib/reminderNotifier';
-import { backupStateToOss, backupStateToWebdav, readLastBackupAt, type BackupResult } from './lib/stateBackup';
 import { applyIntegrationValues } from './lib/integrations';
-import { isTabAllowed } from './lib/features';
 import { useCloudBackup } from './hooks/useCloudBackup';
+import { useV3Backup } from './hooks/useV3Backup';
 import { useReminderNotifications } from './hooks/useReminderNotifications';
 import { useSiteActions } from './hooks/useSiteActions';
 import { useServerActions } from './hooks/useServerActions';
@@ -37,78 +32,406 @@ import { useReminderActions } from './hooks/useReminderActions';
 import { useNoteActions, useProjectActions } from './hooks/useNoteActions';
 import { useInboxActions } from './hooks/useInboxActions';
 import { useBatchImport } from './hooks/useBatchImport';
-import { Server, ShieldCheck, CheckSquare, Plus, Lock, AlertTriangle, RefreshCw, X, Activity } from 'lucide-react';
+import { useRoute } from './app/useRoute';
+import { buildRoute, routeForLegacyTab } from './app/routes';
+import { navLabelForRoute, navCountsFromState } from './app/navigation';
+import { captureIntoInbox } from './domain/inbox';
+import { mergeExtensionCaptures } from './domain/inbox';
+import { migrateDomainReminders } from './domain/domains';
+import { taskFromTemplate } from './domain/checkinSites';
+import { HomeDashboard, type CaptureResult } from './features/home/HomeDashboard';
+import { LibraryTabs } from './features/library/LibraryTabs';
+import { ServersView } from './features/resources/ServersView';
+import { DomainsView } from './features/resources/DomainsView';
+import { VaultView } from './features/resources/VaultView';
+import { CheckInsView } from './features/tools/CheckInsView';
+import { DrawingView } from './features/tools/DrawingView';
+import { NotFoundView } from './features/shell/NotFoundView';
+
+/**
+ * Deferred chunks (P1-10).
+ *
+ * The first paint only needs the shell, the home page and the light list views.
+ * The OSS file tree, the AI ingestion wizard, the entry form and the settings
+ * panel are all large and are all reachable only by an explicit click, so they
+ * are split out. Without this the initial bundle sat above the 250 KB gzip
+ * budget in docs/SELF_HUB_DEVELOPMENT.md §15.4.
+ */
+const DataInteropView = React.lazy(() => import('./components/views/DataInteropView').then((m) => ({ default: m.DataInteropView })));
+const AiIngestModal = React.lazy(() => import('./components/modals/AiIngestModal').then((m) => ({ default: m.AiIngestModal })));
+const AddItemModal = React.lazy(() => import('./components/modals/AddItemModal').then((m) => ({ default: m.AddItemModal })));
+const SettingsModal = React.lazy(() => import('./components/modals/SettingsModal'));
+import { AnnotationsPane } from './features/library/AnnotationsPane';
+const LibraryItemView = React.lazy(() => import('./features/library/LibraryItemView'));
+import { NotesPane } from './features/library/NotesPane';
+
+/** Loading placeholder that reserves space so the layout does not jump. */
+function ChunkFallback({ label = '正在加载…' }: { label?: string }) {
+  return (
+    <div className="flex items-center justify-center gap-2 py-10 text-xs text-sh-muted" role="status">
+      <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
+      {label}
+    </div>
+  );
+}
+
+/** Which settings pane a `#/settings/connections/:id` link should open. */
+function sectionForConnection(id: string): 'ai' | 'content' | 'storage' {
+  if (id === 'ai') return 'ai';
+  if (id === 'wucai' || id === 'youdao') return 'content';
+  return 'storage';
+}
+
+/**
+ * Cross-tab signal that the **library** changed.
+ *
+ * In v3 mode the payload is device-only and usually byte-identical between writes, so
+ * `localStorage` fires no storage event and a second tab would not notice. The value is
+ * `<libraryId>#<revision>#<timestamp>` — no data, no secrets.
+ */
+const V3_ACTIVITY_KEY = 'selfhub_v3_activity';
 
 export function App() {
-  const [state, setState] = useState<HubState>(() => loadHubState());
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'projects' | 'sites' | 'servers' | 'secrets' | 'reminders' | 'notes' | 'checkin' | 'obsidian' | 'handwriting'>('dashboard');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const { route, go, replace } = useRoute();
+  const [state, setState] = useState<HubState>(() => migrateDomainReminders(loadHubState()));
+  /**
+   * Mirror of `state` for callbacks that must compute the *next* state and hand
+   * it to storage synchronously (quick capture needs a truthful save result).
+   */
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  /**
+   * Which store is the fact source (P2 切库).
+   *
+   * `local` is the default and behaves exactly as before. In `v3` mode the IndexedDB
+   * library is read at boot and written on every change — but the v2 payload is still
+   * written too, so switching back is always possible (§13.4).
+   */
+  const [storageMode, setStorageMode] = useState<StorageMode>(() => readStorageMode());
+  // Mirrors `storageMode` for stable callbacks (captureEntry) that must read the
+  // current mode without being recreated on every change.
+  const storageModeRef = useRef(storageMode);
+  storageModeRef.current = storageMode;
+  /**
+   * False until the initial v3 read has finished.
+   *
+   * This guard is the whole safety of the switch: the save effect runs on mount with the
+   * v2 state, and without it that stale payload would be written into the v3 library
+   * *before* it is read — silently replacing the newer data with the older one.
+   */
+  const v3ReadyRef = useRef(readStorageMode() !== 'v3');
+  const [v3Status, setV3Status] = useState<{
+    counts?: Record<string, number>;
+    error?: string;
+    /** What the migration that switched this device wrote, shown in settings. */
+    migration?: {
+      stagingLibraryId: string;
+      counts: number;
+      warnings: string[];
+      unknownFields: number;
+      snapshotHash?: string;
+    };
+  }>({});
+  const [v3WriteError, setV3WriteError] = useState<string | null>(null);
+  const v3TimerRef = useRef<number | null>(null);
+  /**
+   * Transient global notice (clipboard results and other one-line feedback).
+   * Clipboard writes used to fail silently or misreport as password errors; one
+   * small toast covers every "did the thing actually happen" moment.
+   */
+  const [globalNotice, setGlobalNotice] = useState('');
+  const globalNoticeTimerRef = useRef<number | null>(null);
+  const flashNotice = useCallback((message: string) => {
+    setGlobalNotice(message);
+    if (globalNoticeTimerRef.current) window.clearTimeout(globalNoticeTimerRef.current);
+    globalNoticeTimerRef.current = window.setTimeout(() => setGlobalNotice(''), 2600);
+  }, []);
+  useEffect(
+    () => () => {
+      if (globalNoticeTimerRef.current) window.clearTimeout(globalNoticeTimerRef.current);
+    },
+    []
+  );
+  /**
+   * Which library the v3 side reads and writes.
+   *
+   * Not always `LOCAL_LIBRARY_ID`: the migration runner writes into a *staging* library and
+   * then switches `activeLibraryId` to it in one durable write, so the app has to follow
+   * whatever that pointer says (or it would read a library nobody writes to).
+   */
+  const [libraryId, setLibraryId] = useState<string>(LOCAL_LIBRARY_ID);
+
+  // Collapse state persists across reloads; private-mode storage failures keep the default.
+  const [sidebarCollapsed, setSidebarCollapsedState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('selfhub_sidebar_collapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const setSidebarCollapsed = (collapsed: boolean) => {
+    setSidebarCollapsedState(collapsed);
+    try {
+      localStorage.setItem('selfhub_sidebar_collapsed', collapsed ? '1' : '0');
+    } catch {}
+  };
   const [masterPassword, setMasterPassword] = useState<string | null>(null);
+  const [hasMasterAuth, setHasMasterAuth] = useState(() => Boolean(getMasterAuth()));
   const [persistError, setPersistError] = useState<string | null>(null);
+  const [readOnlyNotice, setReadOnlyNotice] = useState<string | null>(null);
   const [externalChange, setExternalChange] = useState(false);
   const [focusNoteId, setFocusNoteId] = useState<string | null>(null);
   const clearFocusNoteId = useCallback(() => setFocusNoteId(null), []);
-  /** Vault note to open in the interop view (set by global search). */
   const [focusVaultKey, setFocusVaultKey] = useState<string | null>(null);
   const clearFocusVaultKey = useCallback(() => setFocusVaultKey(null), []);
 
-  // Modals state
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isAiIngestOpen, setIsAiIngestOpen] = useState(false);
   const [isMasterKeyOpen, setIsMasterKeyOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  /**
+   * Which type the create dialog opens on.
+   *
+   * `null` means "ask me" (the global 「+ 新建」); a page-level 添加服务器 / 添加凭据 passes its
+   * own type so the dialog shows one focused form instead of five tabs.
+   */
+  const [addModalTypes, setAddModalTypes] = useState<Array<'site' | 'server' | 'secret' | 'checkin' | 'note'> | null>(
+    null
+  );
+  /**
+   * Bucket helpers shared by 远端笔记 and the settings card.
+   *
+   * `obsidianConfig` is the *active* bucket; switching one selects it, adding one appends a blank
+   * entry. Keeping both call sites on the same handlers is what stops the tabs and the settings
+   * card from disagreeing about which bucket is being edited.
+   */
+  const obsidianConnections = state.obsidianConnections ?? [state.obsidianConfig];
+  const selectObsidianConnection = useCallback((id: string) => {
+    updateState((prev) => {
+      const list = prev.obsidianConnections?.length ? prev.obsidianConnections : [prev.obsidianConfig];
+      const found = list.find((connection, index) => (connection.id || String(index)) === id);
+      return found ? { ...prev, obsidianConfig: found } : prev;
+    });
+  }, []);
+  const addObsidianConnection = useCallback(() => {
+    updateState((prev) => {
+      const list = prev.obsidianConnections?.length ? prev.obsidianConnections : [prev.obsidianConfig];
+      const blank = {
+        id: `oss-${Date.now()}`,
+        label: `桶 ${list.length + 1}`,
+        enabled: false,
+        bucket: '',
+        endpoint: '',
+        region: '',
+        accessKeyId: '',
+        accessKeySecret: '',
+        prefix: '',
+        // A newly configured bucket is not automatically on the 远端笔记 tabs: the user picks it
+        // there (「+ 桶」), which is what "加桶 = 选择已配置的桶" means.
+        showInNotes: false
+      };
+      return { ...prev, obsidianConfig: blank, obsidianConnections: [...list, blank] };
+    });
+  }, []);
+  /** Show a configured bucket in 远端笔记 (and make it the active connection). */
+  const showObsidianBucket = useCallback((id: string) => {
+    updateState((prev) => {
+      const list = prev.obsidianConnections?.length ? prev.obsidianConnections : [prev.obsidianConfig];
+      const found = list.find((connection, index) => (connection.id || String(index)) === id);
+      if (!found) return prev;
+      const next = { ...found, showInNotes: true };
+      return {
+        ...prev,
+        obsidianConfig: next,
+        obsidianConnections: list.map((connection) => (connection === found ? next : connection))
+      };
+    });
+  }, []);
+  /**
+   * Remove a bucket's tab from 远端笔记 — the configuration stays.
+   *
+   * This is the counterpart of 「+ 桶」: hiding is about which buckets are on screen, deleting is a
+   * settings action. If the hidden one was active, the first still-shown bucket takes over.
+   */
+  const hideObsidianBucket = useCallback((id: string) => {
+    updateState((prev) => {
+      const list = prev.obsidianConnections?.length ? prev.obsidianConnections : [prev.obsidianConfig];
+      const target = list.find((connection, index) => (connection.id || String(index)) === id);
+      if (!target) return prev;
+      const nextList = list.map((connection) =>
+        connection === target ? { ...connection, showInNotes: false } : connection
+      );
+      const wasActive = prev.obsidianConfig.id
+        ? prev.obsidianConfig.id === target.id
+        : prev.obsidianConfig.bucket === target.bucket && prev.obsidianConfig.endpoint === target.endpoint;
+      const fallback = nextList.find((connection) => connection.showInNotes !== false);
+      return {
+        ...prev,
+        obsidianConnections: nextList,
+        obsidianConfig: wasActive && fallback ? fallback : prev.obsidianConfig
+      };
+    });
+  }, []);
+  /** Remove a bucket card by its card id (`oss` or `oss:<connection id>`). */
+  const removeObsidianConnection = useCallback((cardId: string) => {
+    updateState((prev) => {
+      const list = prev.obsidianConnections?.length ? prev.obsidianConnections : [prev.obsidianConfig];
+      if (list.length <= 1) return prev;
+      const targetId = cardId.startsWith('oss:') ? cardId.slice(4) : null;
+      const index = targetId ? list.findIndex((connection) => connection.id === targetId) : 0;
+      if (index < 0) return prev;
+      const nextList = list.filter((_, position) => position !== index);
+      const wasActive = prev.obsidianConfig === list[index] || prev.obsidianConfig.id === list[index].id;
+      return {
+        ...prev,
+        obsidianConnections: nextList,
+        obsidianConfig: wasActive ? nextList[0] : prev.obsidianConfig
+      };
+    });
+  }, []);
+
+  const openAddModal = useCallback((type?: 'site' | 'server' | 'secret' | 'checkin' | 'note') => {
+    setAddModalTypes(type ? [type] : null);
+    setIsAddModalOpen(true);
+  }, []);
+
+  /**
+   * Open a search hit. One handler for both the ⌘K dialog and the home page search box, so the
+   * two cannot drift apart — a result that behaves differently depending on where it was found
+   * is its own kind of confusion.
+   */
+  const openSearchHit = useCallback(
+    (hit: SearchHit) => {
+      setIsSearchOpen(false);
+      switch (hit.kind) {
+        case 'bookmark':
+          window.open((hit.entity as { url: string }).url, '_blank', 'noopener,noreferrer');
+          return;
+        case 'server': {
+          const server = hit.entity as ServerDeployment;
+          const command = server.sshCommand || `ssh ${server.sshUser || 'root'}@${server.publicIp}`;
+          navigator.clipboard
+            .writeText(command)
+            .then(() => flashNotice(`已复制 SSH 命令：${command.slice(0, 60)}`))
+            .catch(() => flashNotice(`复制失败，请手动复制：${command}`));
+          go(buildRoute('servers'));
+          return;
+        }
+        case 'reminder': {
+          const url = (hit.entity as ReminderItem).url;
+          if (url) window.open(url, '_blank', 'noopener,noreferrer');
+          else go(buildRoute('reminders'));
+          return;
+        }
+        case 'project':
+          go(buildRoute('project', { id: hit.id }));
+          return;
+        case 'inbox':
+          go(buildRoute('inbox'));
+          return;
+        case 'note':
+          setFocusNoteId(hit.id);
+          go(buildRoute('library-item', { id: `note:${hit.id}` }));
+          return;
+        case 'annotation':
+          go(buildRoute('library-item', { id: `webpage:${hit.id}` }));
+          return;
+        case 'drawing':
+          go(buildRoute('library-item', { id: `drawing:${hit.id}` }));
+          return;
+        case 'remote':
+        case 'vault':
+          setFocusVaultKey(hit.id);
+          go(`${buildRoute('library')}?view=sources`);
+          return;
+        default:
+          go(buildRoute('library'));
+      }
+    },
+    [go, flashNotice]
+  );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Restore a remembered device session (survives reload, expires after 30 days)
   useEffect(() => {
     let cancelled = false;
     restoreTrustedSession().then((session) => {
-      if (!cancelled && session.isValid && session.password) {
-        setMasterPassword(session.password);
-      }
+      if (!cancelled && session.isValid && session.password) setMasterPassword(session.password);
     });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // Reminders: publishing to the extension worker + in-page fallback.
   useReminderNotifications(state.reminders);
+  const { backupStatus, target: backupTarget, runStateBackup } = useCloudBackup(state);
+  /**
+   * v3 backup panel state (P2-05).
+   *
+   * The policy write-back goes through the same `updateState` the legacy switch
+   * uses, so "which format" is one persisted preference and not a second source
+   * of truth. Note that choosing v3 does **not** turn automatic backup on: the
+   * format and the task switch stay separate, exactly like connections and tests.
+   */
+  /**
+   * Late-bound state restore.
+   *
+   * `handleRestoreState` is defined further down (it needs `setState` and the
+   * normaliser), so the hook receives a stable callback that reads the current
+   * definition through this ref instead of a forward reference.
+   */
+  const restoreStateRef = useRef<(restored: HubState) => Promise<boolean | void> | boolean | void>(() => {});
+  const v3Backup = useV3Backup(
+    state,
+    (policy) => updateState((prev) => ({ ...prev, backupPolicy: { ...policy } })),
+    {
+      lastBackupAt: backupStatus.lastAt,
+      // §10.4.6: the merged library goes through the app's own write path so the
+      // save guard, the IDB mirror and the rollback snapshot keep working. Fire-and-forget
+      // is deliberate here: the v3 panel has already applied the restore and reports its own
+      // result; this only brings the in-memory state in line.
+      onRestoreState: (next) => {
+        void restoreStateRef.current(next);
+      },
+      // Same recorder the settings cards use, so an imported credential's test
+      // result is stored exactly like a normal "测试连接".
+      onRecordConnectionTest: (id, record) =>
+        updateState((prev) => ({
+          ...prev,
+          connectionTests: { ...(prev.connectionTests || {}), [id]: record }
+        }))
+    }
+  );
 
-  // Whole-state cloud backup (debounced, conflict-aware).
-  const { backupStatus, runStateBackup } = useCloudBackup(state);
+  const counts = useMemo(() => navCountsFromState(state), [state]);
 
-  // First-run guide: only for a profile that has not been used yet, so it never
-  // interrupts an established user. Dismissing it records the flag permanently.
+  /* ---------------------------------------------------------------------- */
+  /* Onboarding (first run only)                                             */
+  /* ---------------------------------------------------------------------- */
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<'overview' | 'storage' | null>(null);
   useEffect(() => {
     if (localStorage.getItem('selfhub_onboarded')) return;
     const looksFresh =
-      (state.sites?.length ?? 0) <= 6 &&
+      (state.sites?.length ?? 0) === 0 &&
       (state.servers?.length ?? 0) === 0 &&
       (state.secrets?.length ?? 0) === 0 &&
       (state.checkIns?.length ?? 0) === 0 &&
       (state.inbox?.length ?? 0) === 0 &&
-      (state.projects?.length ?? 0) === 0;
+      (state.projects?.length ?? 0) === 0 &&
+      (state.notes?.length ?? 0) === 0;
     if (looksFresh) setShowOnboarding(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const dismissOnboarding = () => {
     try {
       localStorage.setItem('selfhub_onboarded', '1');
     } catch {
-      // ignore
+      /* private mode */
     }
     setShowOnboarding(false);
   };
-  // If the current module was switched off, fall back to the dashboard so the
-  // user never lands on a hidden/unreachable view.
-  useEffect(() => {
-    if (!isTabAllowed(activeTab, state.features)) setActiveTab('dashboard');
-  }, [activeTab, state.features]);
 
-  // Sync theme class to document root
   useEffect(() => {
     const isDark = (state.theme || 'dark') === 'dark';
     document.documentElement.classList.toggle('dark', isDark);
@@ -127,29 +450,297 @@ export function App() {
 
   // Persist every committed state change and surface storage failures to the user.
   const persistResultRef = useRef<{ success: boolean; error?: string }>({ success: true });
+  /**
+   * "You are getting close to the localStorage limit" — said while everything still
+   * works, not when a save finally fails. Reset when the payload shrinks again.
+   */
+  const [storageWarning, setStorageWarning] = useState<{ bytes: number; ratio: number } | null>(null);
+  /** Payload size the user already dismissed the near-quota banner for. */
+  const storageWarningDismissedRef = useRef<number>(0);
   useEffect(() => {
-    const result = saveHubState(state);
+    /**
+     * In v3 mode only this device's configuration is written to the payload.
+     *
+     * The library holds the business data, so writing it here too would keep the app at
+     * the ~5 MB localStorage limit for no benefit — and would also make every save a
+     * full duplicate. The pre-switch payload is kept once as a rollback copy
+     * (`selfhub_v2_rollback`), which is what "切回 v2" restores from after materialising
+     * the library.
+     */
+    if (storageMode === 'v3' && !v3ReadyRef.current) {
+      /**
+       * Before the boot-time library read finishes, the in-memory state is *not*
+       * authoritative — it is whatever the payload held at load. Persisting it here used to
+       * write the **whole library back into localStorage** on every boot in v3 mode (the
+       * `deviceOnly` guard was false at that moment), briefly re-inflating the payload to
+       * several megabytes and firing a storage event that other tabs read as "somebody
+       * changed the data". Nothing has been edited yet, so there is nothing to save: skip.
+       */
+      return;
+    }
+    const deviceOnly = storageMode === 'v3';
+    const result = saveHubState(state, { deviceOnly });
     persistResultRef.current = result;
-    setPersistError(result.success ? null : result.error || '保存失败');
-    // When running inside the bundled extension, keep its storage in sync so the
-    // new-tab grid and side panel show the real bookmarks/annotations.
+    // P0-03: a refused write means a newer schema owns this origin. That is a
+    // different problem from a quota error and needs a reload, not an export.
+    if (result.readOnly) {
+      setPersistError(null);
+      setReadOnlyNotice(result.error || '本页版本较旧，已切换为只读。');
+    } else {
+      setReadOnlyNotice(null);
+      setPersistError(result.success ? null : result.error || '保存失败');
+    }
+    if (result.success && result.nearQuota && result.bytes) {
+      // Only re-warn when the payload actually grew past what the user dismissed.
+      if (result.bytes > (storageWarningDismissedRef.current ?? 0)) {
+        setStorageWarning({ bytes: result.bytes, ratio: result.bytes / STORAGE_CAP_BYTES });
+      }
+    } else if (storageWarning) {
+      setStorageWarning(null);
+    }
     mirrorStateToExtension(state);
-  }, [state]);
 
-  // Another tab wrote to the same key: warn instead of silently overwriting it.
+    /**
+     * Mirror into the v3 library (切库), debounced.
+     *
+     * Only after the boot-time read finished (`v3ReadyRef`), and only in v3 mode. The v2
+     * write above is not skipped: it is the rollback copy, and keeping it costs one
+     * synchronous localStorage write.
+     */
+    if (storageMode === 'v3' && v3ReadyRef.current) {
+      if (v3TimerRef.current) window.clearTimeout(v3TimerRef.current);
+      v3TimerRef.current = window.setTimeout(() => {
+        void (async () => {
+          try {
+            const { writeLibrary } = await import('./repositories/hubStateAdapter');
+            const written = await writeLibrary(stateRef.current, { libraryId });
+            if (!written.ok) {
+              // The data is safe in v2; say so instead of pretending the switch worked.
+              setV3WriteError(
+                `v3 库写入失败（本机 v2 负载已保存）：${written.error.userMessage}`
+              );
+            } else {
+              setV3WriteError(null);
+              setV3Status({ counts: written.value.counts });
+              /**
+               * Tell other tabs that the *library* changed.
+               *
+               * The payload they watch is device-only in v3 mode and usually byte-identical
+               * between writes, so `localStorage` fires no event and a second tab would
+               * silently miss that the library moved under it. This key carries the library
+               * id, the new content revision and a timestamp — no data, no secrets.
+               */
+              try {
+                localStorage.setItem(
+                  V3_ACTIVITY_KEY,
+                  `${libraryId}#${written.value.revision}#${Date.now()}`
+                );
+              } catch {
+                /* storage unavailable: the write still succeeded, only the cross-tab notice is lost */
+              }
+            }
+          } catch (err) {
+            setV3WriteError(`v3 库写入失败（本机 v2 负载已保存）：${String(err)}`);
+          }
+        })();
+      }, 800);
+    }
+    // Unmount cleanup: without this the debounce fired after the tab closed,
+    // writing the library and calling setState on a dead component.
+    return () => {
+      if (v3TimerRef.current) window.clearTimeout(v3TimerRef.current);
+    };
+  }, [state, storageMode, libraryId]);
+
   useEffect(() => {
-    const key = getStorageKey();
+    const key = 'self_hub_data_v2';
     const onStorage = (e: StorageEvent) => {
-      if (e.key === key && e.newValue) setExternalChange(true);
+      // Two signals, because in v3 mode the payload alone is not enough: it is device-only
+      // and usually byte-identical between writes, so the library activity key is what tells
+      // another tab that the data moved.
+      if ((e.key === key || e.key === V3_ACTIVITY_KEY) && e.newValue) setExternalChange(true);
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, []);
 
-  // Keyboard shortcut listener (Ctrl+K / Cmd+K)
+  /**
+   * Boot-time hydration in v3 mode.
+   *
+   * Runs before any v3 write is allowed (`v3ReadyRef`), so a stale v2 payload can never
+   * overwrite the library it is about to be replaced by. An empty or unreadable library
+   * keeps the v2 data and says why — "the switch silently emptied my app" is the failure
+   * mode this is here to prevent.
+   */
+  useEffect(() => {
+    if (storageMode !== 'v3') {
+      if (v3TimerRef.current) window.clearTimeout(v3TimerRef.current);
+      return;
+    }
+    let alive = true;
+    void (async () => {
+      try {
+        const { readLibrary, mergeDeviceConfig } = await import('./repositories/hubStateAdapter');
+        // Follow `activeLibraryId`: a migrated device reads the staging library, not the
+        // pre-migration one. Read through the feature module, not the runner directly — see
+        // the note in `switchStorageMode`.
+        const { readActiveLibrary } = await import('./features/settings/storageMigration');
+        const active = await readActiveLibrary();
+        if (active) {
+          setLibraryId(active);
+        }
+        const read = await readLibrary(active ?? LOCAL_LIBRARY_ID);
+        if (!alive) return;
+        if (!read.ok) {
+          setV3Status({ error: read.error.userMessage });
+          return;
+        }
+        const total = Object.values(read.value.counts).reduce((sum, count) => sum + count, 0);
+        if (total > 0) {
+          setState((prev) => migrateDomainReminders(mergeDeviceConfig(read.value.state, prev)));
+        }
+        setV3Status({ counts: read.value.counts });
+        if (total === 0) {
+          // The library looks empty (first boot after a failed switch, or IDB was cleared).
+          // Do not silently show an empty app: restore the rollback copy if there is one.
+          const rollback = readV2Rollback();
+          if (rollback) {
+            try {
+              const restored = normalizeHubState(JSON.parse(rollback.json));
+              saveHubState(restored);
+              setState(restored);
+              setV3WriteError(
+                'v3 库是空的，已从切换前的 v2 快照恢复本机数据。请检查是否需要重新切换到 v3 库。'
+              );
+            } catch {
+              setV3WriteError('v3 库是空的，且无法读取切换前的 v2 快照。');
+            }
+          } else {
+            setV3WriteError('v3 库是空的，本次仍使用 v2 负载作为事实来源。');
+          }
+        }
+      } catch (err) {
+        if (alive) setV3Status({ error: String(err) });
+      } finally {
+        if (alive) v3ReadyRef.current = true;
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [storageMode]);
+
+  /**
+   * Switch the fact source (settings → 数据与备份 → 存储模式).
+   *
+   * Going to v3 runs the **verified migration** (P2-02), not a raw copy: it writes an
+   * encrypted snapshot of the sources first (§13.3), fills a staging library in batches
+   * with a checkpoint, verifies counts and links, and only then flips `activeLibraryId`
+   * in one durable write. The password is required because the snapshot is what makes a
+   * failed migration recoverable.
+   *
+   * Coming back materialises the payload from the library; if it no longer fits in
+   * localStorage the switch is refused rather than performed half-way.
+   *
+   * Guarded against re-entry: the switch takes seconds (snapshot → staging writes →
+   * verification), and a second click used to start a **second** migration — two reports
+   * measured 36 ms apart, two snapshots, two staging libraries. The outcome happened to be
+   * right (the last switch wins the pointer) but it doubled the work and discarded the first
+   * migration's rollback snapshot.
+   */
+  const switchingRef = useRef(false);
+  const switchStorageModeInner = useCallback(
+    async (mode: StorageMode, password?: string) => {
+      if (mode === 'v3') {
+        try {
+          /**
+           * Two-hop lazy import on purpose: when the entry chunk itself `await import()`s the
+           * migration runner, Rollup folds that single-importer dynamic chunk into the entry
+           * and the whole migration stack lands in the first load (~10 KB gzip, measured).
+           * Going through a feature module gives the stack a lazy importer.
+           */
+          const { runMigrationAndSwitch } = await import('./features/settings/storageMigration');
+          const outcome = await runMigrationAndSwitch(password ?? '');
+          if (!outcome.ok) {
+            return { ok: false, error: outcome.error };
+          }
+          // One-time rollback copy of the payload as it was *before* the switch. From now
+          // on only device configuration is written there, so this is the copy "切回 v2"
+          // can fall back to if the library ever becomes unreadable.
+          const before = localStorage.getItem(getStorageKey());
+          if (before) writeV2Rollback(before);
+          setLibraryId(outcome.libraryId ?? LOCAL_LIBRARY_ID);
+          writeStorageMode('v3');
+          v3ReadyRef.current = true;
+          setStorageMode('v3');
+          setV3Status({
+            counts: {},
+            migration: {
+              stagingLibraryId: outcome.report?.stagingLibraryId ?? '',
+              counts: outcome.report?.counts.length ?? 0,
+              warnings: outcome.report?.warnings.slice(0, 3) ?? [],
+              unknownFields: outcome.report?.unknownFields.length ?? 0,
+              snapshotHash: outcome.snapshotHash
+            }
+          });
+          setV3WriteError(null);
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: String(err) };
+        }
+      }
+
+      try {
+        const { readLibrary, mergeDeviceConfig } = await import('./repositories/hubStateAdapter');
+        const read = await readLibrary(libraryId);
+        if (!read.ok) return { ok: false, error: read.error.userMessage };
+        const total = Object.values(read.value.counts).reduce((sum, count) => sum + count, 0);
+        const materialised = total > 0 ? mergeDeviceConfig(read.value.state, stateRef.current) : stateRef.current;
+        const write = saveHubState(materialised);
+        if (!write.success) {
+          return { ok: false, error: write.error ?? '无法把库写回本机负载' };
+        }
+        writeStorageMode('local');
+        v3ReadyRef.current = false;
+        setStorageMode('local');
+        setState(materialised);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: String(err) };
+      }
+    },
+    [libraryId]
+  );
+
+  /**
+   * Re-entrancy gate around `switchStorageModeInner`.
+   *
+   * Defined after the inner callback so `useCallback`'s dependency is a real value rather
+   * than a forward reference.
+   */
+  const switchStorageMode = useCallback(
+    async (mode: StorageMode, password?: string) => {
+      if (switchingRef.current) {
+        return { ok: false, error: '正在切换中，请等待当前操作完成。' };
+      }
+      switchingRef.current = true;
+      try {
+        return await switchStorageModeInner(mode, password);
+      } finally {
+        switchingRef.current = false;
+      }
+    },
+    [switchStorageModeInner]
+  );
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      const target = e.target as HTMLElement | null;
+      // Never steal the shortcut from an editor or a text field.
+      const typing =
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable === true);
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && !typing) {
         e.preventDefault();
         setIsSearchOpen((prev) => !prev);
       }
@@ -158,448 +749,981 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Ensure window resets scroll position when switching tabs
+  // View-switch transition: reset the *real* scroll container (the flex shell,
+  // not window — window.scrollTo here was always a no-op) and crossfade the
+  // content in. Deliberately **opacity-only, zero movement**: translating the
+  // whole content area reads as jank on heavy views, and macOS view switches
+  // are a bare fade. Driven by WAAPI instead of class toggling so restarting
+  // needs no forced synchronous reflow (offsetWidth) — that reflow alone was
+  // a tens-of-ms hitch on big pages. Query-only changes (filters, tabs) do
+  // not replay and do not jump, so returning to a filtered list keeps its place.
+  const scrollShellRef = useRef<HTMLDivElement>(null);
+  const viewKey = `${route.name}:${route.query.view ?? ''}:${route.query.type ?? ''}`;
+  const prevViewKeyRef = useRef('');
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'instant' });
-  }, [activeTab]);
+    if (prevViewKeyRef.current === viewKey) return;
+    prevViewKeyRef.current = viewKey;
+    if (scrollShellRef.current) scrollShellRef.current.scrollTop = 0;
+    const main = document.getElementById('main');
+    if (!main || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    main.animate([{ opacity: 0 }, { opacity: 1 }], {
+      duration: 180,
+      easing: 'cubic-bezier(0.2, 0, 0, 1)'
+    });
+  }, [viewKey]);
 
-  // Handlers for adding and mutating assets
-  // Domain actions live in their own hooks (see src/hooks/*): the component no
-  // longer has to hold every feature's CRUD callbacks in one place.
+  /* ---------------------------------------------------------------------- */
+  /* Domain actions                                                          */
+  /* ---------------------------------------------------------------------- */
   const { addSite, deleteSite, visitSite, importBookmarks } = useSiteActions(updateState);
   const { addServer, deleteServer, checkServer, checkAllServers } = useServerActions(state, updateState);
   const { addSecret, deleteSecret } = useSecretActions(updateState);
-  const { addCheckIn, deleteCheckIn, runCheckIn, runAllCheckIns } = useCheckInActions(state, updateState);
-
-  const { addReminder, deleteReminder, updateReminder, toggleReminderComplete } = useReminderActions(updateState);
+  const { addCheckIn, deleteCheckIn, runCheckIn } = useCheckInActions(state, updateState);
+  const { addReminder, deleteReminder, updateReminder, toggleReminderComplete, renewReminder } = useReminderActions(updateState);
   const { addNote, updateNote, deleteNote, saveHandwriting, deleteHandwriting } = useNoteActions(updateState);
   const { addProject, updateProject, deleteProject } = useProjectActions(updateState);
-  // Inbox conversions need the note/site creators, so they are injected rather
-  // than reaching across domains.
-  const {
-    addInboxItem,
-    updateInboxItem,
-    deleteInboxItem,
-    convertToNote,
-    convertToSite,
-    assignToProject
-  } = useInboxActions(updateState, { addNote, addSite });
+  const { addInboxItem, updateInboxItem, deleteInboxItem, convertToNote, convertToSite, assignToProject, previewBatch, convertMany } =
+    useInboxActions(state, updateState, { addNote, addSite });
+
+  /**
+   * Bring across captures the extension made on its own (new-tab quick note and
+   * content-script inbox entries). Only runs inside the extension origin, is
+   * idempotent through `operationId`, and never touches the extension's own
+   * `selfhub_inbox` so the side panel keeps working.
+   */
+  const extensionImportedRef = useRef(false);
+  useEffect(() => {
+    if (extensionImportedRef.current || !isExtensionContext()) return;
+    // Same v3 guard as the annotation/wucai imports: without it this merge runs
+    // before the boot-time library read, the captured entries are merged into
+    // the in-memory v2 state, the quick note is acknowledged (deleted on the
+    // extension side), and the finished hydration then overwrites `inbox` with
+    // the library's copy — the capture silently disappears from both ends.
+    if (storageMode === 'v3' && !v3ReadyRef.current) return;
+    extensionImportedRef.current = true;
+    void (async () => {
+      const captures = await readExtensionCaptures();
+      if (captures.length === 0) return;
+      const current = stateRef.current;
+      const { items, imported, quickNoteImported } = mergeExtensionCaptures(current.inbox, captures);
+      if (imported === 0) return;
+      const next: HubState = { ...current, inbox: items };
+      stateRef.current = next;
+      setState(next);
+      if (quickNoteImported) await acknowledgeQuickNoteImported();
+    })();
+  }, [storageMode, v3Status]);
+
+  /**
+   * Import highlights the extension's content script saved (划词 → background →
+   * chrome.storage). `importExtensionAnnotations` existed but was never wired to
+   * anything, so the 网页批注 pane stayed empty even with highlights in the store.
+   *
+   * Import-only, like every other cross-store move here: ids the app already has
+   * are skipped, nothing is deleted on either side. Runs after the v3 boot read
+   * so the imported rows cannot be overwritten by the library load.
+   */
+  const extensionAnnotationsImportedRef = useRef(false);
+  /** Import-only merge of extension-collected highlights into the app library. */
+  const runAnnotationImport = useCallback(async (): Promise<{ imported: number; extensionCount: number; dropped: number }> => {
+    const knownIds = new Set((stateRef.current.annotations ?? []).map((a) => a.id));
+    const { rows, totalCount, dropped } = await importExtensionAnnotations(knownIds);
+    if (rows.length > 0) {
+      updateState((prev) => {
+        const byId = new Map((prev.annotations ?? []).map((a) => [a.id, a]));
+        for (const row of rows) {
+          if (byId.has(row.id)) continue;
+          byId.set(row.id, {
+            id: row.id,
+            pageUrl: row.pageUrl || '',
+            pageTitle: row.pageTitle || row.pageUrl || '未命名页面',
+            text: row.text,
+            note: row.note ?? '',
+            color: (row.color as WebPageAnnotation['color']) || 'yellow',
+            tags: [],
+            anchor: row.anchor as WebPageAnnotation['anchor'],
+            createdAt: row.createdAt ?? Date.now(),
+            updatedAt: row.updatedAt ?? row.createdAt ?? Date.now()
+          });
+        }
+        return { ...prev, annotations: Array.from(byId.values()) };
+      });
+    }
+    return { imported: rows.length, extensionCount: totalCount, dropped };
+  }, [updateState]);
+
+  /**
+   * The pane's manual 「从扩展同步」 button.
+   *
+   * The automatic paths (boot import, broadcast listener, visibility re-import)
+   * cover the happy path; this is the diagnostic path for when none of them seem
+   * to have run: it says, in one line, whether the extension answered at all, how
+   * many annotations it holds, and how many were new — so "the pane is empty"
+   * becomes attributable to a not-reloaded extension, a page opened outside the
+   * extension, or simply nothing saved yet.
+   */
+  const handleSyncAnnotations = useCallback(async (): Promise<AnnotationSyncResult> => {
+    if (!isExtensionContext()) {
+      return {
+        ok: false,
+        message: '当前页面不是扩展内的工作台，读不到扩展里保存的批注。请从扩展打开工作台（新标签页里的「打开工作台」，或扩展管理页的详情页入口）。'
+      };
+    }
+    try {
+      const { imported, extensionCount, dropped } = await runAnnotationImport();
+      if (extensionCount < 0) {
+        return {
+          ok: false,
+          message: '扩展没有响应这次同步。多半是浏览器里跑的还是旧版本扩展——去 chrome://extensions 点一下本扩展的「重新加载」，再回来重试。'
+        };
+      }
+      if (extensionCount === 0) {
+        return {
+          ok: true,
+          extensionCount,
+          imported,
+          message: '扩展已连通，但里面还没有保存过任何批注。去任意网页划词保存一条，再回来看。'
+        };
+      }
+      if (imported === 0) {
+        const appCount = (stateRef.current.annotations ?? []).length;
+        if (dropped > 0) {
+          return {
+            ok: false,
+            extensionCount,
+            imported,
+            message: `扩展已连通，共 ${extensionCount} 条批注，但其中 ${dropped} 条缺少 id/text 字段被跳过（多半是旧版本写入的数据）——请把这条提示反馈给开发者。`
+          };
+        }
+        if (appCount === 0) {
+          return {
+            ok: false,
+            extensionCount,
+            imported,
+            message: `扩展已连通，扩展侧有 ${extensionCount} 条批注，但工作台列表仍为空——异常状态，请把这条提示反馈给开发者。`
+          };
+        }
+        return {
+          ok: true,
+          extensionCount,
+          imported,
+          message: `扩展已连通：扩展侧共 ${extensionCount} 条批注，工作台已全部持有（列表 ${appCount} 条）。`
+        };
+      }
+      return {
+        ok: true,
+        extensionCount,
+        imported,
+        message: `扩展已连通：从扩展导入了 ${imported} 条批注（扩展侧共 ${extensionCount} 条）。`
+      };
+    } catch (err) {
+      return { ok: false, message: `同步失败：${(err as Error)?.message || err}` };
+    }
+  }, [runAnnotationImport]);
+
+  useEffect(() => {
+    if (extensionAnnotationsImportedRef.current || !isExtensionContext()) return;
+    if (storageMode === 'v3' && !v3ReadyRef.current) return;
+    extensionAnnotationsImportedRef.current = true;
+    void runAnnotationImport();
+  }, [storageMode, v3Status, runAnnotationImport]);
+
+  /**
+   * Live import while the workbench stays open.
+   *
+   * The boot import above runs once, so a highlight saved *after* the app tab was
+   * open never arrived — the user highlights on a page, sees "已保存", and the
+   * 网页批注 pane (in the already-running tab) stayed empty until a full reload.
+   * The background broadcasts `SELFHUB_CHANGED` to every extension page on every
+   * annotation write; listening here closes that gap. A visibility/focus re-import
+   * covers the case where the broadcast fired while this tab was asleep (runtime
+   * messages are not queued for suspended pages) — the import is idempotent by id,
+   * so an extra pass is free.
+   */
+  useEffect(() => {
+    if (!isExtensionContext()) return;
+    const chromeApi = (globalThis as unknown as {
+      chrome?: {
+        runtime?: {
+          onMessage?: {
+            addListener?: (cb: (msg: unknown) => void) => void;
+            removeListener?: (cb: (msg: unknown) => void) => void;
+          };
+        };
+      };
+    }).chrome;
+    const onBroadcast = (msg: unknown) => {
+      const event = msg as { type?: string; kind?: string; stores?: string[] };
+      if (event?.type !== 'SELFHUB_CHANGED') return;
+      if (event.kind !== 'annotation-saved' && !(event.stores || []).includes('annotations_v3')) return;
+      void runAnnotationImport();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void runAnnotationImport();
+    };
+    chromeApi?.runtime?.onMessage?.addListener?.(onBroadcast);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      chromeApi?.runtime?.onMessage?.removeListener?.(onBroadcast);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [runAnnotationImport]);
+
+  /**
+   * Pull highlights from the Wucai OpenAPI on boot.
+   *
+   * `fetchWucaiHighlights` existed but had no caller, so a configured token never
+   * did anything: the 划词 pane only ever held manually added rows. Import-only,
+   * same contract as the extension import above — ids the app already has are
+   * skipped, nothing is overwritten. Works in any environment (the API is plain
+   * HTTPS), but only when the 五彩 switch and its token are both on. A failed
+   * boot sync stays quiet here; the 划词 pane's manual button surfaces errors.
+   */
+  const wucaiSyncedRef = useRef(false);
+  useEffect(() => {
+    if (wucaiSyncedRef.current) return;
+    if (storageMode === 'v3' && !v3ReadyRef.current) return;
+    const current = stateRef.current;
+    if (!isFeatureEnabled(current.features, 'wucai')) return;
+    const config = current.wucaiConfig;
+    if (!config?.enabled || !config.token) return;
+    wucaiSyncedRef.current = true;
+    void (async () => {
+      const knownIds = new Set((current.wucaiHighlights ?? []).map((h) => h.id));
+      try {
+        const fresh = await fetchWucaiHighlights(config, knownIds);
+        if (fresh.length === 0) return;
+        updateState((prev) => {
+          const byId = new Map((prev.wucaiHighlights ?? []).map((h) => [h.id, h]));
+          for (const row of fresh) byId.set(row.id, row);
+          return {
+            ...prev,
+            wucaiHighlights: Array.from(byId.values()),
+            wucaiConfig: { ...(prev.wucaiConfig || config), lastSyncTime: Date.now() }
+          };
+        });
+      } catch (err) {
+        console.warn('[Self-Hub] wucai highlight sync failed', err);
+      }
+    })();
+  }, [storageMode, v3Status, updateState]);
   const batchImport = useBatchImport(updateState);
+
   const handleLockVault = () => {
     setMasterPassword(null);
     void clearTrustedSession();
   };
 
-  const handleRestoreState = (restored: HubState) => {
-    // Normalise: a restored backup may be missing optional collections.
-    setState(normalizeHubState(restored));
+  /**
+   * Apply a restored state (legacy import, encrypted import, rollback, v3 batch restore).
+   *
+   * In v3 mode the payload holds only device configuration, so writing the restored data
+   * there would look exactly like "the restore did nothing": the app reads the library, and
+   * the library still holds the old records. The restored data therefore has to go into the
+   * **active library**, through the same adapter the app writes with.
+   *
+   * The device's own connections are kept (`mergeDeviceConfig`), matching §10.4.7 for the v3
+   * path: a package must never replace this machine's keys with whatever it carries.
+   *
+   * Returns `false` when a v3 write failed, so the caller does not claim success.
+   */
+  const handleRestoreState = async (restored: HubState): Promise<boolean | void> => {
+    const next = normalizeHubState(restored);
+    if (storageMode !== 'v3') {
+      setState(next);
+      return undefined;
+    }
+    try {
+      const { writeLibrary, mergeDeviceConfig } = await import('./repositories/hubStateAdapter');
+      const merged = mergeDeviceConfig(next, stateRef.current);
+      const written = await writeLibrary(merged, { libraryId });
+      if (!written.ok) {
+        setV3WriteError(`恢复的数据没有写入 v3 库，本机内容未改变：${written.error.userMessage}`);
+        return false;
+      }
+      setV3WriteError(null);
+      setState(merged);
+      return true;
+    } catch (err) {
+      setV3WriteError(`恢复的数据没有写入 v3 库，本机内容未改变：${String(err)}`);
+      return false;
+    }
   };
+  // Fill in the late-bound reference used by the v3 restore flow above.
+  restoreStateRef.current = handleRestoreState;
 
+  /**
+   * Quick capture (P1-03).
+   *
+   * Writes through `saveHubState` here and returns its real result, so the home
+   * page can say "已保存" only when the local write actually completed. An
+   * optimistic message followed by a failed effect write is exactly the
+   * dishonesty the redesign is meant to remove.
+   */
+  const captureEntry = useCallback((raw: string, source: InboxItem['source']): CaptureResult => {
+    const current = stateRef.current;
+    const { items, entry, created } = captureIntoInbox(current.inbox, raw, { source });
+    if (!created) return { ok: true, id: entry.id, created: false };
+    const next: HubState = { ...current, inbox: items };
+    stateRef.current = next;
+    setState(next);
+    // v3 mode keeps the library in IndexedDB; writing the whole state back into
+    // localStorage here re-inflates the payload to megabytes and reports a
+    // quota failure for a save that actually succeeds (see the save effect's
+    // deviceOnly note). Device config only, exactly like the save effect.
+    const deviceOnly = storageModeRef.current === 'v3' && v3ReadyRef.current;
+    const result = saveHubState(next, { deviceOnly });
+    return { ok: result.success, error: result.error, readOnly: result.readOnly, id: entry.id, created: true };
+  }, []);
+
+  /* ---------------------------------------------------------------------- */
+  /* Legacy tab links → routes                                               */
+  /* ---------------------------------------------------------------------- */
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#/, '');
+    // An old `#dashboard` / `#notes` bookmark has no leading slash: map it once.
+    if (hash && !hash.startsWith('/')) {
+      const path = routeForLegacyTab(hash.split('?')[0]);
+      replace(path);
+    }
+  }, [replace]);
+
+  const isPageSettings = route.name === 'settings' || route.name === 'settings-connection';
+
+  const settingsSection = useMemo(() => {
+    if (route.name === 'settings-connection') return sectionForConnection(route.params.id);
+    return (route.params.section as never) || 'overview';
+  }, [route]);
+
+  /* ---------------------------------------------------------------------- */
+  /* Render                                                                  */
+  /* ---------------------------------------------------------------------- */
   return (
-    <div className="flex h-screen overflow-hidden bg-[#090a0c] text-zinc-100 font-sans selection:bg-zinc-800">
-      
-      {/* Left Linear-style Navigation Dock */}
+    <div
+      className="flex h-screen overflow-hidden bg-sh-bg text-sh-fg font-sans"
+      data-write-mode={readOnlyNotice ? 'read-only' : 'writable'}
+    >
+      <a href="#/home" className="sh-skip-link">
+        跳到主要内容
+      </a>
+
       <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        routeName={route.name}
+        routeView={route.query.view}
+        routeType={route.query.type}
+        onNavigate={go}
         collapsed={sidebarCollapsed}
         setCollapsed={setSidebarCollapsed}
-        theme={state.theme || 'dark'}
-        onToggleTheme={handleToggleTheme}
-        onOpenSearch={() => setIsSearchOpen(true)}
-        onOpenAiIngest={() => setIsAiIngestOpen(true)}
-        onOpenAddModal={() => setIsAddModalOpen(true)}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenMasterKeyModal={() => setIsMasterKeyOpen(true)}
         isUnlocked={Boolean(masterPassword)}
         onLockVault={handleLockVault}
+        onOpenMasterKeyModal={() => setIsMasterKeyOpen(true)}
         features={state.features}
-        siteCount={state.sites.length}
-        serverCount={state.servers.length}
-        secretCount={state.secrets.length}
-        checkInCount={state.checkIns.length}
-        reminderCount={(state.reminders || []).length}
-        notesCount={(state.notes || []).length}
-        inboxCount={(state.inbox || []).filter((i) => i.status === 'inbox').length}
-        projectCount={(state.projects || []).length}
+        inboxCount={counts.inbox || 0}
+        reminderCount={counts.reminders || 0}
       />
 
-      {/* Main Command Workspace */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        <Navbar
-          activeTab={activeTab === 'dashboard' ? 'all' : (activeTab as any)}
-          setActiveTab={(t) => setActiveTab(t === 'all' ? 'dashboard' : t)}
+      <div ref={scrollShellRef} className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+        <TopBar
+          routeName={route.name}
+          title={navLabelForRoute(route.name, route.query.view, route.query.type)}
+          onNavigate={go}
           theme={state.theme || 'dark'}
           onToggleTheme={handleToggleTheme}
           onOpenSearch={() => setIsSearchOpen(true)}
           onOpenAiIngest={() => setIsAiIngestOpen(true)}
-          onOpenAddModal={() => setIsAddModalOpen(true)}
-          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenAddModal={() => openAddModal()}
           onOpenMasterKeyModal={() => setIsMasterKeyOpen(true)}
           isUnlocked={Boolean(masterPassword)}
           onLockVault={handleLockVault}
-        features={state.features}
-          siteCount={state.sites.length}
-          serverCount={state.servers.length}
-          secretCount={state.secrets.length}
-          reminderCount={(state.reminders || []).length}
-          inboxCount={(state.inbox || []).filter((i) => i.status === 'inbox').length}
-          projectCount={(state.projects || []).length}
+          features={state.features}
+          inboxCount={counts.inbox || 0}
         />
 
-        <main className="flex-1 p-3 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
-          {persistError && (
-            <div className="mb-4 flex items-start gap-2.5 rounded-2xl border border-red-900/60 bg-red-950/40 p-3.5 text-xs text-red-300">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+        <main id="main" className="flex-1 p-3 sm:p-5 max-w-[1400px] w-full mx-auto">
+          {readOnlyNotice && (
+            <div
+              className="mb-4 flex items-start gap-2.5 rounded-2xl border border-sh-warn/50 bg-sh-warn/10 p-3.5 text-xs text-sh-warn"
+              data-testid="schema-readonly-banner"
+              role="alert"
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden />
               <div className="flex-1 leading-relaxed">
-                <div className="font-semibold text-red-200">数据未能写入本地存储</div>
-                <div className="mt-0.5">{persistError}</div>
+                <div className="font-semibold">本页版本较旧，已切换为只读</div>
+                <div className="mt-0.5">{readOnlyNotice}</div>
               </div>
               <button
-                onClick={() => setIsSettingsOpen(true)}
-                className="shrink-0 rounded-lg border border-red-800/60 px-2.5 py-1 font-medium text-red-200 hover:bg-red-900/40"
+                onClick={() => window.location.reload()}
+                className="shrink-0 rounded-lg border border-sh-warn/50 px-2.5 py-1 font-medium inline-flex items-center gap-1"
+              >
+                <RefreshCw className="w-3 h-3" aria-hidden />
+                重新加载
+              </button>
+            </div>
+          )}
+
+          {v3WriteError && (
+            <div
+              className="mb-4 flex items-start gap-2.5 rounded-2xl border border-sh-warn/50 bg-sh-warn/10 p-3.5 text-xs text-sh-warn"
+              data-testid="v3-write-error"
+              role="status"
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden />
+              <div className="flex-1 leading-relaxed">
+                <div className="font-semibold">v3 库没有同步成功</div>
+                <div className="mt-0.5">{v3WriteError}</div>
+              </div>
+              <button onClick={() => setV3WriteError(null)} className="shrink-0 p-1" aria-label="忽略">
+                <X className="w-3.5 h-3.5" aria-hidden />
+              </button>
+            </div>
+          )}
+
+          {persistError && (
+            <div
+              className="mb-4 flex flex-wrap items-start gap-2.5 rounded-2xl border border-sh-danger/50 bg-sh-danger/10 p-3.5 text-xs text-sh-danger"
+              data-testid="persist-error-banner"
+              role="alert"
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden />
+              <div className="flex-1 leading-relaxed">
+                <div className="font-semibold">数据未能写入本机存储</div>
+                <div className="mt-0.5">{persistError}</div>
+                {/* The 5 MB payload ceiling is the usual cause. Switching the storage mode moves
+                    the business data into IndexedDB, which is the actual fix (not "export and hope"). */}
+                <div className="mt-1.5 text-sh-fg/80">
+                  常见原因：v2 整包负载接近浏览器约 5 MB 的上限。切到 v3 库后，资料存进 IndexedDB，这个上限不再约束。
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  onClick={() => go(buildRoute('settings', { section: 'storage' }))}
+                  data-testid="persist-error-switch-v3"
+                  className="rounded-lg border border-sh-danger/50 bg-sh-danger/10 px-2.5 py-1 font-semibold"
+                >
+                  切换到 v3 库
+                </button>
+                <button
+                  onClick={() => go(buildRoute('settings', { section: 'data' }))}
+                  className="rounded-lg border border-sh-danger/50 px-2.5 py-1 font-medium"
+                >
+                  先导出备份
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Warn while saving still works: the localStorage ceiling is ~5 MB and the
+              old behaviour was to say nothing until a write failed. */}
+          {storageWarning && !persistError && (
+            <div
+              className="mb-4 flex items-start gap-2.5 rounded-2xl border border-sh-warn/50 bg-sh-warn/10 p-3.5 text-xs text-sh-warn"
+              data-testid="storage-near-quota-banner"
+              role="status"
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden />
+              <div className="flex-1 leading-relaxed">
+                <div className="font-semibold">本机数据快接近浏览器上限</div>
+                <div className="mt-0.5">
+                  已用 {(storageWarning.bytes / 1024 / 1024).toFixed(2)} MB，约占{' '}
+                  {Math.round(storageWarning.ratio * 100)}%（浏览器通常约 5 MB）。再增长可能导致保存失败：
+                  建议先导出备份，再删除不再需要的手绘或大笔记。
+                </div>
+              </div>
+              <button
+                onClick={() => go(buildRoute('settings', { section: 'data' }))}
+                className="shrink-0 rounded-lg border border-sh-warn/50 px-2.5 py-1 font-medium"
               >
                 去导出备份
+              </button>
+              <button
+                onClick={() => {
+                  // Remember which size was dismissed: without this the effect
+                  // re-raises the banner on the very next save, so "忽略" only
+                  // lasted until the next keystroke.
+                  storageWarningDismissedRef.current = storageWarning.bytes;
+                  setStorageWarning(null);
+                }}
+                className="shrink-0 p-1"
+                aria-label="忽略容量提醒"
+              >
+                <X className="w-3.5 h-3.5" aria-hidden />
               </button>
             </div>
           )}
 
           {externalChange && (
-            <div className="mb-4 flex items-start gap-2.5 rounded-2xl border border-amber-900/60 bg-amber-950/30 p-3.5 text-xs text-amber-300">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div
+              className="mb-4 flex items-start gap-2.5 rounded-2xl border border-sh-warn/50 bg-sh-warn/10 p-3.5 text-xs text-sh-warn"
+              data-testid="external-change-banner"
+              role="status"
+            >
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden />
               <div className="flex-1 leading-relaxed">
-                <div className="font-semibold text-amber-200">另一个标签页修改了同一份数据</div>
-                <div className="mt-0.5">
-                  继续在当前页面编辑会用这里的版本覆盖对方。建议先重新加载，采用最新版本。
-                </div>
+                <div className="font-semibold">另一个标签页修改了同一份数据</div>
+                <div className="mt-0.5">继续在当前页面编辑会用这里的版本覆盖对方。建议先重新加载，采用最新版本。</div>
               </div>
               <button
                 onClick={() => window.location.reload()}
-                className="shrink-0 rounded-lg border border-amber-800/60 px-2.5 py-1 font-medium text-amber-200 hover:bg-amber-900/40 flex items-center gap-1"
+                className="shrink-0 rounded-lg border border-sh-warn/50 px-2.5 py-1 font-medium inline-flex items-center gap-1"
               >
-                <RefreshCw className="w-3 h-3" />
+                <RefreshCw className="w-3 h-3" aria-hidden />
                 重新加载
               </button>
-              <button
-                onClick={() => setExternalChange(false)}
-                className="shrink-0 rounded-lg px-2 py-1 text-amber-400/70 hover:text-amber-200"
-                title="忽略"
-              >
+              <button onClick={() => setExternalChange(false)} className="shrink-0 p-1" aria-label="忽略">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
           )}
 
-          <ErrorBoundary scope={activeTab} key={activeTab}>
-          {/* VIEW 1: Dashboard Overview (Bento Command Center) */}
-          {activeTab === 'dashboard' && (
-            <DashboardOverview
-              state={state}
-              onNavigateTab={(tab) => setActiveTab(tab)}
-              masterPassword={masterPassword}
-              onRequireUnlock={() => setIsMasterKeyOpen(true)}
-              onVisitSite={visitSite}
-              onRunCheckIn={runCheckIn}
-              onRunAllCheckIns={runAllCheckIns}
-            />
-          )}
+          <ErrorBoundary scope={route.name} key={route.name}>
+            {route.name === 'home' && (
+              <HomeDashboard
+                state={state}
+                onNavigate={go}
+                onVisitSite={visitSite}
+                onCapture={captureEntry}
+                onOpenAddModal={(type) => openAddModal(type)}
+                onOpenSearchHit={openSearchHit}
+                backupStatus={backupStatus}
+                vaultUnlocked={Boolean(hasMasterAuth && masterPassword)}
+                onRequireUnlock={() => setIsMasterKeyOpen(true)}
+              />
+            )}
 
-          {/* VIEW: Unified Inbox (N07) */}
-          {activeTab === 'inbox' && (
-            <InboxView
-              inbox={state.inbox || []}
-              onAddInboxItem={addInboxItem}
-              onUpdateInboxItem={updateInboxItem}
-              onDeleteInboxItem={deleteInboxItem}
-              onConvertToNote={convertToNote}
-              onConvertToSite={convertToSite}
-              projects={state.projects || []}
-              onAssignToProject={assignToProject}
-            />
-          )}
+            {route.name === 'navigation' && (
+              <SitesView
+                sites={state.sites}
+                categories={state.categories}
+                onVisit={visitSite}
+                onDelete={deleteSite}
+                onOpenAddModal={(type) => openAddModal(type)}
+                onOpenAiIngest={() => setIsAiIngestOpen(true)}
+                onImportBookmarks={importBookmarks}
+                onPasteRecognized={{
+                  aiConfig: state.aiConfig,
+                  onAddSites: (sites) => importBookmarks([...(state.sites ?? []), ...sites]),
+                  onCaptureInbox: (raw) => captureEntry(raw, 'home'),
+                  onAddNote: (note) => updateState((prev) => ({ ...prev, notes: [note, ...(prev.notes ?? [])] }))
+                }}
+              />
+            )}
 
-          {/* VIEW: Projects Workspace (N08) */}
-          {activeTab === 'projects' && (
-            <ProjectsView
-              projects={state.projects || []}
-              notes={state.notes || []}
-              sites={state.sites || []}
-              servers={state.servers || []}
-              reminders={state.reminders || []}
-              onAddProject={addProject}
-              onUpdateProject={updateProject}
-              onDeleteProject={deleteProject}
-              onNavigateTab={(tab, itemId) => {
-                if (tab === 'notes' && itemId) setFocusNoteId(itemId);
-                setActiveTab(tab as any);
-              }}
-            />
-          )}
+            {route.name === 'inbox' && (
+              <InboxView
+                inbox={state.inbox || []}
+                onAddInboxItem={addInboxItem}
+                onUpdateInboxItem={updateInboxItem}
+                onDeleteInboxItem={deleteInboxItem}
+                onConvertToNote={convertToNote}
+                onConvertToSite={convertToSite}
+                projects={state.projects || []}
+                onAssignToProject={assignToProject}
+                onPreviewBatch={previewBatch}
+                onConvertMany={convertMany}
+                onOpenTarget={(type, id) => {
+                  if (type === 'note') go(buildRoute('library-item', { id: `note:${id}` }));
+                  else if (type === 'site') go(buildRoute('navigation'));
+                  else go(buildRoute('project', { id }));
+                }}
+              />
+            )}
 
-          {/* VIEW 2: Sites & Bookmarks Workspace (Dense List / Grid / Folders) */}
-          {activeTab === 'sites' && (
-            <SitesView
-              sites={state.sites}
-              categories={state.categories}
-              onVisit={visitSite}
-              onDelete={deleteSite}
-              onOpenAddModal={() => setIsAddModalOpen(true)}
-              onOpenAiIngest={() => setIsAiIngestOpen(true)}
-              onImportBookmarks={importBookmarks}
-            />
-          )}
-
-          {/* VIEW 3: Servers & Deployments Workspace */}
-          {activeTab === 'servers' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between bg-[#121316] p-4 rounded-2xl border border-[#22242a]">
-                <div>
-                  <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                    <Server className="w-4 h-4 text-emerald-400" />
-                    自研项目部署与服务器主机 ({state.servers.length})
-                  </h2>
-                  <p className="text-xs text-zinc-400 mt-0.5">监控健康状态、公网IP/端口与一键快速唤起 SSH 连接</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => void checkAllServers()}
-                    disabled={state.servers.length === 0}
-                    className="px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white text-xs flex items-center gap-1.5 disabled:opacity-40"
-                    title="逐个探测所有服务器的健康检查地址"
-                  >
-                    <Activity className="w-3.5 h-3.5" />
-                    <span>全部检测</span>
-                  </button>
-                  <button
-                    onClick={() => setIsAddModalOpen(true)}
-                    className="px-3 py-1.5 rounded-xl bg-zinc-100 text-zinc-900 font-semibold text-xs flex items-center gap-1.5 shadow-sm hover:bg-white"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>添加服务</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                {state.servers.map((server) => (
-                  <ServerCard
-                    key={server.id}
-                    server={server}
-                    onDelete={deleteServer}
-                    onCheck={(id) => void checkServer(id)}
+            {route.name === 'library' && route.query.view === 'sources' && (
+              <Suspense fallback={<ChunkFallback label="正在加载远端笔记库…" />}>
+                <div data-testid="library-sources">
+                  <LibraryTabs active="sources" onNavigate={go} />
+                  <DataInteropView
+                    features={state.features}
+                    obsidianConfig={state.obsidianConfig}
+                    obsidianNotes={state.obsidianNotes || []}
+                    obsidianConnections={obsidianConnections}
+                    onUpdateObsidianConfig={(config) =>
+                      updateState((prev) => {
+                        /**
+                         * `obsidianConfig` stays the *active* connection (the tree, the backup and
+                         * the library adapter all read it). The list is what the tabs are drawn
+                         * from, so a save has to update both: switch-and-edit is the same gesture.
+                         */
+                        const list =
+                          prev.obsidianConnections && prev.obsidianConnections.length > 0
+                            ? prev.obsidianConnections
+                            : [prev.obsidianConfig];
+                        const index = list.findIndex((entry) =>
+                          config.id ? entry.id === config.id : entry.bucket === config.bucket && entry.endpoint === config.endpoint
+                        );
+                        const nextList =
+                          index >= 0
+                            ? list.map((entry, position) => (position === index ? { ...entry, ...config } : entry))
+                            : [...list, config];
+                        return { ...prev, obsidianConfig: config, obsidianConnections: nextList };
+                      })
+                    }
+                    onAddObsidianConnection={addObsidianConnection}
+                    onSelectBucket={showObsidianBucket}
+                    onHideBucket={hideObsidianBucket}
+                    onUpdateObsidianNotes={(notes) => updateState((prev) => ({ ...prev, obsidianNotes: notes }))}
+                    wucaiConfig={state.wucaiConfig || { enabled: false, token: '' }}
+                    wucaiHighlights={state.wucaiHighlights || []}
+                    onUpdateWucaiHighlights={(hl) => updateState((prev) => ({ ...prev, wucaiHighlights: hl }))}
+                    youdaoConfig={state.youdaoConfig || { enabled: false, token: '' }}
+                    youdaoNotes={state.youdaoNotes || []}
+                    onUpdateYoudaoNotes={(yd) => updateState((prev) => ({ ...prev, youdaoNotes: yd }))}
+                    onAddQuickNote={addNote}
+                    /* 数据 is 数据, 配置 is 配置: a "configure this connection" link belongs on the
+                       connections pane, not on 数据与备份 (that pane is about where backups go). */
+                    onOpenSettings={() => go(buildRoute('settings', { section: 'connections' }))}
+                    focusVaultKey={focusVaultKey}
+                    onFocusHandled={clearFocusVaultKey}
                   />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* VIEW 4: Security Vault Workspace */}
-          {activeTab === 'secrets' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between bg-[#121316] p-4 rounded-2xl border border-[#22242a]">
-                <div>
-                  <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-amber-400" />
-                    零知识加密安全金库 ({state.secrets.length})
-                  </h2>
-                  <p className="text-xs text-zinc-400 mt-0.5">API Key、Token、服务器密码通过 PBKDF2 + AES-256-GCM 客户端加密保护</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  {!masterPassword && (
-                    <button
-                      onClick={() => setIsMasterKeyOpen(true)}
-                      className="px-3 py-1.5 rounded-xl bg-amber-950/60 border border-amber-800/60 text-amber-400 text-xs flex items-center gap-1.5 font-medium"
+              </Suspense>
+            )}
+
+            {/*
+              网页批注 pane. 全部资料 is gone: a mixed list of every collection was the main
+              source of "which page am I on". Each collection now has its own pane, and this one
+              is the annotation showcase the user asked for (read, edit, delete, open source).
+            */}
+            {route.name === 'library' && route.query.type === 'webpage' && (
+              <Suspense fallback={<ChunkFallback label="正在加载网页批注…" />}>
+                <div data-testid="library-annotations">
+                  <LibraryTabs active="annotations" onNavigate={go} />
+                  {state.features?.annotations === false ? (
+                    /* The switch is off: the entry is hidden from the nav, and the pane says so
+                       instead of silently showing a module the user turned off. Data is kept. */
+                    <div
+                      className="rounded-2xl border border-sh-line bg-sh-surface p-6 text-center space-y-2"
+                      data-testid="module-switched-off"
                     >
-                      <Lock className="w-3.5 h-3.5" />
-                      <span>解锁金库</span>
-                    </button>
+                      <p className="text-sm text-sh-fg">网页批注已关闭</p>
+                      <p className="text-xs text-sh-muted">
+                        还剩 {state.annotations?.length ?? 0} 条批注没有被删除。要重新看到它们，去设置打开这个开关。
+                      </p>
+                      <button
+                        onClick={() => go(buildRoute('settings', { section: 'features' }))}
+                        className="px-3 py-1.5 rounded-lg bg-sh-accent text-sh-accent-fg text-xs font-semibold"
+                      >
+                        去设置打开
+                      </button>
+                    </div>
+                  ) : (
+                    <AnnotationsPane
+                      annotations={state.annotations ?? []}
+                      onSyncFromExtension={handleSyncAnnotations}
+                      onUpdate={(annotation) =>
+                        updateState((prev) => ({
+                          ...prev,
+                          annotations: (prev.annotations ?? []).map((entry) =>
+                            entry.id === annotation.id ? annotation : entry
+                          )
+                        }))
+                      }
+                      onDelete={(id) =>
+                        updateState((prev) => ({
+                          ...prev,
+                          annotations: (prev.annotations ?? []).filter((entry) => entry.id !== id)
+                        }))
+                      }
+                    />
                   )}
-                  <button
-                    onClick={() => setIsAddModalOpen(true)}
-                    className="px-3 py-1.5 rounded-xl bg-zinc-100 text-zinc-900 font-semibold text-xs flex items-center gap-1.5 shadow-sm hover:bg-white"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>新建凭据</span>
-                  </button>
                 </div>
-              </div>
+              </Suspense>
+            )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                {state.secrets.map((secret) => (
-                  <SecretCard
-                    key={secret.id}
-                    secret={secret}
-                    masterPassword={masterPassword}
-                    onRequireUnlock={() => setIsMasterKeyOpen(true)}
-                    onDelete={deleteSecret}
+            {/* 笔记: the default pane. `#/library` lands here, and so does an old
+                `#/library?type=note` deep link. */}
+            {route.name === 'library' &&
+              route.query.type !== 'webpage' &&
+              route.query.view !== 'sources' && (
+                <div data-testid="notes-workspace">
+                  <LibraryTabs active="notes" onNavigate={go} />
+                  <NotesPane
+                    notes={state.notes || []}
+                    folders={state.noteFolders ?? []}
+                    onAddNote={addNote}
+                    onUpdateNote={updateNote}
+                    onDeleteNote={deleteNote}
+                    onAddFolder={(path) =>
+                      updateState((prev) => ({
+                        ...prev,
+                        noteFolders: Array.from(new Set([...(prev.noteFolders ?? []), path]))
+                      }))
+                    }
+                    onRemoveFolder={(path) =>
+                      updateState((prev) => ({
+                        ...prev,
+                        // Deleting a folder never deletes notes: they move up to the parent folder.
+                        noteFolders: (prev.noteFolders ?? []).filter(
+                          (entry) => entry !== path && !entry.startsWith(`${path}/`)
+                        ),
+                        notes: (prev.notes ?? []).map((note) => {
+                          const folder = note.folder ?? '';
+                          if (folder !== path && !folder.startsWith(`${path}/`)) return note;
+                          const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+                          const rest = folder.slice(path.length).replace(/^\//, '');
+                          const next = [parent, rest].filter(Boolean).join('/');
+                          return { ...note, folder: next || undefined };
+                        })
+                      }))
+                    }
                   />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* VIEW 5: Reminders & Subscriptions Countdown Workspace */}
-          {activeTab === 'reminders' && (
-            <RemindersView
-              reminders={state.reminders || []}
-              onAddReminder={addReminder}
-              onUpdateReminder={updateReminder}
-              onDeleteReminder={deleteReminder}
-              onToggleComplete={toggleReminderComplete}
-            />
-          )}
-
-          {/* VIEW 6: Rich Knowledge Notes Workspace */}
-          {activeTab === 'notes' && (
-            <NotesView
-              notes={state.notes || []}
-              onAddNote={addNote}
-              onUpdateNote={updateNote}
-              onDeleteNote={deleteNote}
-              focusNoteId={focusNoteId}
-              onFocusHandled={clearFocusNoteId}
-            />
-          )}
-
-          {/* VIEW 7: Automation & Check-in Workspace */}
-          {activeTab === 'checkin' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between bg-[#121316] p-4 rounded-2xl border border-[#22242a]">
-                <div>
-                  <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                    <CheckSquare className="w-4 h-4 text-sky-400" />
-                    自动化签到与打卡中心 ({state.checkIns.length})
-                  </h2>
-                  <p className="text-xs text-zinc-400 mt-0.5">支持真实 HTTP 请求打卡与油猴自动化模拟点击脚本一键生成</p>
                 </div>
-                <button
-                  onClick={() => setIsAddModalOpen(true)}
-                  className="px-3 py-1.5 rounded-xl bg-zinc-100 text-zinc-900 font-semibold text-xs flex items-center gap-1.5 shadow-sm hover:bg-white"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>新建签到</span>
-                </button>
-              </div>
+              )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                {state.checkIns.map((task) => (
-                  <CheckInCard key={task.id} task={task} onRun={runCheckIn} onDelete={deleteCheckIn} />
-                ))}
-              </div>
-            </div>
-          )}
+            {route.name === 'library-item' && (
+              <Suspense fallback={<ChunkFallback label="正在加载资料…" />}>
+                <LibraryItemView
+                  state={state}
+                  itemKey={route.params.id}
+                  onNavigate={go}
+                  onAddNote={addNote}
+                  onUpdateNote={updateNote}
+                  onDeleteNote={deleteNote}
+                  onDeleteHandwriting={deleteHandwriting}
+                  onDeleteSite={deleteSite}
+                />
+              </Suspense>
+            )}
 
-          {/* VIEW 6: Multi-Platform Data Interop (Obsidian OSS + Wucai + Youdao) */}
-          {activeTab === 'obsidian' && (
-            <DataInteropView
-              obsidianConfig={state.obsidianConfig}
-              obsidianNotes={state.obsidianNotes || []}
-              onUpdateObsidianNotes={(notes) => updateState((prev) => ({ ...prev, obsidianNotes: notes }))}
-              wucaiConfig={state.wucaiConfig || { enabled: true, token: '' }}
-              wucaiHighlights={state.wucaiHighlights || []}
-              onUpdateWucaiHighlights={(hl) => updateState((prev) => ({ ...prev, wucaiHighlights: hl }))}
-              onUpdateWucaiConfig={(cfg) => updateState((prev) => ({ ...prev, wucaiConfig: cfg }))}
-              youdaoConfig={state.youdaoConfig || { enabled: true, token: '' }}
-              youdaoNotes={state.youdaoNotes || []}
-              onUpdateYoudaoNotes={(yd) => updateState((prev) => ({ ...prev, youdaoNotes: yd }))}
-              onUpdateYoudaoConfig={(cfg) => updateState((prev) => ({ ...prev, youdaoConfig: cfg }))}
-              onAddQuickNote={addNote}
-              onOpenSettings={() => setIsSettingsOpen(true)}
-              focusVaultKey={focusVaultKey}
-              onFocusHandled={clearFocusVaultKey}
-            />
-          )}
+            {route.name === 'projects' && (
+              <ProjectsView
+                state={state}
+                onAddProject={addProject}
+                onUpdateProject={updateProject}
+                onDeleteProject={deleteProject}
+                onNavigate={go}
+              />
+            )}
 
-          {/* VIEW 7: Handwriting & Scribble Canvas */}
-          {activeTab === 'handwriting' && (
-            <HandwritingCard
-              onSaveNote={saveHandwriting}
-              savedNotes={state.handwritings}
-              onDeleteNote={deleteHandwriting}
-            />
-          )}
+            {route.name === 'reminders' && (
+              <RemindersView
+                reminders={state.reminders || []}
+                onAddReminder={addReminder}
+                onUpdateReminder={updateReminder}
+                onDeleteReminder={deleteReminder}
+                onToggleComplete={toggleReminderComplete}
+                onRenewReminder={renewReminder}
+              />
+            )}
+
+            {route.name === 'servers' && (
+              <ServersView
+                servers={state.servers}
+                onDelete={deleteServer}
+                onUpdate={(server) =>
+                  updateState((prev) => ({
+                    ...prev,
+                    servers: prev.servers.map((entry) => (entry.id === server.id ? server : entry))
+                  }))
+                }
+                onCheck={(id) => checkServer(id)}
+                onCheckAll={() => checkAllServers()}
+                onOpenAddModal={(type) => openAddModal(type)}
+              />
+            )}
+
+            {route.name === 'assets' && (
+              <DomainsView
+                state={state}
+                onAddDomain={(domain) => updateState((prev) => ({ ...prev, domains: [domain, ...(prev.domains ?? [])] }))}
+                onUpdateDomain={(domain) =>
+                  updateState((prev) => ({
+                    ...prev,
+                    domains: (prev.domains ?? []).map((entry) => (entry.id === domain.id ? domain : entry))
+                  }))
+                }
+                onDeleteDomain={(id) =>
+                  updateState((prev) => ({ ...prev, domains: (prev.domains ?? []).filter((entry) => entry.id !== id) }))
+                }
+              />
+            )}
+
+            {route.name === 'vault' && (
+              <VaultView
+                secrets={state.secrets}
+                masterPassword={masterPassword}
+                hasMasterAuth={hasMasterAuth}
+                onRequireUnlock={() => setIsMasterKeyOpen(true)}
+                onLockVault={handleLockVault}
+                onDelete={deleteSecret}
+                onOpenAddModal={(type) => openAddModal(type)}
+              />
+            )}
+
+            {route.name === 'checkins' && (
+              <CheckInsView
+                checkIns={state.checkIns}
+                onRun={runCheckIn}
+                onDelete={deleteCheckIn}
+                onOpenAddModal={(type) => openAddModal(type)}
+                onAddFromTemplate={(site) =>
+                  updateState((prev) => ({
+                    ...prev,
+                    checkIns: [taskFromTemplate(site), ...(prev.checkIns ?? [])]
+                  }))
+                }
+              />
+            )}
+
+            {route.name === 'drawing' && (
+              <DrawingView handwritings={state.handwritings} onSave={saveHandwriting} onDelete={deleteHandwriting} />
+            )}
+
+            {isPageSettings && (
+              <Suspense fallback={<ChunkFallback label="正在加载设置…" />}>
+                <SettingsModal
+                  variant="page"
+                  isOpen
+                  section={settingsSection as never}
+                  onSectionChange={(next) => replace(buildRoute('settings', { section: next }))}
+                  onLeave={() => go(buildRoute('home'))}
+                  onClose={() => go(buildRoute('home'))}
+                  obsidianConfig={state.obsidianConfig}
+                  obsidianConnections={obsidianConnections}
+                  onSelectObsidianConnection={selectObsidianConnection}
+                  onAddObsidianConnection={addObsidianConnection}
+                  onRemoveObsidianConnection={removeObsidianConnection}
+                  aiConfig={state.aiConfig}
+                  onSaveIntegration={(id, values) => updateState((prev) => applyIntegrationValues(prev, id, values))}
+                  onToggleFeature={(id, enabled) =>
+                    updateState((prev) => ({ ...prev, features: { ...(prev.features || {}), [id]: enabled } }))
+                  }
+                  state={state}
+                  onRestoreState={handleRestoreState}
+                  masterPassword={masterPassword}
+                  backupStatus={backupStatus}
+                  onBackupNow={(force) => runStateBackup(force, 'manual')}
+                  webdavConfig={state.webdavConfig}
+                  backupTarget={backupTarget}
+                  onUpdateBackupPolicy={(backupPolicy) =>
+                    updateState((prev) => ({
+                      ...prev,
+                      backupPolicy: {
+                        provider: backupPolicy.provider,
+                        enabled: backupPolicy.enabled,
+                        format: backupPolicy.format ?? prev.backupPolicy?.format ?? 'legacy',
+                        // Multi-target: undefined keeps the old single-provider behaviour.
+                        destinations: backupPolicy.destinations ?? prev.backupPolicy?.destinations
+                      }
+                    }))
+                  }
+                  v3Backup={{
+                    panel: v3Backup.panel,
+                    onUnlock: v3Backup.unlock,
+                    onLock: v3Backup.lock,
+                    onRefresh: () => void v3Backup.refresh(),
+                    onRun: () => void v3Backup.runNow(),
+                    onPrune: () => void v3Backup.pruneNow(),
+                    onFormatChange: v3Backup.setFormat,
+                    onPreviewBatch: (id: string) => void v3Backup.previewBatch(id),
+                    onConflictChoice: v3Backup.setConflictChoice,
+                    onRestoreMode: v3Backup.setRestoreMode,
+                    onApplyRestore: () => void v3Backup.applyPreview(),
+                    onDiscardPreview: v3Backup.discardPreview,
+                    onExportMigration: () => void v3Backup.exportMigration(),
+                    onPreviewMigration: (id: string) => void v3Backup.previewMigration(id),
+                    onImportCredentialsChange: v3Backup.setImportCredentials,
+                    onRemoveMigration: (id: string) => void v3Backup.removeMigration(id),
+                    onExportBundle: (withCredentials: boolean) =>
+                      void v3Backup.buildBundleFile({ includeCredentials: withCredentials }),
+                    onImportBundle: (json: string) => void v3Backup.previewBundleFile(json),
+                    onRetestConnections: (services: string[]) => void v3Backup.retestConnections(services)
+                  }}
+                  storageMode={{ mode: storageMode, counts: v3Status.counts, error: v3Status.error, migration: v3Status.migration }}
+                  onSwitchStorageMode={switchStorageMode}
+                  onRecordConnectionTest={(id, record) =>
+                    updateState((prev) => ({
+                      ...prev,
+                      connectionTests: { ...(prev.connectionTests || {}), [id]: record }
+                    }))
+                  }
+                />
+              </Suspense>
+            )}
+
+            {route.name === 'not-found' && <NotFoundView onNavigate={go} />}
           </ErrorBoundary>
         </main>
 
-        {/* Footer */}
-        <footer className="border-t border-[#18191e] py-4 text-center text-xs text-zinc-400 font-mono">
-          <div className="flex items-center justify-center gap-3">
-            <span>Self-Hub · Local-First</span>
-            <span>•</span>
-            <span>Zero-Knowledge AES-256</span>
-            <span>•</span>
-            <span>Local IndexedDB + Storage</span>
-          </div>
-        </footer>
       </div>
 
-      {/* Global Modals */}
       <GlobalSearch
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        sites={state.sites}
-        servers={state.servers}
-        secrets={state.secrets}
-        notes={state.notes || []}
-        reminders={state.reminders || []}
-        obsidianNotes={state.obsidianNotes || []}
-        projects={state.projects || []}
-        inbox={state.inbox || []}
+        state={state}
         masterPassword={masterPassword}
         onRequireUnlock={() => setIsMasterKeyOpen(true)}
-        onSelectSite={(url) => window.open(url, '_blank')}
-        onSelectServer={(srv) => {
-          navigator.clipboard.writeText(srv.sshCommand || `ssh ${srv.sshUser || 'root'}@${srv.publicIp}`);
-          alert(`已复制服务器 SSH 命令: ${srv.sshCommand}`);
+        onCopySecret={(secret) => {
+          // Decryption stays here: the dialog never holds plaintext. A clipboard
+          // failure must not masquerade as a wrong password — that used to pop
+          // the unlock dialog and send the user into a pointless re-login loop.
+          void (async () => {
+            if (!masterPassword) {
+              setIsMasterKeyOpen(true);
+              return;
+            }
+            let plain: string;
+            try {
+              plain = await decryptText(secret.encryptedValue, secret.iv, secret.salt, masterPassword);
+            } catch {
+              setIsMasterKeyOpen(true);
+              return;
+            }
+            try {
+              await navigator.clipboard.writeText(plain);
+              flashNotice(`已复制「${secret.name}」到剪贴板`);
+            } catch {
+              flashNotice('复制失败：浏览器拒绝了剪贴板访问。');
+            }
+          })();
         }}
-        onSelectNote={(note) => {
-          if (note?.id) setFocusNoteId(note.id);
-          setActiveTab('notes');
-          setIsSearchOpen(false);
-        }}
-        onSelectProject={() => {
-          setActiveTab('projects');
-          setIsSearchOpen(false);
-        }}
-        onSelectInbox={() => {
-          setActiveTab('inbox');
-          setIsSearchOpen(false);
-        }}
-        onSelectVaultNote={(key) => {
-          setFocusVaultKey(key);
-          setActiveTab('obsidian');
-          setIsSearchOpen(false);
-        }}
+        /**
+         * Routing for every searchable kind lives in one place. The palette reports
+         * *what* the user picked; turning that into a route is the app's job, which is
+         * what keeps `#/library/item/...` keys out of the search component.
+         */
+        onOpenResult={openSearchHit}
       />
 
-      <AiIngestModal
-        isOpen={isAiIngestOpen}
-        onClose={() => setIsAiIngestOpen(false)}
-        categories={state.categories}
-        aiConfig={state.aiConfig}
-        masterPassword={masterPassword}
-        onRequireUnlock={() => setIsMasterKeyOpen(true)}
-        onBatchImport={batchImport}
-      />
+      <Suspense fallback={null}>
+        <AiIngestModal
+          isOpen={isAiIngestOpen}
+          onClose={() => setIsAiIngestOpen(false)}
+          categories={state.categories}
+          aiConfig={state.aiConfig}
+          masterPassword={masterPassword}
+          onRequireUnlock={() => setIsMasterKeyOpen(true)}
+          onBatchImport={batchImport}
+        />
+      </Suspense>
 
       <MasterKeyModal
         isOpen={isMasterKeyOpen}
         onClose={() => setIsMasterKeyOpen(false)}
-        onSuccess={(pwd) => setMasterPassword(pwd)}
+        onSuccess={(pwd) => {
+          setMasterPassword(pwd);
+          setHasMasterAuth(true);
+        }}
       />
 
-      <AddItemModal
-        isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        categories={state.categories}
-        masterPassword={masterPassword}
-        onRequireUnlock={() => setIsMasterKeyOpen(true)}
-        onAddSite={addSite}
-        onAddServer={addServer}
-        onAddSecret={addSecret}
-        onAddCheckIn={addCheckIn}
-        onAddNote={(note) => updateState((prev) => ({ ...prev, notes: [note, ...prev.notes] }))}
-      />
+      <Suspense fallback={null}>
+        <AddItemModal
+          isOpen={isAddModalOpen}
+          onClose={() => setIsAddModalOpen(false)}
+          categories={state.categories}
+          masterPassword={masterPassword}
+          onRequireUnlock={() => setIsMasterKeyOpen(true)}
+          onAddSite={addSite}
+          onAddServer={addServer}
+          onAddSecret={addSecret}
+          onAddCheckIn={addCheckIn}
+          onAddNote={(note) => updateState((prev) => ({ ...prev, notes: [note, ...prev.notes] }))}
+          onlyTypes={addModalTypes ?? undefined}
+          serverGroups={Array.from(new Set(state.servers.map((s) => (s.group || '').trim()).filter(Boolean)))}
+        />
+      </Suspense>
 
       <OnboardingWizard
         isOpen={showOnboarding}
@@ -610,54 +1734,96 @@ export function App() {
           dismissOnboarding();
         }}
         onOpenStorage={() => {
-          setSettingsSection('storage');
-          setIsSettingsOpen(true);
+          dismissOnboarding();
+          go(buildRoute('settings', { section: 'storage' }));
         }}
       />
 
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        initialSection={settingsSection}
-        onClose={() => setIsSettingsOpen(false)}
-        obsidianConfig={state.obsidianConfig}
-        aiConfig={state.aiConfig}
-        onSaveIntegration={(id, values) => updateState((prev) => applyIntegrationValues(prev, id, values))}
-        onToggleFeature={(id, enabled) =>
-          updateState((prev) => ({ ...prev, features: { ...(prev.features || {}), [id]: enabled } }))
-        }
-        state={state}
-        onRestoreState={handleRestoreState}
-        masterPassword={masterPassword}
-        backupStatus={backupStatus}
-        onBackupNow={(force) => runStateBackup(force)}
-        webdavConfig={state.webdavConfig}
-      />
+      {/* The modal variant of settings is still used by in-page shortcuts. */}
+      <Suspense fallback={null}>
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          obsidianConfig={state.obsidianConfig}
+          obsidianConnections={obsidianConnections}
+          onSelectObsidianConnection={selectObsidianConnection}
+          onAddObsidianConnection={addObsidianConnection}
+                  onRemoveObsidianConnection={removeObsidianConnection}
+          aiConfig={state.aiConfig}
+          onSaveIntegration={(id, values) => updateState((prev) => applyIntegrationValues(prev, id, values))}
+          onToggleFeature={(id, enabled) =>
+            updateState((prev) => ({ ...prev, features: { ...(prev.features || {}), [id]: enabled } }))
+          }
+          state={state}
+          onRestoreState={handleRestoreState}
+          masterPassword={masterPassword}
+          backupStatus={backupStatus}
+          onBackupNow={(force) => runStateBackup(force, 'manual')}
+          webdavConfig={state.webdavConfig}
+          backupTarget={backupTarget}
+          onUpdateBackupPolicy={(backupPolicy) =>
+            updateState((prev) => ({
+              ...prev,
+              backupPolicy: {
+                provider: backupPolicy.provider,
+                enabled: backupPolicy.enabled,
+                format: backupPolicy.format ?? prev.backupPolicy?.format ?? 'legacy',
+                destinations: backupPolicy.destinations ?? prev.backupPolicy?.destinations
+              }
+            }))
+          }
+          v3Backup={{
+            panel: v3Backup.panel,
+            onUnlock: v3Backup.unlock,
+            onLock: v3Backup.lock,
+            onRefresh: () => void v3Backup.refresh(),
+            onRun: () => void v3Backup.runNow(),
+            onPrune: () => void v3Backup.pruneNow(),
+            onFormatChange: v3Backup.setFormat,
+            onPreviewBatch: (id: string) => void v3Backup.previewBatch(id),
+            onConflictChoice: v3Backup.setConflictChoice,
+            onRestoreMode: v3Backup.setRestoreMode,
+            onApplyRestore: () => void v3Backup.applyPreview(),
+            onDiscardPreview: v3Backup.discardPreview,
+            onExportMigration: () => void v3Backup.exportMigration(),
+            onPreviewMigration: (id: string) => void v3Backup.previewMigration(id),
+            onImportCredentialsChange: v3Backup.setImportCredentials,
+            onRemoveMigration: (id: string) => void v3Backup.removeMigration(id),
+            onExportBundle: (withCredentials: boolean) => void v3Backup.buildBundleFile({ includeCredentials: withCredentials }),
+            onImportBundle: (json: string) => void v3Backup.previewBundleFile(json),
+            onRetestConnections: (services: string[]) => void v3Backup.retestConnections(services)
+          }}
+          storageMode={{ mode: storageMode, counts: v3Status.counts, error: v3Status.error, migration: v3Status.migration }}
+          onSwitchStorageMode={switchStorageMode}
+        />
+      </Suspense>
+
+      {/* `focusNoteId` is consumed by the library item view; clear it once used. */}
+      {focusNoteId && route.name === 'library-item' && <FocusClear onDone={clearFocusNoteId} />}
+
+      {/* Transient feedback for clipboard and other one-line results. */}
+      {globalNotice && (
+        <div
+          role="status"
+          data-testid="global-notice"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] px-3.5 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-zinc-100 shadow-xl max-w-[90vw] truncate"
+        >
+          {globalNotice}
+        </div>
+      )}
+
+      {/* Exposed for diagnostics without importing the whole app in tests. */}
+      <span className="hidden" data-testid="write-guard" data-mode={checkWritable().mode} />
     </div>
   );
 }
 
+/** Small helper that runs a callback once after mount (keeps effects out of App). */
+function FocusClear({ onDone }: { onDone: () => void }) {
+  useEffect(() => {
+    onDone();
+  }, [onDone]);
+  return null;
+}
+
 export default App;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

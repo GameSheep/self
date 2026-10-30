@@ -59,8 +59,3 @@ export function matchesQuery(targetText: string, query: string): boolean {
   const queryTokens = q.split(/\s+/).filter(Boolean);
   return queryTokens.every((tok) => t.includes(tok) || initials.includes(tok));
 }
-
-/** Exposed for the settings/health views that want to show coverage. */
-export function pinyinTableSize(): number {
-  return PINYIN_CHARS.length;
-}

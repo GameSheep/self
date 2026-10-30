@@ -31,8 +31,18 @@ function previewOf(value: string): string {
   return `${clean.slice(0, 4)}…${clean.slice(-2)}（${clean.length} 位）`;
 }
 
+/**
+ * Placeholder inserted in place of a masked value.
+ *
+ * `kind` may contain Chinese ("疑似令牌"). The previous sanitisation at the call
+ * site used `/[^\w]/g`, which strips every Chinese character and produced
+ * `⟪SH_MASKED__0⟫` with an empty kind — the value is still masked either way,
+ * but the marker is meant to stay legible, and it is the key that rehydration
+ * looks up. Keep ASCII word characters plus CJK; drop everything else.
+ */
 function placeholderFor(kind: string, index: number): string {
-  return `⟪SH_MASKED_${kind}_${index}⟫`;
+  const safe = kind.replace(/[^\w\u4e00-\u9fff]/g, '');
+  return `⟪SH_MASKED_${safe}_${index}⟫`;
 }
 
 interface Pattern {
@@ -89,7 +99,7 @@ export function maskSecrets(text: string): MaskResult {
       if (!captured) return match;
 
       const index = findings.length;
-      const placeholder = placeholderFor(pattern.kind.replace(/[^\w]/g, ''), index);
+      const placeholder = placeholderFor(pattern.kind, index);
       values[placeholder] = captured;
       findings.push({ kind: pattern.kind, preview: previewOf(captured), length: captured.length });
 

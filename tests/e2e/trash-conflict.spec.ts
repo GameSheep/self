@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState } from './helpers';
+import { seedState, baseState, gotoTab } from './helpers';
 
 /**
  * Data-safety behaviours: the trash and overwrite detection.
@@ -8,9 +8,9 @@ import { seedState, baseState } from './helpers';
  * that Obsidian desktop had written in the meantime.
  */
 
-const KEY_ID = 'LTAI5t8JAm7fyYaDsK5ECJer';
+const KEY_ID = 'LTAI5tEXAMPLE000000000';
 const ENDPOINT = 'oss-cn-beijing.aliyuncs.com';
-const BUCKET = 'uiuecho-obsidian';
+const BUCKET = 'example-obsidian-vault';
 
 /** Listing reports an old mtime; that becomes the baseline for conflict checks. */
 const OLD_ISO = '2026-01-01T00:00:00.000Z';
@@ -86,7 +86,7 @@ function state() {
 
 async function boot(page: any) {
   await page.goto('/');
-  await page.locator('nav button', { hasText: '多平台数据互通' }).click();
+  await gotoTab(page, '多平台数据互通');
   await expect(page.locator('.md-body')).toBeVisible();
 }
 

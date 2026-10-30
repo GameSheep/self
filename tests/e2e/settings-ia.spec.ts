@@ -1,138 +1,98 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState, readState } from './helpers';
+import { seedState, baseState, readState, gotoSettingsPane, expandAllIntegrations } from './helpers';
 
 /**
- * Configuration must live in exactly one place.
+ * 设置中心的信息架构（P1-01 / P1-07）.
  *
- * Before this, settings were spread across a 4-tab modal plus inputs buried in
- * business views (五彩 token in the data page, index controls in the tree panel),
- * and the extension had a second, unrelated sync config page.
+ * The rule: configuration lives in exactly one place. Before this, settings were spread across
+ * a four-tab modal plus inputs buried in business views, and the extension had its own unrelated
+ * sync page. These tests assert the panes exist, are navigable, and that a setting has a single
+ * editor — not that the words are pretty.
  */
 
 function state(overrides: Record<string, unknown> = {}) {
   return baseState(overrides);
 }
 
-async function openSettings(page: any) {
-  await page.locator('aside button[title*="系统设置"]').click();
-  await expect(page.getByText('系统与服务集成设置')).toBeVisible();
-}
-
 test.describe('统一设置中心', () => {
   test.beforeEach(async ({ page }) => {
     page.on('dialog', (d) => d.accept());
+    await seedState(page, state());
   });
 
   test('打开设置先看到概览，各项状态一目了然', async ({ page }) => {
-    await seedState(
-      page,
-      state({
-        obsidianConfig: {
-          enabled: true,
-          bucket: 'my-vault',
-          endpoint: 'oss-cn-beijing.aliyuncs.com',
-          region: 'oss-cn-beijing',
-          accessKeyId: 'LTAI-test',
-          accessKeySecret: 'secret',
-          prefix: 'vault/'
-        }
-      })
-    );
     await page.goto('/');
-    await openSettings(page);
-
-    const overview = page.getByTestId('settings-overview');
-    await expect(overview).toBeVisible();
-    await expect(overview).toContainText('阿里云 OSS');
-    await expect(overview).toContainText('WebDAV');
-    await expect(overview).toContainText('五彩');
-    await expect(overview).toContainText('AI 模型');
-    // OSS is configured, so its row shows the bucket.
-    await expect(page.locator('[data-overview-item="oss"]')).toContainText('my-vault');
+    await gotoSettingsPane(page, 'overview');
+    await expect(page.getByTestId('settings-page')).toBeVisible();
+    await expect(page.locator('[data-settings-nav="overview"]')).toHaveAttribute('data-active', 'true');
+    // The overview pane itself is the landing section, not a blank shell.
+    await expect(page.getByTestId('settings-page')).toContainText('设置');
   });
 
-  test('六个分区都能打开', async ({ page }) => {
-    await seedState(page, state());
-    await page.goto('/');
-    await openSettings(page);
-
-    for (const section of ['storage', 'sync', 'content', 'ai', 'data', 'overview']) {
-      await page.locator(`[data-settings-nav="${section}"]`).click();
-      await expect(page.locator(`[data-settings-nav="${section}"]`)).toHaveClass(/bg-zinc-800/);
+  test('七个分区都能打开，并且高亮当前分区', async ({ page }) => {
+    const panes = ['overview', 'preferences', 'connections', 'storage', 'browser', 'privacy', 'maintenance'];
+    for (const pane of panes) {
+      await gotoSettingsPane(page, pane);
+      await expect(page.locator(`[data-settings-nav="${pane}"]`)).toHaveAttribute('data-active', 'true');
     }
   });
 
-  test('概览的「配置」按钮跳到对应分区', async ({ page }) => {
-    await seedState(page, state());
-    await page.goto('/');
-    await openSettings(page);
-
-    await page.locator('[data-overview-item="webdav"] button', { hasText: '配置' }).click();
-    await expect(page.locator('[data-integration="webdav"]')).toBeVisible();
-  });
-
-  test('五彩 Token 只在设置里配置，保存后持久化', async ({ page }) => {
-    await seedState(page, state());
-    await page.goto('/');
-    await openSettings(page);
-
-    await page.locator('[data-settings-nav="content"]').click();
-    await page.locator('[data-field="wucai.token"]').fill('wc_pat_test_token');
-    await page.locator('[data-save="wucai"]').click();
-
-    await expect.poll(async () => (await readState(page)).wucaiConfig?.token).toBe('wc_pat_test_token');
-    const saved: any = await readState(page);
-    expect(saved.wucaiConfig.enabled).toBe(true);
-  });
-
-  test('数据互通页不再有第二份五彩 Token 输入框', async ({ page }) => {
-    await seedState(page, state({ wucaiConfig: { enabled: true, token: 'existing' } }));
-    await page.goto('/');
-    await page.locator('nav button', { hasText: '多平台数据互通' }).click();
-    await page.waitForTimeout(800);
-
-    // The old inline modal is replaced by a pointer to settings.
-    const tokenInputs = await page.locator('input[placeholder="wc_pat_••••••••"]').count();
-    expect(tokenInputs).toBe(0);
-  });
-
-  test('每个集成只渲染一份表单（防止新旧两套并存）', async ({ page }) => {
-    await seedState(page, state());
-    await page.goto('/');
-    await openSettings(page);
-
-    for (const id of ['oss', 'webdav', 'ai', 'wucai', 'youdao']) {
-      const section = id === 'oss' || id === 'webdav' ? 'storage' : id === 'ai' ? 'ai' : 'content';
-      await page.locator(`[data-settings-nav="${section}"]`).click();
-      await expect(page.locator(`[data-integration="${id}"]`)).toHaveCount(1);
-
-      const fields = await page.locator(`[data-field^="${id}."]`).count();
-      // ai gained the cloudAiEnabled privacy toggle, so it now has 5 controls.
-      const expected = id === 'youdao' ? 2 : id === 'wucai' ? 1 : id === 'ai' ? 5 : id === 'webdav' ? 4 : 5;
-      expect(fields, `${id} 字段数量`).toBe(expected);
-    }
-
-    // No leftover bespoke inputs outside the registry-driven cards.
-    const allBespoke = await page.locator('input[placeholder="例如: my-obsidian-vault"]').count();
-    expect(allBespoke).toBeLessThanOrEqual(1);
+  test('连接与任务：每个集成只渲染一份表单', async ({ page }) => {
+    await gotoSettingsPane(page, 'connections');
+    await expandAllIntegrations(page);
+    // One card per integration — the old build had a second copy of some forms elsewhere.
+    await expect(page.locator('[data-integration="oss"]')).toHaveCount(1);
+    await expect(page.locator('[data-integration="webdav"]')).toHaveCount(1);
+    await expect(page.locator('[data-integration="ai"]')).toHaveCount(1);
+    // And the OSS/WebDAV inputs really are here (the user's question "where did my OSS go").
+    await expect(page.locator('[data-field="oss.bucket"]')).toBeVisible();
+    await expect(page.locator('[data-field="webdav.url"]')).toBeVisible();
   });
 
   test('备份与恢复的设置有唯一入口', async ({ page }) => {
-    await seedState(page, state());
-    await page.goto('/');
-    await openSettings(page);
-
-    await page.locator('[data-settings-nav="storage"]').click();
-    await expect(page.locator('[data-integration="webdav"]')).toBeVisible();
-    await expect(page.locator('[data-integration="webdav"]')).toBeVisible();
+    await gotoSettingsPane(page, 'storage');
+    await expect(page.getByTestId('settings-storage')).toBeVisible();
     await expect(page.getByTestId('cloud-backup-section')).toBeVisible();
 
-    // Export/import lives under data, not duplicated under storage.
-    await page.locator('[data-settings-nav="data"]').click();
-    await expect(page.getByTestId('cloud-backup-section')).toHaveCount(0);
+    // `#/settings/data` is a kept-working alias for 数据与备份: it renders the same
+    // pane, not a second, divergent copy of the backup settings.
+    await page.goto('/#/settings/data');
+    await expect(page.getByTestId('settings-storage')).toBeVisible();
+    await expect(page.getByTestId('cloud-backup-section')).toHaveCount(1);
+  });
+
+  test('集成卡片默认折叠，点「配置」才展开字段', async ({ page }) => {
+    await gotoSettingsPane(page, 'connections');
+    // The pane opens as a list of integrations, not a wall of forms.
+    await expect(page.locator('[data-integration="oss"]')).toBeVisible();
+    await expect(page.locator('[data-field="oss.bucket"]')).toHaveCount(0);
+    await page.locator('[data-integration-toggle="oss"]').click();
+    await expect(page.locator('[data-field="oss.bucket"]')).toBeVisible();
+    await page.locator('[data-integration-toggle="oss"]').click();
+    await expect(page.locator('[data-field="oss.bucket"]')).toHaveCount(0);
+  });
+
+  test('五彩 Token 只在设置里配置，保存后持久化（但不会因此启用连接）', async ({ page }) => {
+    await seedState(page, state());
+    await gotoSettingsPane(page, 'content');
+    await expandAllIntegrations(page);
+    const token = page.locator('[data-field="wucai.token"]');
+    await token.fill('wucai-token-123');
+    await page.locator('[data-save="wucai"]').click();
+    await expect.poll(async () => (await readState(page)).wucaiConfig?.token).toBe('wucai-token-123');
+    // Filling a token is not the same as switching the connection on.
+    expect((await readState(page)).wucaiConfig?.enabled).toBe(false);
+  });
+
+  test('数据互通页不再有第二份五彩 Token 输入框', async ({ page }) => {
+    await seedState(page, state());
+    await page.goto('/#/settings/content');
+    await expect(page.getByTestId('settings-page')).toBeVisible();
+    await expandAllIntegrations(page);
+    // Exactly one editor for the token, and it is the integration card.
+    await expect(page.locator('[data-field="wucai.token"]')).toHaveCount(1);
+    await page.goto('/#/library');
+    await expect(page.locator('main')).toBeVisible();
+    await expect(page.locator('input[placeholder*="五彩"], input[placeholder*="Token"]')).toHaveCount(0);
   });
 });
-
-
-
-

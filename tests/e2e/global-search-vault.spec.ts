@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState } from './helpers';
+import { seedState, baseState, gotoTab } from './helpers';
 
 /**
  * Wiring the full-text index into the highest-traffic entry point (Ctrl+K),
@@ -7,7 +7,7 @@ import { seedState, baseState } from './helpers';
  */
 
 const ENDPOINT = 'oss-cn-beijing.aliyuncs.com';
-const BUCKET = 'uiuecho-obsidian';
+const BUCKET = 'example-obsidian-vault';
 
 const DOCS: Record<string, string> = {
   'vault/alpha.md': '# Alpha\n\n这里记录了 Redis 缓存的使用方式。\n',
@@ -71,7 +71,7 @@ function state() {
       bucket: BUCKET,
       endpoint: ENDPOINT,
       region: 'oss-cn-beijing',
-      accessKeyId: 'LTAI5t8JAm7fyYaDsK5ECJer',
+      accessKeyId: 'LTAI5tEXAMPLE000000000',
       accessKeySecret: 'test-secret',
       prefix: 'vault/'
     }
@@ -80,7 +80,7 @@ function state() {
 
 async function boot(page: any) {
   await page.goto('/');
-  await page.locator('nav button', { hasText: '多平台数据互通' }).click();
+  await gotoTab(page, '多平台数据互通');
   await expect(page.locator('main')).toContainText('对象 2');
 }
 
@@ -104,8 +104,11 @@ test.describe('全局搜索接入全文索引', () => {
     await page.keyboard.type('Redis');
     await page.waitForTimeout(600);
 
-    // The vault hit is grouped as "正文·…".
-    await expect(page.getByText(/正文·vault/)).toBeVisible();
+    // The vault hit is grouped under 远端全文 and its badge names the folder. (The
+    // dialog was rebuilt on top of `searchEverything`, so the old "正文·vault" badge
+    // no longer exists — the group header carries that information now.)
+    await expect(page.locator('[data-search-group="vault"]')).toBeVisible();
+    await expect(page.locator('[data-search-group="vault"]')).toContainText('远端全文');
     await expect(page.getByText(/记录了 Redis 缓存/)).toBeVisible();
 
     await page.keyboard.press('Enter');
@@ -145,7 +148,7 @@ test.describe('索引自动增量更新', () => {
 
     // A new note appears in the bucket.
     extraDocEnabled = true;
-    await page.locator('button[title*="从 OSS 刷新"]').click();
+    await page.locator('[data-testid="oss-refresh"]').click();
 
     await expect(page.locator('main')).toContainText('对象 3', { timeout: 20_000 });
     // No manual "更新索引" click: the refresh updates it incrementally.

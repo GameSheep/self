@@ -1,16 +1,24 @@
 /**
  * Reminder delivery, extracted from App.
  *
- * Two paths exist and they must not fight:
+ * Three paths exist and they must not fight:
  * - inside the extension, the background service worker owns notifications
- *   (it can fire with no tab open), so the page must stay silent;
- * - in a plain browser tab, the page notifies while it is open.
+ *   (it can fire while the browser runs, with notification permission), so the
+ *   extension page itself must stay silent;
+ * - in a plain browser tab, the page notifies **while the page is open**;
+ * - when the permission is not granted, neither path notifies — the reminders
+ *   page keeps the in-page list and offers an explicit "开启到期提醒" action
+ *   instead of requesting the permission on first visit.
  *
- * Both the publishing and the in-page loop used to live inline in App.
+ * Nothing here can remind while the browser is closed; the reminder page says so.
+ *
+ * Deduplication lives in `reminderNotifier` and is keyed by
+ * reminderId + occurrence due date + stage, so a re-render or a repeated effect
+ * cannot fire the same notification twice.
  */
 import { useEffect, useRef } from 'react';
 import { ReminderItem } from '../types';
-import { notifyDueReminders } from '../lib/reminderNotifier';
+import { notificationsSupported, notifyDueReminders } from '../lib/reminderNotifier';
 import { isExtensionContext, publishRemindersToExtension } from '../lib/extensionBridge';
 
 const TICK_MS = 60_000;
@@ -26,9 +34,11 @@ export function useReminderNotifications(reminders: ReminderItem[] | undefined) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [list]);
 
-  // In-page fallback for the non-extension build.
+  // In-page delivery for the non-extension build. Runs on mount and whenever the
+  // list changes (e.g. a reminder is created or renewed while the page is open),
+  // and then keeps ticking so a tab left open all day still reminds.
   useEffect(() => {
-    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (typeof window === 'undefined' || !notificationsSupported()) return;
     if (isExtensionContext()) return; // the worker owns notifications here
 
     const tick = () => {
@@ -39,8 +49,9 @@ export function useReminderNotifications(reminders: ReminderItem[] | undefined) 
         console.warn('[Self-Hub] reminder notification failed', err);
       }
     };
+
     tick();
     const timer = setInterval(tick, TICK_MS);
     return () => clearInterval(timer);
-  }, []);
+  }, [list]);
 }

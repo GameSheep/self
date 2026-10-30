@@ -106,7 +106,7 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
     >
       <div 
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-[#121316] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden"
+        className="w-full max-w-md bg-sh-surface border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-2"
       >
         
         {/* Header */}
@@ -124,8 +124,8 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white">
-            <X className="w-4 h-4" />
+          <button onClick={onClose} aria-label="关闭" className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white">
+            <X className="w-4 h-4" aria-hidden />
           </button>
         </div>
 

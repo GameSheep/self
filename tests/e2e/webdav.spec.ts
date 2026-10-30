@@ -1,27 +1,34 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState, readState } from './helpers';
+import { gotoSettingsPane, openSettings, seedState, baseState, readState, expandAllIntegrations } from './helpers';
 
 /**
- * WebDAV connection diagnostics.
+ * WebDAV: the second backup destination (P1-09).
  *
- * Real WebDAV servers (InfiniCLOUD/TeraCloud) return 401 for both wrong passwords
- * and "app connection disabled", and send no CORS headers at all. The UI must
- * report the concrete reason rather than a generic failure.
+ * The regression this guards: with only WebDAV configured the *automatic* backup used to never
+ * fire, because the trigger looked at the OSS fields only. Manual and automatic now share one
+ * resolver, and the tests below drive both paths.
  */
 
+/** `state()` takes whole-state overrides here (webdavConfig, obsidianConfig, …). */
 function state(overrides: Record<string, unknown> = {}) {
   return baseState(overrides);
 }
 
-async function openBackupTab(page: any) {
-  await page.locator('aside button[title*="系统设置"]').click();
-  await expect(page.getByText('系统与服务集成设置')).toBeVisible();
-  await page.locator('[data-settings-nav="storage"]').click();
+async function openWebdavCard(page: any) {
+  await gotoSettingsPane(page, 'connections');
+  await expandAllIntegrations(page);
   await expect(page.locator('[data-integration="webdav"]')).toBeVisible();
 }
 
+/** 「立即备份」按钮仍在「数据与备份」分区。 */
+async function openBackupTab(page: any) {
+  await openSettings(page);
+  await gotoSettingsPane(page, 'storage');
+  await expect(page.getByTestId('backup-now')).toBeVisible();
+}
+
 async function mockWebdav(page: any, handler: (method: string, url: string) => { status: number; headers?: Record<string, string> }) {
-  await page.route('**/*teracloud.jp/**', async (route) => {
+  await page.route('**/*your-host.example.com/**', async (route) => {
     const req = route.request();
     const result = handler(req.method(), req.url());
     await route.fulfill({
@@ -45,10 +52,10 @@ test.describe('WebDAV 连接测试', () => {
     await mockWebdav(page, () => ({ status: 207, headers: { DAV: '1,2' } }));
     await seedState(page, state());
     await page.goto('/');
-    await openBackupTab(page);
+    await openWebdavCard(page);
 
-    await page.locator('[data-field="webdav.url"]').fill('https://toi.teracloud.jp/dav/');
-    await page.locator('[data-field="webdav.username"]').fill('gamesheep8246');
+    await page.locator('[data-field="webdav.url"]').fill('https://your-host.example.com/dav/');
+    await page.locator('[data-field="webdav.username"]').fill('example-user');
     await page.locator('[data-field="webdav.password"]').fill('app-password');
     await page.locator('[data-testid="webdav-test"]').click();
 
@@ -62,10 +69,10 @@ test.describe('WebDAV 连接测试', () => {
     await mockWebdav(page, () => ({ status: 401 }));
     await seedState(page, state());
     await page.goto('/');
-    await openBackupTab(page);
+    await openWebdavCard(page);
 
-    await page.locator('[data-field="webdav.url"]').fill('https://toi.teracloud.jp/dav/');
-    await page.locator('[data-field="webdav.username"]').fill('gamesheep8246');
+    await page.locator('[data-field="webdav.url"]').fill('https://your-host.example.com/dav/');
+    await page.locator('[data-field="webdav.username"]').fill('example-user');
     await page.locator('[data-field="webdav.password"]').fill('wrong');
     await page.locator('[data-testid="webdav-test"]').click();
 
@@ -76,12 +83,12 @@ test.describe('WebDAV 连接测试', () => {
   });
 
   test('网络层失败时提示可能是 CORS/扩展环境问题', async ({ page }) => {
-    await page.route('**/*teracloud.jp/**', (route) => route.abort('failed'));
+    await page.route('**/*your-host.example.com/**', (route) => route.abort('failed'));
     await seedState(page, state());
     await page.goto('/');
-    await openBackupTab(page);
+    await openWebdavCard(page);
 
-    await page.locator('[data-field="webdav.url"]').fill('https://toi.teracloud.jp/dav/');
+    await page.locator('[data-field="webdav.url"]').fill('https://your-host.example.com/dav/');
     await page.locator('[data-field="webdav.username"]').fill('u');
     await page.locator('[data-field="webdav.password"]').fill('p');
     await page.locator('[data-testid="webdav-test"]').click();
@@ -94,16 +101,18 @@ test.describe('WebDAV 连接测试', () => {
 
   test('缺少字段时直接提示，不发请求', async ({ page }) => {
     let calls = 0;
-    await page.route('**/*teracloud.jp/**', (route) => {
+    await page.route('**/*your-host.example.com/**', (route) => {
       calls++;
       return route.fulfill({ status: 207, body: '' });
     });
     await seedState(page, state());
     await page.goto('/');
-    await openBackupTab(page);
+    await openWebdavCard(page);
 
     await page.locator('[data-testid="webdav-test"]').click();
-    await expect(page.getByTestId('webdav-test-result')).toContainText('请填写');
+    // 改版后的措辞是「无法检测：请先填写 …」——业务契约不变：字段不全就直接说明，不发请求。
+    await expect(page.getByTestId('webdav-test-result')).toContainText('无法检测');
+    await expect(page.getByTestId('webdav-test-result')).toContainText('请先填写');
     expect(calls).toBe(0);
   });
 
@@ -111,22 +120,31 @@ test.describe('WebDAV 连接测试', () => {
     await mockWebdav(page, () => ({ status: 207, headers: { DAV: '1' } }));
     await seedState(page, state());
     await page.goto('/');
-    await openBackupTab(page);
+    await openWebdavCard(page);
 
-    await page.locator('[data-field="webdav.url"]').fill('https://toi.teracloud.jp/dav/');
-    await page.locator('[data-field="webdav.username"]').fill('gamesheep8246');
+    await page.locator('[data-field="webdav.url"]').fill('https://your-host.example.com/dav/');
+    await page.locator('[data-field="webdav.username"]').fill('example-user');
     await page.locator('[data-field="webdav.password"]').fill('app-password');
     await page.locator('[data-field="webdav.pathPrefix"]').fill('selfhub_sync');
+
+    // P1-08 契约变更：填写字段既不会落盘、也不会自动启用连接，必须先打开
+    // 「启用这个连接」再点「保存连接」。
+    const beforeSave: any = await readState(page);
+    expect(beforeSave?.webdavConfig?.url ?? '').not.toBe('https://your-host.example.com/dav/');
+
+    await page.locator('[data-field="webdav.enabled"]').click();
+    await expect(page.locator('[data-field="webdav.enabled"]')).toHaveAttribute('data-enabled', 'true');
     await page.locator('[data-save="webdav"]').click();
 
     await expect.poll(async () => {
       const s: any = await readState(page);
       return s?.webdavConfig?.url;
-    }).toBe('https://toi.teracloud.jp/dav/');
+    }).toBe('https://your-host.example.com/dav/');
 
     const saved: any = await readState(page);
+    // enabled 只反映用户显式打开的开关，不再由「字段填满」推导。
     expect(saved.webdavConfig.enabled).toBe(true);
-    expect(saved.webdavConfig.username).toBe('gamesheep8246');
+    expect(saved.webdavConfig.username).toBe('example-user');
     expect(saved.webdavConfig.pathPrefix).toBe('selfhub_sync');
   });
 
@@ -134,11 +152,11 @@ test.describe('WebDAV 连接测试', () => {
     await mockWebdav(page, () => ({ status: 207 }));
     await seedState(page, state());
     await page.goto('/');
-    await openBackupTab(page);
+    await openWebdavCard(page);
 
-    await page.locator('[data-field="webdav.url"]').fill('https://toi.teracloud.jp/dav/');
+    await page.locator('[data-field="webdav.url"]').fill('https://your-host.example.com/dav/');
     await page.locator('[data-field="webdav.pathPrefix"]').fill('selfhub_sync');
-    await expect(page.locator('[data-integration="webdav"]')).toContainText('https://toi.teracloud.jp/dav/selfhub_sync/state.json');
+    await expect(page.locator('[data-integration="webdav"]')).toContainText('https://your-host.example.com/dav/selfhub_sync/state.json');
   });
 
   test('启用 WebDAV 后「立即备份」会 PUT 到 WebDAV 而不是 OSS', async ({ page }) => {
@@ -146,7 +164,7 @@ test.describe('WebDAV 连接测试', () => {
     let stored = '';
     await page.route('**/*', async (route) => {
       const req = route.request();
-      if (!req.url().includes('infini-cloud.net')) return route.continue();
+      if (!req.url().includes('your-host.example.com')) return route.continue();
       if (req.method() === 'PUT') {
         puts.push(decodeURIComponent(req.url()));
         stored = req.postData() || '';
@@ -167,8 +185,8 @@ test.describe('WebDAV 连接测试', () => {
       state({
         webdavConfig: {
           enabled: true,
-          url: 'https://kurio.infini-cloud.net/dav/',
-          username: 'gamesheep8246',
+          url: 'https://your-host.example.com/dav/',
+          username: 'example-user',
           password: 'app-pass',
           pathPrefix: 'selfhub_sync'
         }
@@ -193,7 +211,7 @@ test.describe('WebDAV 连接测试', () => {
 
     await page.route('**/*', async (route) => {
       const req = route.request();
-      if (!req.url().includes('infini-cloud.net')) return route.continue();
+      if (!req.url().includes('your-host.example.com')) return route.continue();
       if (req.method() === 'GET') {
         return route.fulfill({
           status: 200,
@@ -213,7 +231,7 @@ test.describe('WebDAV 连接测试', () => {
       state({
         webdavConfig: {
           enabled: true,
-          url: 'https://kurio.infini-cloud.net/dav/',
+          url: 'https://your-host.example.com/dav/',
           username: 'u',
           password: 'p',
           pathPrefix: 'selfhub_sync'
@@ -235,6 +253,3 @@ test.describe('WebDAV 连接测试', () => {
     expect(puts.some((u) => u.endsWith('/selfhub_sync/state.json'))).toBe(false);
   });
 });
-
-
-

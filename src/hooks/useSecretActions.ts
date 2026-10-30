@@ -1,14 +1,20 @@
 /**
- * Vault (secret) actions and the check-in automation actions.
+ * Vault (secret) actions and the check-in list actions.
  *
- * Both were inline in App. Secrets keep their AES-encrypted payload untouched —
- * this hook only manages the list.
+ * Check-ins were deliberately demoted from "automation" to a plain list of sites
+ * the user wants to visit daily: the app opens the page and records what *it*
+ * observed (a page opened / the user said "done"), and never fires HTTP requests
+ * on the user's behalf. The old HTTP-request path, the bulk runner and the
+ * `enabled` toggle were removed with it (the fields stay in the type so old
+ * data keeps loading).
  */
 import { useCallback, useRef } from 'react';
 import { CheckInTask, HubState, SecretItem } from '../types';
-import { executeCheckIn } from '../lib/automation';
 import { recordRun } from '../lib/checkInHistory';
 import type { StateUpdater } from './useSiteActions';
+
+/** How a check-in entry was acted on: open the site, or the user marked it done. */
+export type CheckInMode = 'open_page' | 'mark_done';
 
 export function useSecretActions(updateState: StateUpdater) {
   const addSecret = useCallback(
@@ -34,7 +40,9 @@ export function useCheckInActions(state: HubState, updateState: StateUpdater) {
 
   const addCheckIn = useCallback(
     (task: CheckInTask) => {
-      updateState((prev) => ({ ...prev, checkIns: [task, ...prev.checkIns] }));
+      // Automatic execution defaults to off and creating a task never turns it on.
+      const normalised: CheckInTask = { ...task, enabled: task.enabled === true };
+      updateState((prev) => ({ ...prev, checkIns: [normalised, ...prev.checkIns] }));
     },
     [updateState]
   );
@@ -46,34 +54,65 @@ export function useCheckInActions(state: HubState, updateState: StateUpdater) {
     [updateState]
   );
 
-  /** Run one task; history is per local day so repeats cannot inflate the streak. */
+  /**
+   * Open the site, or record the user's "done" confirmation.
+   *
+   * `open_page` opens a new tab and records `opened_page` — the app cannot know
+   * whether the site counted anything, so it stays out of the streak.
+   * `mark_done` records the user's own confirmation as a success day: the human
+   * is the verifier now, and the message says so.
+   * History is per local day, so repeats cannot inflate the streak.
+   */
   const runCheckIn = useCallback(
-    async (id: string) => {
+    async (id: string, mode: CheckInMode = 'open_page') => {
       const task = stateRef.current.checkIns.find((c) => c.id === id);
       if (!task) return;
-      const result = await executeCheckIn(task);
+
+      if (mode === 'mark_done') {
+        updateState((prev) => ({
+          ...prev,
+          checkIns: prev.checkIns.map((c) =>
+            c.id === id
+              ? recordRun(c, {
+                  success: true,
+                  // The user is the verifier now: their confirmation is what makes
+                  // this a done day, so it counts for the streak.
+                  verified: true,
+                  outcome: 'http_success',
+                  message: '你手动标记为已签到（以你的确认为准，应用未校验网站结果）'
+                })
+              : c
+          )
+        }));
+        return;
+      }
+
+      let opened = false;
+      try {
+        const target = new URL(task.url);
+        window.open(target.toString(), '_blank', 'noopener,noreferrer');
+        opened = true;
+      } catch {
+        opened = false;
+      }
       updateState((prev) => ({
         ...prev,
-        checkIns: prev.checkIns.map((c) => (c.id === id ? recordRun(c, result) : c))
+        checkIns: prev.checkIns.map((c) =>
+          c.id === id
+            ? recordRun(c, {
+                success: false,
+                verified: false,
+                outcome: 'opened_page',
+                message: opened
+                  ? '已打开签到页面，签完可点「标记今天已签」'
+                  : `打开页面失败：URL 无效（${task.url}）`
+              })
+            : c
+        )
       }));
     },
     [updateState]
   );
 
-  const runAllCheckIns = useCallback(async () => {
-    const tasks = stateRef.current.checkIns;
-    if (tasks.length === 0) return;
-    const results = await Promise.all(
-      tasks.map(async (task) => ({ id: task.id, result: await executeCheckIn(task) }))
-    );
-    updateState((prev) => ({
-      ...prev,
-      checkIns: prev.checkIns.map((c) => {
-        const hit = results.find((r) => r.id === c.id);
-        return hit ? recordRun(c, hit.result) : c;
-      })
-    }));
-  }, [updateState]);
-
-  return { addCheckIn, deleteCheckIn, runCheckIn, runAllCheckIns };
+  return { addCheckIn, deleteCheckIn, runCheckIn };
 }

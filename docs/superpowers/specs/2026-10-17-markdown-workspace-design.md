@@ -76,7 +76,7 @@ src/components/OssTree.tsx  目录树（可折叠、分页、搜索，含内容�
 
 ## 6. 性能
 
-实测环境：真实 Bucket `uiuecho-obsidian` 中 338KB / 11.5 万字符的笔记（`WuCai/那些写小说产量很高的作者…`）。
+实测环境：真实 Bucket `example-obsidian-vault` 中 338KB / 11.5 万字符的笔记（`WuCai/那些写小说产量很高的作者…`）。
 
 | 指标 | 数值 |
 | --- | --- |
@@ -710,7 +710,7 @@ App 从 969 行降到 907 行，关键收益不是行数，而是**备份与提�
 ```
 section: 当前状态 已开启（WEBDAV）
          写入目录 self/
-         目标 https://kurio.infini-cloud.net/dav/
+         目标 https://your-host.example.com/dav/
          上次同步 2026/10/17 19:55:18
 overlap_warning: true
 
@@ -981,7 +981,7 @@ failures_after_index:   0
 
 不误伤：
   ThisIsAnOrdinarySentenceWithoutDigitsThatShouldSurvive  → 原样发送 ✅
-  https://kurio.infini-cloud.net/dav/selfhub_sync/state.json → 原样发送 ✅
+  https://your-host.example.com/dav/selfhub_sync/state.json → 原样发送 ✅
   gemini-2.5-flash → 原样发送 ✅   且不出现遮蔽报告 ✅
 ```
 

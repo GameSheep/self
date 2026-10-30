@@ -1,29 +1,36 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Clock, 
-  Plus, 
-  ExternalLink, 
-  Trash2, 
-  Calendar, 
-  AlertTriangle, 
-  CreditCard, 
-  Server, 
-  Globe, 
-  ShieldAlert, 
-  CheckCircle2, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Clock,
+  Plus,
+  ExternalLink,
+  Trash2,
+  Calendar,
+  AlertTriangle,
+  CreditCard,
+  Server,
+  Globe,
+  ShieldAlert,
+  CheckCircle2,
   DollarSign,
-  Flame,
-  ArrowRight,
   Edit3,
   RefreshCw,
-  X,
   Check,
-  RotateCcw
+  Bell
 } from 'lucide-react';
-import { ReminderItem } from '../../types';
-import { daysUntil, parseDateInputValue, toDateInputValue, advanceRecurringDate, nextRenewal } from '../../lib/dates';
-import { requestNotificationPermission } from '../../lib/reminderNotifier';
-import { Bell } from 'lucide-react';
+import { ReminderItem, ReminderOccurrence } from '../../types';
+import {
+  daysUntil,
+  parseDateInputValue,
+  toDateInputValue,
+  adjacentRenewal,
+  anchorFromDate,
+  resolveAnchor,
+  addOneCycle
+} from '../../lib/dates';
+import { notificationPermission, requestNotificationPermission, notificationsSupported } from '../../lib/reminderNotifier';
+import { isExtensionContext } from '../../lib/extensionBridge';
+import { renewReminderOccurrence } from '../../hooks/useReminderActions';
+import { Button, EmptyState, StatusPill, inputClass } from '../../shared/ui';
 
 interface RemindersViewProps {
   reminders: ReminderItem[];
@@ -31,6 +38,57 @@ interface RemindersViewProps {
   onUpdateReminder?: (reminder: ReminderItem) => void;
   onDeleteReminder: (id: string) => void;
   onToggleComplete?: (id: string) => void;
+  /** 续期. Optional so the old call shape keeps working. */
+  onRenewReminder?: (id: string) => void;
+}
+
+type Category = ReminderItem['category'];
+type Recurring = NonNullable<ReminderItem['recurring']>;
+
+const CATEGORY_LABEL: Record<Category, string> = {
+  subscription: 'Plus/软件订阅',
+  server: 'VPS/服务器',
+  domain: '域名到期',
+  cert: 'Token/证书',
+  other: '其他时效'
+};
+
+/** Human-readable recurrence rule, including *why* the next date is what it is. */
+export function describeRecurrence(reminder: ReminderItem): string {
+  const anchor = resolveAnchor(reminder.anchorDay, reminder.anchorMonth, reminder.targetDate, reminder.recurring);
+  switch (reminder.recurring) {
+    case 'monthly':
+      return Number.isFinite(anchor.day) ? `每月 · 锚定 ${anchor.day} 日` : '每月';
+    case 'yearly':
+      return Number.isFinite(anchor.day)
+        ? `每年 · 锚定 ${(anchor.month ?? new Date(reminder.targetDate).getMonth()) + 1} 月 ${anchor.day} 日`
+        : '每年';
+    case 'weekly':
+      return '每周';
+    default:
+      return '一次性';
+  }
+}
+
+/** One-line explanation of the clamping rule when the anchor is a month-end day. */
+export function recurrenceHint(reminder: ReminderItem): string | null {
+  const anchor = resolveAnchor(reminder.anchorDay, reminder.anchorMonth, reminder.targetDate, reminder.recurring);
+  if (!Number.isFinite(anchor.day)) return null;
+  const due = new Date(reminder.targetDate);
+  const dueDay = due.getDate();
+  if (reminder.recurring === 'monthly' && anchor.day > 28 && dueDay !== anchor.day) {
+    return `${anchor.day} 日在短月会顺延到当月最后一天，之后仍回到 ${anchor.day} 日`;
+  }
+  if (reminder.recurring === 'yearly' && anchor.day === 29 && (anchor.month ?? due.getMonth()) === 1) {
+    return dueDay === 29 ? '2 月 29 日：非闰年顺延到 2 月 28 日，闰年回到 2 月 29 日' : '非闰年顺延到 2 月 28 日，闰年回到 2 月 29 日';
+  }
+  return null;
+}
+
+function actionLabel(occurrence: ReminderOccurrence): string {
+  if (occurrence.action === 'renewed') return '已续期';
+  if (occurrence.action === 'skipped') return '已跳过';
+  return '已完成本次';
 }
 
 export const RemindersView: React.FC<RemindersViewProps> = ({
@@ -38,17 +96,18 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
   onAddReminder,
   onUpdateReminder,
   onDeleteReminder,
-  onToggleComplete
+  onToggleComplete,
+  onRenewReminder
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'urgent' | 'subscription' | 'server'>('all');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Form states (Create)
   const [title, setTitle] = useState('');
-  const [category, setCategory] = useState<'subscription' | 'server' | 'domain' | 'cert' | 'other'>('subscription');
+  const [category, setCategory] = useState<Category>('subscription');
   const [targetDateStr, setTargetDateStr] = useState('');
-  const [recurring, setRecurring] = useState<'monthly' | 'yearly' | 'weekly' | 'once'>('monthly');
+  const [recurring, setRecurring] = useState<Recurring>('monthly');
   const [cost, setCost] = useState('');
   const [url, setUrl] = useState('');
   const [notes, setNotes] = useState('');
@@ -57,9 +116,9 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
   // Form states (Edit)
   const [editingReminder, setEditingReminder] = useState<ReminderItem | null>(null);
   const [editTitle, setEditTitle] = useState('');
-  const [editCategory, setEditCategory] = useState<'subscription' | 'server' | 'domain' | 'cert' | 'other'>('subscription');
+  const [editCategory, setEditCategory] = useState<Category>('subscription');
   const [editTargetDateStr, setEditTargetDateStr] = useState('');
-  const [editRecurring, setEditRecurring] = useState<'monthly' | 'yearly' | 'weekly' | 'once'>('monthly');
+  const [editRecurring, setEditRecurring] = useState<Recurring>('monthly');
   const [editCost, setEditCost] = useState('');
   const [editUrl, setEditUrl] = useState('');
   const [editNotes, setEditNotes] = useState('');
@@ -67,41 +126,57 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMessage(null), 3200);
   };
+
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
 
   const now = Date.now();
 
-  const getDaysLeft = (targetDate: number) => daysUntil(targetDate, now);
-
-  // Auto-catchup on mount: advance expired items that have autoRollover === true.
-  // Bounded by advanceRecurringDate(), which returns null for unknown recurrences —
-  // the previous unbounded `while` froze the whole tab on imported bad data.
+  // Auto-catchup on mount: advance expired items whose owner asked for
+  // autoRollover. Uses the *anchor*, so 1 月 31 日 catches up to 3 月 31 日 even if
+  // the previous cycle was clamped to 2 月 28 日. No occurrence is invented: the
+  // user did not renew it, the series simply moved on.
+  const rolledOverRef = useRef(false);
   useEffect(() => {
-    if (!onUpdateReminder) return;
+    if (rolledOverRef.current || !onUpdateReminder) return;
+    rolledOverRef.current = true;
     const nowTs = Date.now();
     reminders.forEach((r) => {
       if (!r.autoRollover || !r.recurring || r.recurring === 'once') return;
       const base = Number(r.targetDate);
       if (!Number.isFinite(base) || base >= nowTs) return;
-      const next = advanceRecurringDate(base, r.recurring, nowTs);
-      if (next && next.getTime() !== base) {
-        onUpdateReminder({ ...r, targetDate: next.getTime() });
+      const anchor = resolveAnchor(r.anchorDay, r.anchorMonth, base, r.recurring);
+      const options = r.recurring === 'yearly' ? { anchorDay: anchor.day, anchorMonth: anchor.month } : { anchorDay: anchor.day };
+      // Largest occurrence still <= now, then strictly one cycle further.
+      let cursor = base;
+      let steps = 0;
+      while (steps < 1200) {
+        const candidate = addOneCycle(cursor, r.recurring, options);
+        if (!Number.isFinite(candidate) || candidate <= cursor) break;
+        cursor = candidate;
+        steps++;
+        if (cursor > nowTs) break;
       }
+      if (cursor <= base) return;
+      onUpdateReminder({ ...r, targetDate: cursor, anchorDay: anchor.day, ...(r.recurring === 'yearly' ? { anchorMonth: anchor.month } : {}) });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const sortedReminders = [...reminders].sort((a, b) => a.targetDate - b.targetDate);
+  const daysLeftOf = (targetDate: number) => daysUntil(targetDate, now);
 
-  const urgentCount = sortedReminders.filter(r => getDaysLeft(r.targetDate) <= 7 && !r.completed).length;
-
-  const filteredReminders = sortedReminders.filter(r => {
-    if (filter === 'urgent') return getDaysLeft(r.targetDate) <= 7 && !r.completed;
-    if (filter === 'subscription') return r.category === 'subscription';
-    if (filter === 'server') return r.category === 'server';
-    return true;
-  });
+  // 逾期 / 7 天内 / 之后 — computed before any filter so the three groups always
+  // render with their own counts (the old view hid "upcoming" behind "urgent").
+  const sorted = [...reminders].sort((a, b) => a.targetDate - b.targetDate);
+  const overdue = sorted.filter((r) => !r.completed && daysLeftOf(r.targetDate) < 0);
+  const within7 = sorted.filter((r) => !r.completed && daysLeftOf(r.targetDate) >= 0 && daysLeftOf(r.targetDate) <= 7);
+  const later = sorted.filter((r) => !r.completed && daysLeftOf(r.targetDate) > 7);
+  const done = sorted.filter((r) => r.completed);
+  const urgentCount = overdue.length + within7.length;
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,6 +185,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     const targetTimestamp = parseDateInputValue(targetDateStr);
     if (isNaN(targetTimestamp)) return;
 
+    const anchor = anchorFromDate(targetTimestamp, recurring);
     onAddReminder({
       id: `rem-${Date.now()}`,
       title,
@@ -121,7 +197,12 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
       notes,
       autoRollover,
       completed: false,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      ...(anchor
+        ? recurring === 'yearly'
+          ? { anchorDay: anchor.day, anchorMonth: anchor.month }
+          : { anchorDay: anchor.day }
+        : {})
     });
 
     setIsModalOpen(false);
@@ -153,6 +234,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     const targetTimestamp = parseDateInputValue(editTargetDateStr);
     if (isNaN(targetTimestamp)) return;
 
+    const anchor = anchorFromDate(targetTimestamp, editRecurring);
     const updated: ReminderItem = {
       ...editingReminder,
       title: editTitle.trim(),
@@ -162,7 +244,12 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
       cost: editCost.trim(),
       url: editUrl.trim(),
       notes: editNotes.trim(),
-      autoRollover: editAutoRollover
+      autoRollover: editAutoRollover,
+      ...(anchor
+        ? editRecurring === 'yearly'
+          ? { anchorDay: anchor.day, anchorMonth: anchor.month }
+          : { anchorDay: anchor.day }
+        : {})
     };
 
     if (onUpdateReminder) {
@@ -172,307 +259,304 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     setEditingReminder(null);
   };
 
-  const handleAdvanceCycle = (item: ReminderItem) => {
-    if (!item.recurring || item.recurring === 'once') {
-      // A one-off item has no next cycle: mark it done instead of inventing +30 days.
-      if (onToggleComplete) onToggleComplete(item.id);
-      showToast(`✅【${item.title}】是一次性事项，已标记完成`);
+  /** 完成本次 — records this occurrence; deliberately does not move the date. */
+  const handleComplete = (item: ReminderItem) => {
+    const alreadyDone = (item.occurrences || []).some((o) => o.action === 'completed' && o.dueAt === item.targetDate);
+    if (onToggleComplete) onToggleComplete(item.id);
+    if (item.completed) {
+      showToast(`↩️【${item.title}】已取消完成标记，本次到期仍在列表中`);
+    } else if (alreadyDone) {
+      showToast(`【${item.title}】本次已完成过，重复点击不会移动到期日`);
+    } else {
+      showToast(`✅【${item.title}】已完成本次（到期日保持不变）`);
+    }
+  };
+
+  /** 续期 — computes the next due date and records the renewal. */
+  const handleRenew = (item: ReminderItem) => {
+    const recurring = item.recurring;
+    if (!recurring || recurring === 'once') {
+      if (onToggleComplete && !item.completed) onToggleComplete(item.id);
+      showToast(`✅【${item.title}】是一次性事项，已标记完成（没有下一期）`);
       return;
     }
 
-    const nextTs = nextRenewal(item.targetDate, item.recurring);
-    if (nextTs === null || nextTs === item.targetDate) {
-      showToast(`⚠️【${item.title}】的周期设置无效，无法自动顺延`);
+    const anchor = resolveAnchor(item.anchorDay, item.anchorMonth, item.targetDate, recurring);
+    const options = recurring === 'yearly' ? { anchorDay: anchor.day, anchorMonth: anchor.month } : { anchorDay: anchor.day };
+    // Exactly the next period, so the toast states the date the user just asked for.
+    const nextTs = adjacentRenewal(item.targetDate, recurring, options);
+    if (nextTs === null) {
+      showToast(`⚠️【${item.title}】的周期设置无效，无法计算下一期`);
       return;
     }
 
-    const updated: ReminderItem = {
-      ...item,
-      targetDate: nextTs,
-      completed: false
-    };
+    const alreadyRenewed = (item.occurrences || []).some((o) => o.action === 'renewed' && o.dueAt === item.targetDate);
+    if (onRenewReminder) {
+      onRenewReminder(item.id);
+    } else if (onUpdateReminder) {
+      // Fallback for callers that only wire updateReminder: same idempotent shape.
+      const renewed = renewReminderOccurrence(item);
+      onUpdateReminder(renewed.renewed ? renewed.reminder : { ...item, targetDate: renewed.nextDueAt, completed: false });
+    }
 
-    if (onUpdateReminder) {
-      onUpdateReminder(updated);
-      showToast(`🎉 已将【${item.title}】顺延至下个周期：${new Date(nextTs).toLocaleDateString()}`);
+    if (alreadyRenewed) {
+      showToast(`【${item.title}】本次已续期过，到期日未再次顺延`);
+    } else {
+      showToast(`🎉 已续期到 ${new Date(nextTs).toLocaleDateString()}（到期日已更新）`);
     }
   };
 
   const getCategoryIcon = (cat: string) => {
     switch (cat) {
-      case 'subscription': return <CreditCard className="w-4 h-4 text-sky-400" />;
-      case 'server': return <Server className="w-4 h-4 text-emerald-400" />;
-      case 'domain': return <Globe className="w-4 h-4 text-indigo-400" />;
-      case 'cert': return <ShieldAlert className="w-4 h-4 text-amber-400" />;
-      default: return <Clock className="w-4 h-4 text-zinc-400" />;
+      case 'subscription': return <CreditCard className="w-4 h-4 text-sh-info" />;
+      case 'server': return <Server className="w-4 h-4 text-sh-ok" />;
+      case 'domain': return <Globe className="w-4 h-4 text-sh-info" />;
+      case 'cert': return <ShieldAlert className="w-4 h-4 text-sh-warn" />;
+      default: return <Clock className="w-4 h-4 text-sh-muted" />;
     }
   };
 
+  const renderCard = (item: ReminderItem) => {
+    const daysLeft = daysLeftOf(item.targetDate);
+    const isUrgent = daysLeft <= 7 && !item.completed;
+    const hint = recurrenceHint(item);
+    const occurrences = (item.occurrences || []).slice(0, 3);
+
+    return (
+      <div
+        key={item.id}
+        data-testid={`reminder-card-${item.id}`}
+        data-group={item.completed ? 'done' : daysLeft < 0 ? 'overdue' : daysLeft <= 7 ? 'within7' : 'later'}
+        className={`p-4 rounded-xl bg-sh-surface border transition-all flex flex-col justify-between sh-tap ${
+          isUrgent ? 'border-sh-danger/60' : 'border-sh-line hover:border-sh-line-strong'
+        }`}
+      >
+        <div>
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <div className="w-8 h-8 rounded-lg bg-sh-surface2 border border-sh-line flex items-center justify-center shrink-0">
+                {getCategoryIcon(item.category)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <h3 className="text-xs sm:text-sm font-semibold text-sh-fg truncate">{item.title}</h3>
+                  <StatusPill tone="neutral" label={CATEGORY_LABEL[item.category]} />
+                  {item.autoRollover && <StatusPill tone="info" label="自动顺延" />}
+                </div>
+                <span className="text-[11px] font-mono text-sh-muted flex items-center gap-1 mt-1 flex-wrap">
+                  <span>{describeRecurrence(item)}</span>
+                  {item.cost && (
+                    <span className="flex items-center gap-0.5">
+                      <DollarSign className="w-3 h-3 text-sh-ok" />
+                      {item.cost}
+                    </span>
+                  )}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => handleOpenEdit(item)}
+                className="p-1 rounded hover:bg-sh-surface2 text-sh-muted hover:text-sh-fg transition-colors"
+                title="编辑修改提醒"
+                aria-label={`编辑提醒 ${item.title}`}
+              >
+                <Edit3 className="w-3.5 h-3.5" aria-hidden />
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm(`确定删除提醒 ${item.title} 吗？`)) onDeleteReminder(item.id);
+                }}
+                className="p-1 rounded hover:bg-sh-surface2 text-sh-muted hover:text-sh-danger transition-colors"
+                title="删除"
+                aria-label={`删除提醒 ${item.title}`}
+              >
+                <Trash2 className="w-3.5 h-3.5" aria-hidden />
+              </button>
+            </div>
+          </div>
+
+          <div className="my-3 p-3 rounded-xl bg-sh-surface2 border border-sh-line flex items-center justify-between gap-2">
+            <div className="text-[11px] text-sh-muted font-mono flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5" />
+              <span>到期日: {toDateInputValue(item.targetDate)}</span>
+            </div>
+
+            {item.completed ? (
+              <StatusPill tone="ok" label="本次已完成" />
+            ) : daysLeft < 0 ? (
+              <StatusPill tone="danger" label={`已逾期 ${Math.abs(daysLeft)} 天`} />
+            ) : daysLeft === 0 ? (
+              <StatusPill tone="danger" label="今天到期" />
+            ) : isUrgent ? (
+              <StatusPill tone="warn" label={`${daysLeft} 天后到期`} />
+            ) : (
+              <StatusPill tone="neutral" label={`${daysLeft} 天后到期`} />
+            )}
+          </div>
+
+          {hint && <p className="text-[11px] text-sh-subtle leading-relaxed mb-2">{hint}</p>}
+          {item.notes && <p className="text-[11px] text-sh-muted leading-relaxed mb-2 line-clamp-2">{item.notes}</p>}
+
+          {occurrences.length > 0 && (
+            <ul className="mb-2 space-y-0.5" data-testid={`reminder-occurrences-${item.id}`}>
+              {occurrences.map((o) => (
+                <li
+                  key={`${o.at}-${o.dueAt}`}
+                  data-occurrence={o.dueAt}
+                  data-action={o.action}
+                  className="text-[10px] text-sh-subtle font-mono"
+                >
+                  {toDateInputValue(o.dueAt)} · {actionLabel(o)}
+                  {o.action === 'renewed' && o.nextDueAt ? ` → ${toDateInputValue(o.nextDueAt)}` : ''}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="pt-2.5 border-t border-sh-line mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+          <Button
+            size="sm"
+            variant={item.completed ? 'ghost' : 'primary'}
+            data-testid={`reminder-complete-${item.id}`}
+            onClick={() => handleComplete(item)}
+            icon={<CheckCircle2 className="w-3 h-3" />}
+            title="记录本次已处理，到期日保持不变"
+          >
+            {item.completed ? '已完成本次' : '完成本次'}
+          </Button>
+
+          <Button
+            size="sm"
+            variant="secondary"
+            data-testid={`reminder-renew-${item.id}`}
+            onClick={() => handleRenew(item)}
+            icon={<RefreshCw className="w-3 h-3" />}
+            title="标记已续费并把到期日推进到下一期"
+          >
+            续期到下期
+          </Button>
+
+          {item.url && (
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sh-info hover:underline flex items-center gap-1 text-[11px] font-medium ml-auto"
+            >
+              <span>官方控制台</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderGroup = (testId: string, heading: string, count: number, items: ReminderItem[], tone: 'danger' | 'warn' | 'neutral' | 'ok') => (
+    <section data-testid={testId} data-count={count} className="space-y-2.5">
+      <div className="flex items-center gap-2">
+        <h3 className="text-xs font-semibold text-sh-fg">{heading}</h3>
+        <StatusPill tone={tone} label={`${count} 项`} />
+      </div>
+      {items.length === 0 ? (
+        <p className="text-[11px] text-sh-subtle px-1">暂无</p>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">{items.map(renderCard)}</div>
+      )}
+    </section>
+  );
+
   return (
     <div className="space-y-6">
-      {/* Toast Alert */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100 text-xs font-mono shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+        <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-sh-surface border border-sh-line text-sh-fg text-xs font-mono shadow-2xl flex items-center gap-2">
+          <Check className="w-4 h-4 text-sh-ok shrink-0" />
           <span>{toastMessage}</span>
         </div>
       )}
-      
-      {/* Header & Urgent Alerts Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#121316] p-4 sm:p-5 rounded-2xl border border-[#22242a]">
+
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-sh-surface p-4 sm:p-5 rounded-2xl border border-sh-line">
         <div>
           <div className="flex items-center gap-2">
-            <Clock className="w-5 h-5 text-amber-400 shrink-0" />
-            <h2 className="text-sm sm:text-base font-semibold text-zinc-100">
-              倒计时提醒与服务时效管理
-            </h2>
-            {urgentCount > 0 && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-red-950/80 text-red-400 border border-red-800/60 font-semibold animate-pulse">
-                {urgentCount} 项即将到期
-              </span>
-            )}
+            <Clock className="w-5 h-5 text-sh-warn shrink-0" />
+            <h2 className="text-sm sm:text-base font-semibold text-sh-fg">提醒</h2>
+            {urgentCount > 0 && <StatusPill tone="danger" label={`${urgentCount} 项 7 天内到期`} />}
           </div>
-          <p className="text-xs text-zinc-400 mt-1">
-            监控 ChatGPT Plus、VPS 主机、域名与 Token 秘钥到期续费，支持周期自动顺延、修改与一键推进下个周期
+          <p className="text-xs text-sh-muted mt-1">
+            按「逾期 / 7 天内 / 之后」分组。<strong>完成本次</strong>只记录这一次，<strong>续期</strong>才会把到期日推到下一期。
           </p>
         </div>
 
         <button
           onClick={() => setIsModalOpen(true)}
-          className="px-3.5 py-2 rounded-xl bg-zinc-100 text-zinc-900 font-semibold text-xs flex items-center gap-1.5 hover:bg-white shadow-sm shrink-0 self-start sm:self-auto"
+          className="px-3.5 py-2 rounded-xl bg-sh-accent text-sh-accent-fg font-semibold text-xs flex items-center gap-1.5 hover:opacity-90 shadow-sm shrink-0 self-start sm:self-auto sh-tap"
         >
           <Plus className="w-3.5 h-3.5" />
           <span>新建提醒事项</span>
         </button>
       </div>
 
-      {/* Browser notification permission (honest about the page-open limitation) */}
       <NotificationBanner />
 
-      {/* Filter Tabs */}
-      <div className="flex items-center gap-1.5 bg-[#121316] p-1.5 rounded-xl border border-[#22242a] text-xs">
-        <button
-          onClick={() => setFilter('all')}
-          className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
-            filter === 'all' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          全部提醒 ({reminders.length})
-        </button>
-        <button
-          onClick={() => setFilter('urgent')}
-          className={`px-3 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-1.5 ${
-            filter === 'urgent' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
-          <span>7天内紧急 ({urgentCount})</span>
-        </button>
-        <button
-          onClick={() => setFilter('subscription')}
-          className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
-            filter === 'subscription' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          Plus/软件订阅
-        </button>
-        <button
-          onClick={() => setFilter('server')}
-          className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
-            filter === 'server' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          VPS/云服务器
-        </button>
-      </div>
+      {reminders.length === 0 ? (
+        <EmptyState
+          icon={<Clock className="w-5 h-5" />}
+          title="还没有任何提醒"
+          description="先建一条：例如「ChatGPT Plus 每月 31 日续费」，到期前 3 天会在这里提示。"
+          action={
+            <Button variant="primary" size="sm" onClick={() => setIsModalOpen(true)} icon={<Plus className="w-3.5 h-3.5" />}>
+              新建第一条提醒
+            </Button>
+          }
+        />
+      ) : (
+        <div className="space-y-6">
+          {renderGroup('reminder-group-overdue', '逾期', overdue.length, overdue, 'danger')}
+          {renderGroup('reminder-group-within7', '7 天内', within7.length, within7, 'warn')}
+          {renderGroup('reminder-group-later', '之后', later.length, later, 'neutral')}
+          {done.length > 0 && renderGroup('reminder-group-done', '已完成本次（下次到期仍会提醒）', done.length, done, 'ok')}
+        </div>
+      )}
 
-      {/* Reminders Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-        {filteredReminders.map((item) => {
-          const daysLeft = getDaysLeft(item.targetDate);
-          const isUrgent = daysLeft <= 7 && !item.completed;
-          const isExpired = daysLeft < 0;
-
-          return (
-            <div
-              key={item.id}
-              className={`p-4 rounded-xl bg-[#121316] border transition-all flex flex-col justify-between ${
-                isUrgent ? 'border-red-900/60 shadow-red-950/20 shadow-md' : 'border-[#22242a] hover:border-zinc-700'
-              }`}
-            >
-              <div>
-                {/* Header */}
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                    <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
-                      {getCategoryIcon(item.category)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <h3 className="text-xs sm:text-sm font-semibold text-zinc-100 truncate">
-                          {item.title}
-                        </h3>
-                        {item.autoRollover && (
-                          <span className="px-1 py-0.2 rounded text-[9px] font-mono bg-emerald-950/70 text-emerald-400 border border-emerald-800/60 shrink-0">
-                            自动顺延
-                          </span>
-                        )}
-                      </div>
-                      {item.cost && (
-                        <span className="text-[11px] font-mono text-zinc-400 flex items-center gap-0.5 mt-0.5">
-                          <DollarSign className="w-3 h-3 text-emerald-400" />
-                          {item.cost} {item.recurring ? `(${item.recurring === 'monthly' ? '月付' : item.recurring === 'yearly' ? '年付' : item.recurring === 'weekly' ? '周付' : '单次'})` : ''}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={() => handleOpenEdit(item)}
-                      className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
-                      title="编辑修改提醒"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm(`确定删除提醒 ${item.title} 吗？`)) onDeleteReminder(item.id);
-                      }}
-                      className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-red-400 transition-colors"
-                      title="删除"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Countdown Badge Box */}
-                <div className="my-3 p-3 rounded-xl bg-zinc-900/70 border border-zinc-800/80 flex items-center justify-between">
-                  <div className="text-[11px] text-zinc-400 font-mono flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5 text-zinc-400" />
-                    <span>到期日: {new Date(item.targetDate).toLocaleDateString()}</span>
-                  </div>
-
-                  {item.completed ? (
-                    <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-950/70 text-emerald-400 border border-emerald-800/70">
-                      已完成
-                    </span>
-                  ) : isExpired ? (
-                    <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-red-950 text-red-400 border border-red-800">
-                      已到期
-                    </span>
-                  ) : daysLeft === 0 ? (
-                    <span className="px-2.5 py-1 rounded text-xs font-mono font-bold bg-red-950/80 text-red-400 border border-red-800/80">
-                      今天到期
-                    </span>
-                  ) : isUrgent ? (
-                    <span className="px-2.5 py-1 rounded text-xs font-mono font-bold bg-red-950/80 text-red-400 border border-red-800/80 animate-pulse">
-                      D-{daysLeft} 天 (紧急)
-                    </span>
-                  ) : (
-                    <span className="px-2.5 py-1 rounded text-xs font-mono font-semibold bg-zinc-800 text-emerald-400 border border-zinc-700">
-                      倒计 {daysLeft} 天
-                    </span>
-                  )}
-                </div>
-
-                {/* Notes */}
-                {item.notes && (
-                  <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed mb-2">
-                    {item.notes}
-                  </p>
-                )}
-              </div>
-
-              {/* Action Toolbar */}
-              <div className="pt-2.5 border-t border-zinc-800/60 mt-2 flex items-center justify-between gap-2 text-xs">
-                {/* Advance Cycle / Renew Button */}
-                <button
-                  onClick={() => handleAdvanceCycle(item)}
-                  className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-emerald-400 text-[11px] flex items-center gap-1.5 transition-colors"
-                  title="标记本次已扣款/续费，并将到期日推进至下一个周期"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  <span>已续费·顺延下期</span>
-                </button>
-
-                {onToggleComplete && (
-                  <button
-                    onClick={() => onToggleComplete(item.id)}
-                    className={`px-2.5 py-1 rounded-lg border text-[11px] flex items-center gap-1.5 transition-colors ${
-                      item.completed
-                        ? 'bg-emerald-950/50 border-emerald-800/60 text-emerald-400 hover:bg-emerald-900/40'
-                        : 'bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300'
-                    }`}
-                    title={item.completed ? '取消完成标记' : '标记为已处理（保留记录，不再计入紧急提醒）'}
-                  >
-                    <CheckCircle2 className="w-3 h-3" />
-                    <span>{item.completed ? '已完成' : '标记完成'}</span>
-                  </button>
-                )}
-
-                {item.url && (
-                  <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sky-400 hover:underline flex items-center gap-1 text-[11px] font-medium"
-                  >
-                    <span>官方控制台</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Create Reminder Modal */}
       {isModalOpen && (
-        <div 
+        <div
           onClick={() => setIsModalOpen(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm"
         >
-          <div 
+          <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg bg-[#121316] border border-zinc-800 rounded-2xl p-5 shadow-2xl flex flex-col space-y-4"
+            className="w-full max-w-lg bg-sh-surface border border-sh-line rounded-2xl p-5 shadow-2xl flex flex-col space-y-4 max-h-[90vh] overflow-y-auto"
           >
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-              <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-amber-400" />
-                新建倒计时与续费提醒
+            <div className="flex items-center justify-between pb-3 border-b border-sh-line">
+              <h3 className="text-sm font-semibold text-sh-fg flex items-center gap-2">
+                <Clock className="w-4 h-4 text-sh-warn" />
+                新建提醒
               </h3>
-              <button
-                onClick={() => setIsModalOpen(false)}
-                className="text-zinc-400 hover:text-white text-xs"
-              >
-                关闭 (ESC)
+              <button onClick={() => setIsModalOpen(false)} className="text-sh-muted hover:text-sh-fg text-xs">
+                关闭
               </button>
             </div>
 
             <form onSubmit={handleCreate} className="space-y-3">
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">提醒事项名称</label>
+                <label className="block text-xs text-sh-muted mb-1">提醒事项名称</label>
                 <input
                   type="text"
                   required
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="例如: ChatGPT Plus 续期 / 阿里云香港服务器到期"
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-zinc-700"
+                  className={inputClass}
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">类别</label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value as any)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 focus:outline-none"
-                  >
+                  <label className="block text-xs text-sh-muted mb-1">类别</label>
+                  <select value={category} onChange={(e) => setCategory(e.target.value as Category)} className={inputClass}>
                     <option value="subscription">Plus/软件订阅</option>
                     <option value="server">VPS/服务器</option>
                     <option value="domain">域名到期</option>
@@ -481,141 +565,120 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">到期 / 续费截止日期</label>
+                  <label className="block text-xs text-sh-muted mb-1">到期 / 续费截止日期</label>
                   <input
                     type="date"
                     required
                     value={targetDateStr}
                     onChange={(e) => setTargetDateStr(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
+                    className={`${inputClass} font-mono`}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">续期周期</label>
-                  <select
-                    value={recurring}
-                    onChange={(e) => setRecurring(e.target.value as any)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 focus:outline-none"
-                  >
-                    <option value="monthly">每月自动续费</option>
+                  <label className="block text-xs text-sh-muted mb-1">续期周期</label>
+                  <select value={recurring} onChange={(e) => setRecurring(e.target.value as Recurring)} className={inputClass}>
+                    <option value="monthly">每月续费</option>
                     <option value="yearly">按年续费</option>
                     <option value="weekly">按周续费</option>
-                    <option value="once">单次时效 (不循环)</option>
+                    <option value="once">一次性（不循环）</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">续费金额 (可选)</label>
+                  <label className="block text-xs text-sh-muted mb-1">续费金额（可选）</label>
                   <input
                     type="text"
                     value={cost}
                     onChange={(e) => setCost(e.target.value)}
                     placeholder="$20/月 或 ¥199/年"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
+                    className={`${inputClass} font-mono`}
                   />
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 p-2 bg-zinc-900/60 rounded-xl border border-zinc-800">
+              <p className="text-[11px] text-sh-subtle">
+                周期锚定你填写的「日」。例如填 1 月 31 日：2 月按 2 月最后一天（28/29 日）计，3 月仍回到 31 日。
+              </p>
+
+              <div className="flex items-center gap-2 p-2 bg-sh-surface2 rounded-xl border border-sh-line">
                 <input
                   type="checkbox"
                   id="autoRollover"
                   checked={autoRollover}
                   onChange={(e) => setAutoRollover(e.target.checked)}
-                  className="rounded border-zinc-700 bg-zinc-800 text-emerald-500 focus:ring-0"
+                  className="rounded border-sh-line"
                 />
-                <label htmlFor="autoRollover" className="text-xs text-zinc-300 cursor-pointer">
-                  到期后自动顺延至下一周期 (无需每次手动改日期)
+                <label htmlFor="autoRollover" className="text-xs text-sh-fg cursor-pointer">
+                  过期后自动把到期日推进到下一期（不写入续期记录）
                 </label>
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">续费网址 (URL)</label>
+                <label className="block text-xs text-sh-muted mb-1">续费网址（URL）</label>
                 <input
                   type="text"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="https://..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
+                  className={`${inputClass} font-mono`}
                 />
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">备忘与扣款说明</label>
+                <label className="block text-xs text-sh-muted mb-1">备忘与扣款说明</label>
                 <textarea
                   rows={2}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="例如: 绑定了招行外币卡扣费，提前查额度..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 focus:outline-none resize-none"
+                  placeholder="例如: 绑定了招行外币卡扣费，提前查额度…"
+                  className={`${inputClass} resize-none`}
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs"
-                >
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-sh-line">
+                <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
                   取消
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 rounded-lg bg-zinc-100 text-zinc-900 font-semibold text-xs hover:bg-white shadow-sm"
-                >
+                </Button>
+                <Button type="submit" variant="primary">
                   保存提醒
-                </button>
+                </Button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Edit Reminder Modal */}
       {editingReminder && (
-        <div 
+        <div
           onClick={() => setEditingReminder(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm"
         >
-          <div 
+          <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg bg-[#121316] border border-zinc-800 rounded-2xl p-5 shadow-2xl flex flex-col space-y-4"
+            className="w-full max-w-lg bg-sh-surface border border-sh-line rounded-2xl p-5 shadow-2xl flex flex-col space-y-4 max-h-[90vh] overflow-y-auto"
           >
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-              <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                <Edit3 className="w-4 h-4 text-emerald-400" />
-                编辑续费与倒计时事项
+            <div className="flex items-center justify-between pb-3 border-b border-sh-line">
+              <h3 className="text-sm font-semibold text-sh-fg flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-sh-ok" />
+                编辑提醒
               </h3>
-              <button
-                onClick={() => setEditingReminder(null)}
-                className="text-zinc-400 hover:text-white text-xs"
-              >
-                关闭 (ESC)
+              <button onClick={() => setEditingReminder(null)} className="text-sh-muted hover:text-sh-fg text-xs">
+                关闭
               </button>
             </div>
 
             <form onSubmit={handleSaveEdit} className="space-y-3">
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">提醒事项名称</label>
-                <input
-                  type="text"
-                  required
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-zinc-700"
-                />
+                <label className="block text-xs text-sh-muted mb-1">提醒事项名称</label>
+                <input type="text" required value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className={inputClass} />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">类别</label>
-                  <select
-                    value={editCategory}
-                    onChange={(e) => setEditCategory(e.target.value as any)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 focus:outline-none"
-                  >
+                  <label className="block text-xs text-sh-muted mb-1">类别</label>
+                  <select value={editCategory} onChange={(e) => setEditCategory(e.target.value as Category)} className={inputClass}>
                     <option value="subscription">Plus/软件订阅</option>
                     <option value="server">VPS/服务器</option>
                     <option value="domain">域名到期</option>
@@ -624,160 +687,187 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">到期 / 续费截止日期</label>
+                  <label className="block text-xs text-sh-muted mb-1">到期 / 续费截止日期</label>
                   <input
                     type="date"
                     required
                     value={editTargetDateStr}
                     onChange={(e) => setEditTargetDateStr(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
+                    className={`${inputClass} font-mono`}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">续期周期</label>
-                  <select
-                    value={editRecurring}
-                    onChange={(e) => setEditRecurring(e.target.value as any)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 focus:outline-none"
-                  >
-                    <option value="monthly">每月自动续费</option>
+                  <label className="block text-xs text-sh-muted mb-1">续期周期</label>
+                  <select value={editRecurring} onChange={(e) => setEditRecurring(e.target.value as Recurring)} className={inputClass}>
+                    <option value="monthly">每月续费</option>
                     <option value="yearly">按年续费</option>
                     <option value="weekly">按周续费</option>
-                    <option value="once">单次时效 (不循环)</option>
+                    <option value="once">一次性（不循环）</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">续费金额</label>
-                  <input
-                    type="text"
-                    value={editCost}
-                    onChange={(e) => setEditCost(e.target.value)}
-                    placeholder="$20/月 或 ¥199/年"
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
-                  />
+                  <label className="block text-xs text-sh-muted mb-1">续费金额</label>
+                  <input type="text" value={editCost} onChange={(e) => setEditCost(e.target.value)} placeholder="$20/月" className={`${inputClass} font-mono`} />
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 p-2 bg-zinc-900/60 rounded-xl border border-zinc-800">
+              <p className="text-[11px] text-sh-subtle">
+                改动到期日会重新锚定周期（以新日期为准），已有记录保留。
+              </p>
+
+              <div className="flex items-center gap-2 p-2 bg-sh-surface2 rounded-xl border border-sh-line">
                 <input
                   type="checkbox"
                   id="editAutoRollover"
                   checked={editAutoRollover}
                   onChange={(e) => setEditAutoRollover(e.target.checked)}
-                  className="rounded border-zinc-700 bg-zinc-800 text-emerald-500 focus:ring-0"
+                  className="rounded border-sh-line"
                 />
-                <label htmlFor="editAutoRollover" className="text-xs text-zinc-300 cursor-pointer">
-                  到期后自动顺延至下一周期 (无需每次手动改日期)
+                <label htmlFor="editAutoRollover" className="text-xs text-sh-fg cursor-pointer">
+                  过期后自动把到期日推进到下一期
                 </label>
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">续费网址 (URL)</label>
-                <input
-                  type="text"
-                  value={editUrl}
-                  onChange={(e) => setEditUrl(e.target.value)}
-                  placeholder="https://..."
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 font-mono focus:outline-none"
-                />
+                <label className="block text-xs text-sh-muted mb-1">续费网址（URL）</label>
+                <input type="text" value={editUrl} onChange={(e) => setEditUrl(e.target.value)} placeholder="https://..." className={`${inputClass} font-mono`} />
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">备忘与扣款说明</label>
-                <textarea
-                  rows={2}
-                  value={editNotes}
-                  onChange={(e) => setEditNotes(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 focus:outline-none resize-none"
-                />
+                <label className="block text-xs text-sh-muted mb-1">备忘与扣款说明</label>
+                <textarea rows={2} value={editNotes} onChange={(e) => setEditNotes(e.target.value)} className={`${inputClass} resize-none`} />
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setEditingReminder(null)}
-                  className="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs"
-                >
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-sh-line">
+                <Button variant="ghost" onClick={() => setEditingReminder(null)}>
                   取消
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs shadow-sm"
-                >
+                </Button>
+                <Button type="submit" variant="primary">
                   保存更新
-                </button>
+                </Button>
               </div>
             </form>
           </div>
         </div>
       )}
-
     </div>
   );
 };
 
 /**
- * Browser notification permission strip.
+ * Notification capability strip.
  *
- * Deliberately states the limitation: a web page can only notify while it is
- * open, so we do not promise background alarms.
+ * States exactly what can happen in this environment — and never promises a
+ * reminder while the browser is closed. The permission is only requested when the
+ * user presses the button; a first visit never triggers a permission prompt.
  */
 const NotificationBanner: React.FC = () => {
+  const inExtension = typeof window !== 'undefined' && isExtensionContext();
+  const supported = notificationsSupported();
   const [permission, setPermission] = useState<string>(() =>
-    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported'
+    supported ? notificationPermission() : 'unsupported'
   );
   const [busy, setBusy] = useState(false);
 
+  if (!supported) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-sh-line bg-sh-surface2 px-3 py-2 text-[11px] text-sh-muted">
+        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+        <span>当前环境没有系统通知能力：到期项只会在本页显示。</span>
+      </div>
+    );
+  }
+
+  if (inExtension) {
+    return (
+      <div
+        data-testid="notification-strip"
+        data-mode="extension"
+        className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-[11px] ${
+          permission === 'granted'
+            ? 'border-sh-ok/50 bg-sh-surface2 text-sh-ok'
+            : 'border-sh-warn/50 bg-sh-surface2 text-sh-warn'
+        }`}
+      >
+        <span className="flex items-center gap-2">
+          <Bell className="w-3.5 h-3.5 shrink-0" />
+          {permission === 'granted'
+            ? '扩展后台提醒已开启：浏览器运行期间可推送系统通知；浏览器关闭后不会提醒。'
+            : '扩展可以后台提醒，但需要通知权限。未授权时只在本页显示到期项——浏览器关闭后不会提醒。'}
+        </span>
+        {permission !== 'granted' && (
+          <button
+            onClick={async () => {
+              setBusy(true);
+              try {
+                setPermission(await requestNotificationPermission());
+              } finally {
+                setBusy(false);
+              }
+            }}
+            disabled={busy}
+            className="shrink-0 px-2.5 py-1 rounded-lg bg-sh-accent text-sh-accent-fg font-semibold text-[11px] disabled:opacity-50"
+          >
+            {busy ? '请求中…' : '授权通知权限'}
+          </button>
+        )}
+      </div>
+    );
+  }
+
   if (permission === 'granted') {
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-emerald-900/50 bg-emerald-950/25 px-3 py-2 text-[11px] text-emerald-300">
+      <div
+        data-testid="notification-strip"
+        data-mode="page-open"
+        data-permission="granted"
+        className="flex items-center gap-2 rounded-xl border border-sh-ok/50 bg-sh-surface2 px-3 py-2 text-[11px] text-sh-ok"
+      >
         <Bell className="w-3.5 h-3.5 shrink-0" />
-        <span>
-          到期提醒已开启：到期前 3 天内、以及已过期的未完成提醒，会在页面打开时推送一次系统通知（每天每项最多一次）。
-        </span>
+        <span>已开启：仅在<strong>这个页面打开时</strong>检查并推送到期提醒（每个到期项一次）。关闭页面或浏览器后不会提醒。</span>
       </div>
     );
   }
 
   if (permission === 'denied') {
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-amber-900/50 bg-amber-950/25 px-3 py-2 text-[11px] text-amber-300">
+      <div
+        data-testid="notification-strip"
+        data-mode="page-open"
+        data-permission="denied"
+        className="flex items-center gap-2 rounded-xl border border-sh-warn/50 bg-sh-surface2 px-3 py-2 text-[11px] text-sh-warn"
+      >
         <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-        <span>浏览器已拒绝通知权限，请到地址栏左侧的站点设置里重新允许「通知」。</span>
-      </div>
-    );
-  }
-
-  if (permission === 'unsupported') {
-    return (
-      <div className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-[11px] text-zinc-400">
-        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-        <span>当前环境不支持系统通知，到期项只会在本页显示。</span>
+        <span>浏览器已拒绝通知权限：到期项仍会保留在本页列表中。要恢复系统提醒，请在地址栏左侧的站点设置里重新允许「通知」。</span>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-900/50 bg-sky-950/25 px-3 py-2 text-[11px] text-sky-300">
+    <div
+      data-testid="notification-strip"
+      data-mode="page-open"
+      data-permission="default"
+      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sh-info/50 bg-sh-surface2 px-3 py-2 text-[11px] text-sh-info"
+    >
       <span className="flex items-center gap-2">
         <Bell className="w-3.5 h-3.5 shrink-0" />
-        开启浏览器提醒后，到期与逾期项会在页面打开时推送系统通知（浏览器限制：关闭页面后无法提醒）。
+        网页版只能在<strong>页面打开时</strong>提醒（不会在浏览器关闭后提醒）。未授权时到期项保留在本页列表里。
       </span>
       <button
         onClick={async () => {
           setBusy(true);
           try {
-            const result = await requestNotificationPermission();
-            setPermission(result);
+            setPermission(await requestNotificationPermission());
           } finally {
             setBusy(false);
           }
         }}
         disabled={busy}
-        className="shrink-0 px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-[11px] disabled:opacity-50"
+        className="shrink-0 px-2.5 py-1 rounded-lg bg-sh-info text-white font-semibold text-[11px] disabled:opacity-50"
       >
         {busy ? '请求中…' : '开启到期提醒'}
       </button>

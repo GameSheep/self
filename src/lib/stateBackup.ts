@@ -59,37 +59,85 @@ export function stripCredentials(state: HubState): HubState {
 /**
  * Merge a restored snapshot over the local state.
  *
- * Credentials cannot come from the backup (they were stripped), so the local
- * ones are kept: restoring on a new device must not silently blank out keys the
- * user just configured there.
+ * Credentials cannot come from the backup (they were stripped), so the local ones
+ * are kept: restoring on a new device must not silently blank out keys the user
+ * just configured there.
+ *
+ * **A connection's fields are taken from one side only.** The previous version
+ * mixed them — it took the backup's `endpoint`/`bucket`/`accessKeyId` and the
+ * local `accessKeySecret` — which produces a *pair that cannot work* (a key id
+ * from one account with another account's secret). The rule is now: if this device
+ * already holds the secret for a connection, that connection is kept **whole**
+ * (it is the configuration that was actually tested here), and the backup's
+ * non-secret fields are only adopted when there is no local secret to bind them to.
+ * Restoring data must not silently re-point a working connection either way.
  */
+function preferLocalConnection<T>(
+  restored: T | undefined,
+  current: T | undefined,
+  localSecretOf: (config: T | undefined) => string,
+  secretFields: string[]
+): T | undefined {
+  if (current && localSecretOf(current)) return current;
+  // No local secret: adopt the package's *non-secret* configuration so the user only
+  // has to paste the secret. Secrets never travel through this path — an ordinary
+  // restore must not hand out credentials, and a migration package hands them over
+  // only through the explicit `importCredentials` opt-in in `credentialTransfer.ts`.
+  if (!restored) return current;
+  const copy = { ...(restored as unknown as Record<string, unknown>) };
+  for (const field of secretFields) copy[field] = '';
+  return copy as unknown as T;
+}
+
 export function mergeRestoredState(restored: HubState, current: HubState): HubState {
+  const oss = preferLocalConnection(restored.obsidianConfig, current.obsidianConfig, (c) => c?.accessKeySecret || '', [
+    'accessKeySecret'
+  ]);
+  const webdav = preferLocalConnection(restored.webdavConfig, current.webdavConfig, (c) => c?.password || '', ['password']);
+  const ai = preferLocalConnection(restored.aiConfig, current.aiConfig, (c) => c?.apiKey || '', ['apiKey']);
+  const wucai = preferLocalConnection(restored.wucaiConfig, current.wucaiConfig, (c) => c?.token || '', ['token']);
+  const youdao = preferLocalConnection(restored.youdaoConfig, current.youdaoConfig, (c) => c?.token || c?.cookie || '', [
+    'token',
+    'cookie'
+  ]);
+  // The Cloudflare sync key is a credential in the same sense as the others, so it
+  // follows the same rule: a local key means the local configuration stays whole.
+  const sync = preferLocalConnection(restored.cloudflareSync, current.cloudflareSync, (c) => c?.syncKey || '', ['syncKey']);
+
   return {
     ...restored,
+    // Secrets are *never* taken from the package on this path: either the local one
+    // is kept, or the field is empty so the user has to paste it. The first version
+    // of this fix still fell back to `restored.<secret>`, which silently handed a
+    // migration package's credentials to any restore — the opt-in in
+    // `credentialTransfer.ts` is the only way a secret crosses devices.
     obsidianConfig: {
-      ...restored.obsidianConfig,
-      accessKeySecret: current.obsidianConfig?.accessKeySecret || restored.obsidianConfig?.accessKeySecret || '',
-      accessKeyId: restored.obsidianConfig?.accessKeyId || current.obsidianConfig?.accessKeyId || ''
-    },
-    webdavConfig: restored.webdavConfig
+      ...(oss ?? restored.obsidianConfig ?? current.obsidianConfig),
+      accessKeySecret: current.obsidianConfig?.accessKeySecret || ''
+    } as HubState['obsidianConfig'],
+    webdavConfig: webdav
       ? {
-          ...restored.webdavConfig,
-          password: current.webdavConfig?.password || restored.webdavConfig.password || ''
+          ...webdav,
+          password: current.webdavConfig?.password || ''
         }
       : current.webdavConfig,
     aiConfig: {
-      ...restored.aiConfig,
-      apiKey: current.aiConfig?.apiKey || restored.aiConfig?.apiKey || ''
-    },
+      ...(ai ?? current.aiConfig),
+      apiKey: current.aiConfig?.apiKey || ''
+    } as HubState['aiConfig'],
     wucaiConfig: {
-      enabled: Boolean(restored.wucaiConfig?.enabled),
-      token: current.wucaiConfig?.token || restored.wucaiConfig?.token || ''
+      enabled: Boolean((wucai ?? restored.wucaiConfig)?.enabled),
+      token: current.wucaiConfig?.token || ''
     },
     youdaoConfig: {
-      enabled: Boolean(restored.youdaoConfig?.enabled),
-      token: current.youdaoConfig?.token || restored.youdaoConfig?.token || '',
-      cookie: current.youdaoConfig?.cookie || restored.youdaoConfig?.cookie || ''
-    }
+      enabled: Boolean((youdao ?? restored.youdaoConfig)?.enabled),
+      token: current.youdaoConfig?.token || '',
+      cookie: current.youdaoConfig?.cookie || ''
+    },
+    cloudflareSync: {
+      ...(sync ?? restored.cloudflareSync ?? current.cloudflareSync),
+      syncKey: current.cloudflareSync?.syncKey || ''
+    } as HubState['cloudflareSync']
   };
 }
 

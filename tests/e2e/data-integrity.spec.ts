@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { resetApp, readState, seedState, baseState, STORAGE_KEY } from './helpers';
+import { resetApp, readState, seedState, baseState, STORAGE_KEY, gotoTab, visible } from './helpers';
 
 /**
  * Regression tests for data-integrity bugs found during the audit:
@@ -39,12 +39,14 @@ test.describe('倒计时自动顺延', () => {
     await page.goto('/');
     // The UI must remain responsive within a couple of seconds.
     await expect(page.locator('main')).toBeVisible({ timeout: 10_000 });
-    await page.locator('nav button', { hasText: '倒计时与续费' }).click();
+    await gotoTab(page, '倒计时与续费');
     await expect(page.locator('main')).toContainText('非法周期提醒', { timeout: 10_000 });
 
-    // A valid click still works => the main thread is not blocked.
-    await page.locator('nav button', { hasText: '仪表盘总览' }).click();
-    await expect(page.locator('main')).toContainText('快速秒开');
+    // A valid navigation still works => the main thread is not blocked.
+    // The old 仪表盘总览 card titles are gone; #/home is HomeView, and the
+    // never-completed overdue reminder must surface in its 今天要处理 block.
+    await gotoTab(page, '首页');
+    await expect(page.locator('[data-home-block="todo"]')).toContainText('非法周期提醒');
   });
 
   test('合法周期会从到期日推进到下一个未来周期', async ({ page }) => {
@@ -75,7 +77,7 @@ test.describe('倒计时自动顺延', () => {
     );
 
     await page.goto('/');
-    await page.locator('nav button', { hasText: '倒计时与续费' }).click();
+    await gotoTab(page, '倒计时与续费');
     await expect
       .poll(async () => (await readState(page)).reminders[0].targetDate, { timeout: 10_000 })
       .toBeGreaterThan(Date.now());
@@ -87,35 +89,49 @@ test.describe('笔记草稿', () => {
     page.on('dialog', (d) => d.accept());
     await resetApp(page);
 
-    await page.locator('nav button', { hasText: '深度知识文档' }).click();
-    await page.locator('button', { hasText: '新建知识文档' }).first().click();
-    const title = page.locator('input[placeholder*="标题"]').locator('visible=true').first();
-    await title.fill('草稿回归笔记');
-    await page.locator('textarea').first().fill('草稿内容草稿内容');
+    // A reset profile is empty; the pane's single textarea creates the note, and typing in it
+    // is what writes the draft.
+    await gotoTab(page, '深度知识文档');
+    await expect(page.getByTestId('notes-workspace')).toBeVisible();
+    await page.getByTestId('notes-textarea').fill('草稿回归笔记\n草稿内容草稿内容');
     // Let the 800ms debounced draft write happen.
     await page.waitForTimeout(1200);
-    await page.locator('button', { hasText: /^保存$/ }).first().click();
+    const draftWhileEditing = await page.evaluate(() => localStorage.getItem('selfhub_note_draft_pane'));
+    expect(draftWhileEditing, '编辑中应写入草稿').not.toBeNull();
 
-    await expect.poll(async () => (await readState(page)).notes.length).toBeGreaterThan(1);
-    const draft = await page.evaluate(() => localStorage.getItem('selfhub_note_draft'));
+    await page.getByTestId('notes-save').click();
+    // Exactly one note: saving did not duplicate it.
+    await expect.poll(async () => (await readState(page)).notes.length).toBe(1);
+    expect((await readState(page)).notes[0].title).toBe('草稿回归笔记');
+    const draft = await page.evaluate(() => localStorage.getItem('selfhub_note_draft_pane'));
     expect(draft, '保存成功后草稿应被清除').toBeNull();
-    await expect(page.getByText('检测到本地存在上次未提交的编辑草稿')).toHaveCount(0);
+    await expect(page.getByTestId('notes-draft-banner')).toHaveCount(0);
   });
 
-  test('编辑途中取消会先确认，避免静默丢弃', async ({ page }) => {
+  test('直接编辑不保存就离开，草稿仍在并能在回来后恢复', async ({ page }) => {
+    // The pane has no 「编辑 / 取消」 pair any more — it is one textarea. Leaving it unsaved must
+    // still not silently lose the text: the draft is kept and offered when the page reloads,
+    // while the stored note stays untouched until the user saves.
     await resetApp(page);
-    await page.locator('nav button', { hasText: '深度知识文档' }).click();
-    await page.locator('button', { hasText: /编辑/ }).first().click();
-    await page.locator('textarea').first().fill('未保存的修改内容');
+    await seedState(
+      page,
+      baseState({
+        notes: [{ id: 'n-edit', title: '待编辑笔记', content: '原始内容', updatedAt: Date.now() }]
+      })
+    );
+    await page.goto('/');
+    await gotoTab(page, '深度知识文档');
+    await page.getByTestId('notes-textarea').fill('未保存的修改内容');
+    await page.waitForTimeout(1100);
 
-    let confirmShown = false;
-    page.once('dialog', (d) => {
-      confirmShown = true;
-      void d.dismiss();
-    });
-    await page.locator('button', { hasText: '取消' }).first().click();
-    await page.waitForTimeout(300);
-    expect(confirmShown, '取消编辑时应提示未保存内容').toBe(true);
+    // Stored note untouched so far.
+    expect((await readState(page)).notes[0].content).toBe('原始内容');
+
+    await page.reload();
+    await gotoTab(page, '深度知识文档');
+    await expect(page.getByTestId('notes-draft-banner')).toBeVisible();
+    await page.getByTestId('notes-draft-restore').click();
+    await expect(page.getByTestId('notes-textarea')).toHaveValue(/未保存的修改内容/);
   });
 });
 

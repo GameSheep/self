@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState } from './helpers';
+import { seedState, baseState, gotoTab } from './helpers';
 
 /**
  * Server health must be probed, not assumed.
@@ -51,10 +51,17 @@ test.describe('服务器健康检测', () => {
     await mockHealth(page);
     await seedState(page, state([{ ...baseServer, id: 's1', name: '新服务器', status: 'unknown' }]));
     await page.goto('/');
-    await page.locator('nav button', { hasText: '自研部署与主机' }).click();
+    await gotoTab(page, '自研部署与主机');
 
     await expect(page.locator('[data-server-status="unknown"]')).toBeVisible();
     await expect(page.locator('[data-server-status="online"]')).toHaveCount(0);
+
+    // The home resources block must not imply health either: the unprobed host
+    // is counted as 从未检测, and 在线 never appears on this profile.
+    await gotoTab(page, '首页');
+    const ops = page.locator('[data-home-block="ops"]');
+    await expect(ops).toContainText('从未检测');
+    await expect(ops).not.toContainText('在线');
   });
 
   test('检测成功后显示在线并保存延迟', async ({ page }) => {
@@ -66,7 +73,7 @@ test.describe('服务器健康检测', () => {
       ])
     );
     await page.goto('/');
-    await page.locator('nav button', { hasText: '自研部署与主机' }).click();
+    await gotoTab(page, '自研部署与主机');
 
     await page.locator('button', { hasText: '检测' }).first().click();
     await expect(page.locator('[data-server-status="online"]')).toBeVisible({ timeout: 15_000 });
@@ -89,7 +96,7 @@ test.describe('服务器健康检测', () => {
       ])
     );
     await page.goto('/');
-    await page.locator('nav button', { hasText: '自研部署与主机' }).click();
+    await gotoTab(page, '自研部署与主机');
     await page.locator('button', { hasText: '检测' }).first().click();
 
     await expect(page.locator('[data-server-status="online"]')).toBeVisible({ timeout: 15_000 });
@@ -104,7 +111,7 @@ test.describe('服务器健康检测', () => {
       ])
     );
     await page.goto('/');
-    await page.locator('nav button', { hasText: '自研部署与主机' }).click();
+    await gotoTab(page, '自研部署与主机');
     await page.locator('button', { hasText: '检测' }).first().click();
 
     await expect(page.locator('[data-server-status="offline"]')).toBeVisible({ timeout: 15_000 });
@@ -114,7 +121,7 @@ test.describe('服务器健康检测', () => {
     await mockHealth(page);
     await seedState(page, state([{ ...baseServer, id: 's1', name: '只有 IP', status: 'unknown' }]));
     await page.goto('/');
-    await page.locator('nav button', { hasText: '自研部署与主机' }).click();
+    await gotoTab(page, '自研部署与主机');
     await page.locator('button', { hasText: '检测' }).first().click();
 
     await expect(page.locator('[data-server-status="unknown"]')).toBeVisible({ timeout: 15_000 });
@@ -131,7 +138,7 @@ test.describe('服务器健康检测', () => {
       ])
     );
     await page.goto('/');
-    await page.locator('nav button', { hasText: '自研部署与主机' }).click();
+    await gotoTab(page, '自研部署与主机');
     await page.locator('button', { hasText: '全部检测' }).click();
 
     await expect(page.locator('[data-server-status="online"]')).toHaveCount(1, { timeout: 20_000 });
@@ -142,11 +149,12 @@ test.describe('服务器健康检测', () => {
     await mockHealth(page);
     await seedState(page, state([]));
     await page.goto('/');
-    await page.locator('nav button', { hasText: '自研部署与主机' }).click();
+    await gotoTab(page, '自研部署与主机');
 
-    await page.locator('button', { hasText: '添加服务' }).click();
-    await expect(page.getByText('录入新资产')).toBeVisible();
-    await page.locator('div.fixed.inset-0 button', { hasText: '部署' }).click();
+    // With an empty list both the header and the empty state expose 添加服务器;
+    // either opens the same create dialog.
+    await page.locator('button', { hasText: '添加服务器' }).first().click();
+    await expect(page.getByTestId('add-item-modal')).toBeVisible();
     await page.waitForTimeout(200);
 
     const visible = async (sel: string) => {
@@ -159,7 +167,7 @@ test.describe('服务器健康检测', () => {
     const health = await visible('input[placeholder="https://api.example.com/health"]');
     expect(health, '应存在健康检查 URL 输入框').toBeTruthy();
     await health!.fill('https://ok.example.com/health');
-    await page.locator('div.fixed.inset-0 button', { hasText: '保存资产' }).click();
+    await page.getByTestId('add-item-submit').click();
 
     await expect.poll(async () => {
       return page.evaluate(() => {
@@ -173,20 +181,51 @@ test.describe('服务器健康检测', () => {
       return JSON.parse(raw).servers[0];
     });
     expect(saved.healthUrl).toBe('https://ok.example.com/health');
+    // A brand new host is never assumed healthy: the stored status is a "not
+    // probed yet" marker, and the row reflects that rather than claiming online.
     expect(saved.status).toBe('unknown');
+    expect(saved.lastCheckedAt).toBeUndefined();
+    await expect(page.locator('[data-server-row] [data-server-status="unknown"]')).toBeVisible();
+    await expect(page.locator('[data-server-status="online"]')).toHaveCount(0);
   });
 
   test('仪表盘只把探测为在线的计入', async ({ page }) => {
     await mockHealth(page);
+    // s1 has actually been probed (lastCheckedAt set); s2 never was, even though
+    // it carries an optimistic status. The summary counts by probe evidence, so
+    // only s1 may appear as online/可达 and s2 must show as 从未检测.
     await seedState(
       page,
       state([
-        { ...baseServer, id: 's1', name: '好节点', status: 'online', healthUrl: 'https://ok.example.com/' },
+        {
+          ...baseServer,
+          id: 's1',
+          name: '好节点',
+          status: 'online',
+          healthUrl: 'https://ok.example.com/',
+          lastCheckedAt: Date.now(),
+          lastCheckMessage: 'HTTP 200'
+        },
         { ...baseServer, id: 's2', name: '未探测', status: 'unknown' }
       ])
     );
     await page.goto('/');
-    await expect(page.locator('main')).toContainText('1/2 在线');
-    await expect(page.locator('main')).toContainText('1 未探测');
+    await gotoTab(page, '首页');
+
+    // The old 仪表盘总览 "N/M 在线" card is gone. The home resources block (ops)
+    // now states the total and, crucially, how many hosts were never probed
+    // instead of presenting a healthy-looking ratio; it never claims a host is
+    // 在线, because a probe result is shown on the servers page itself.
+    const ops = page.locator('[data-home-block="ops"]');
+    await expect(ops).toContainText('2 台');
+    await expect(ops).toContainText('1 台从未检测');
+    await expect(ops).not.toContainText('在线');
+
+    await gotoTab(page, '服务器');
+    // The probed host is the only one presented as reachable; the never-probed
+    // host keeps its unknown state and is never counted as online.
+    await expect(page.locator('[data-server-row="s1"] [data-server-status="online"]')).toBeVisible();
+    await expect(page.locator('[data-server-row="s2"] [data-server-status="unknown"]')).toBeVisible();
+    await expect(page.locator('[data-server-row="s2"] [data-server-status="online"]')).toHaveCount(0);
   });
 });

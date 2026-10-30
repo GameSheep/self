@@ -1,23 +1,29 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState } from './helpers';
+import { seedState, baseState, gotoSettingsPane, expandAllIntegrations } from './helpers';
 
 /**
- * AI provider diagnostics.
+ * AI 连接诊断.
  *
- * Gemini reports an invalid key as HTTP 400 (not 401), so "400 every time" is
- * usually the key — not a malformed request. The settings panel must therefore
- * show the provider's own message and an actionable hint, and the ingest flow
- * must not pretend the cloud call succeeded.
+ * When a provider rejects a key or a model, the UI must show what the service actually said and
+ * which model it used — not a generic "检测失败". These tests mock the hosts and assert on text.
  */
 
-function state(ai: Record<string, unknown>) {
-  return baseState({ aiConfig: { provider: 'gemini', apiKey: '', baseUrl: '', model: '', cloudAiEnabled: false, ...ai } });
+function state(overrides: Record<string, unknown> = {}) {
+  return baseState({
+    aiConfig: {
+      provider: 'gemini',
+      apiKey: '',
+      baseUrl: '',
+      model: 'gemini-2.5-flash',
+      cloudAiEnabled: false,
+      ...overrides
+    }
+  });
 }
 
 async function openAiTab(page: any) {
-  await page.locator('aside button[title*="系统设置"]').click();
-  await expect(page.getByText('系统与服务集成设置')).toBeVisible();
-  await page.locator('[data-settings-nav="ai"]').click();
+  await gotoSettingsPane(page, 'ai');
+  await expandAllIntegrations(page);
   await expect(page.getByTestId('ai-test')).toBeVisible();
 }
 
@@ -103,7 +109,10 @@ test.describe('AI 连接诊断', () => {
       state({ provider: 'gemini', apiKey: 'bad', model: 'gemini-2.5-flash', cloudAiEnabled: true })
     );
     await page.goto('/');
-    await page.locator('button', { hasText: 'AI 智能分拣' }).first().click();
+    // The old 「AI 智能分拣」 button is gone; the same modal is now the top bar's
+    // 「整理内容」 global action (matched by its title so the responsive label does
+    // not matter).
+    await page.locator('header button[title*="整理入库"]').click();
     await expect(page.locator('textarea')).toBeVisible();
 
     await page.locator('textarea').fill('服务器 1.2.3.4 root 密码 abc123');
@@ -113,5 +122,9 @@ test.describe('AI 连接诊断', () => {
     await expect(warning).toBeVisible({ timeout: 20_000 });
     await expect(warning).toContainText('云端 AI 调用失败');
     await expect(warning).toContainText('API key not valid');
+    // Product bug (copy only, src/** untouched): this warning still tells the user to
+    // check 「系统设置 → AI 模型」, but settings is now a routed page and the AI card
+    // lives in 设置 → 连接与任务. The fallback contract asserted above is correct and
+    // must not be weakened for stale help text.
   });
 });

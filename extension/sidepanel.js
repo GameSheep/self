@@ -22,13 +22,19 @@ async function loadAnnotations() {
   activeTabUrl = tab.url;
   activeTabTitle = tab.title || tab.url;
 
-  chrome.runtime.sendMessage({
-    action: 'GET_PAGE_ANNOTATIONS',
-    url: activeTabUrl
-  }, (res) => {
-    currentAnnotations = (res && res.annotations) || [];
-    renderList(currentAnnotations);
-  });
+  // The background's single message entry requires the versioned envelope
+  // (window.SelfHubClient.send); a raw {action} payload is rejected with
+  // INVALID_PAYLOAD and the list would silently stay empty.
+  window.SelfHubClient.send('GET_PAGE_ANNOTATIONS', { url: activeTabUrl })
+    .then((data) => {
+      currentAnnotations = (data && data.annotations) || [];
+      renderList(currentAnnotations);
+    })
+    .catch((err) => {
+      console.warn('[Self-Hub] loading annotations failed', err);
+      currentAnnotations = [];
+      renderList(currentAnnotations);
+    });
 }
 
 function renderList(list) {
@@ -112,10 +118,18 @@ let inboxItems = [];
 let activeTab = 'annotations';
 
 function loadInbox() {
-  chrome.storage.local.get(['selfhub_inbox'], (res) => {
-    inboxItems = (res.selfhub_inbox || []).filter((i) => !i.isDeleted);
-    renderInbox();
-  });
+  // The background is the single writer; the panel asks it instead of reading
+  // the collection directly.
+  window.SelfHubClient.send('QUERY_INBOX', {})
+    .then((data) => {
+      inboxItems = ((data && data.items) || []).filter((i) => !i.isDeleted);
+      renderInbox();
+    })
+    .catch((err) => {
+      console.warn('[Self-Hub] loading inbox failed', err);
+      inboxItems = [];
+      renderInbox();
+    });
 }
 
 function renderInbox() {
@@ -171,9 +185,18 @@ function renderInbox() {
     delBtn.textContent = '删除';
     delBtn.addEventListener('click', () => {
       if (!confirm('确定从统一收件箱删除该条吗？')) return;
-      const next = inboxItems.filter((i) => i.id !== item.id);
-      inboxItems = next;
-      chrome.storage.local.set({ selfhub_inbox: next }, renderInbox);
+      // Archive rather than splice: a tombstone lets a later merge tell
+      // "removed here" from "never existed".
+      window.SelfHubClient.send('UPDATE_INBOX_STATUS', {
+        id: item.id,
+        status: 'archived',
+        operationId: 'sidepanel-archive-' + item.id + '-' + Date.now()
+      })
+        .then(() => {
+          inboxItems = inboxItems.filter((i) => i.id !== item.id);
+          renderInbox();
+        })
+        .catch((err) => alert('操作失败：' + (err.message || '扩展未响应')));
     });
     btnRow.appendChild(delBtn);
 
@@ -241,8 +264,16 @@ chrome.tabs.onActivated.addListener(() => loadAnnotations());
 chrome.tabs.onUpdated.addListener((_id, info) => {
   if (info.status === 'complete') loadAnnotations();
 });
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.selfhub_inbox) loadInbox();
+// The background is the only writer and broadcasts SELFHUB_CHANGED with the
+// touched store names; chrome.storage.local.selfhub_inbox no longer receives
+// writes, so listening to it kept the inbox stale until manual refresh.
+window.SelfHubClient.onChange((msg) => {
+  if (msg && Array.isArray(msg.stores) && msg.stores.includes('inbox_v3')) {
+    loadInbox();
+  }
+  if (msg && Array.isArray(msg.stores) && msg.stores.includes('annotations_v3')) {
+    loadAnnotations();
+  }
 });
 
 // Export to Obsidian Markdown format
@@ -281,8 +312,9 @@ tags:
     }
   });
 
-  // Copy to clipboard and trigger download
-  navigator.clipboard.writeText(md).then(() => {
+  // Copy to clipboard (best effort) and always trigger the download; a
+  // rejected clipboard write used to skip the download silently.
+  const triggerDownload = () => {
     const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -292,7 +324,13 @@ tags:
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+  navigator.clipboard.writeText(md).then(() => {
+    triggerDownload();
     alert('已复制 Markdown 内容到剪贴板，并下载为 Obsidian 兼容文件！');
+  }).catch(() => {
+    triggerDownload();
+    alert('已下载为 Obsidian 兼容文件！（剪贴板不可用，未能同时复制）');
   });
 });
 
@@ -302,7 +340,7 @@ document.getElementById('open-hub-btn').addEventListener('click', () => {
     const customUrl = res.selfhub_web_url;
     const target = (customUrl && !customUrl.includes('localhost:4173'))
       ? customUrl
-      : chrome.runtime.getURL('app/index.html');
+      : chrome.runtime.getURL('app/index.html#/home');
     chrome.tabs.create({ url: target });
   });
 });

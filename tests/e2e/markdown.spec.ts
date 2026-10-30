@@ -158,10 +158,10 @@ test.describe('Markdown 阅读视图', () => {
       baseState({
         obsidianConfig: {
           enabled: true,
-          bucket: 'uiuecho-obsidian',
+          bucket: 'example-obsidian-vault',
           endpoint: 'oss-cn-beijing.aliyuncs.com',
           region: 'oss-cn-beijing',
-          accessKeyId: 'LTAI5t8JAm7fyYaDsK5ECJer',
+          accessKeyId: 'LTAI5tEXAMPLE000000000',
           accessKeySecret: 'test-secret',
           prefix: ''
         },

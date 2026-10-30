@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState } from './helpers';
+import { seedState, baseState, gotoTab } from './helpers';
 
 /**
  * Full-text index management.
@@ -9,7 +9,7 @@ import { seedState, baseState } from './helpers';
  */
 
 const ENDPOINT = 'oss-cn-beijing.aliyuncs.com';
-const BUCKET = 'uiuecho-obsidian';
+const BUCKET = 'example-obsidian-vault';
 
 const DOCS: Record<string, string> = {
   'vault/alpha.md': '# Alpha\n\n这里记录了 Redis 缓存的使用方式。\n',
@@ -59,7 +59,7 @@ function state() {
       bucket: BUCKET,
       endpoint: ENDPOINT,
       region: 'oss-cn-beijing',
-      accessKeyId: 'LTAI5t8JAm7fyYaDsK5ECJer',
+      accessKeyId: 'LTAI5tEXAMPLE000000000',
       accessKeySecret: 'test-secret',
       prefix: 'vault/'
     }
@@ -68,7 +68,7 @@ function state() {
 
 async function boot(page: any) {
   await page.goto('/');
-  await page.locator('nav button', { hasText: '多平台数据互通' }).click();
+  await gotoTab(page, '多平台数据互通');
   await expect(page.locator('main')).toContainText('对象 2');
 }
 
@@ -119,6 +119,49 @@ test.describe('全文索引管理', () => {
 
     const lastBuilt = await page.getByTestId('index-last-built').textContent();
     expect(lastBuilt).not.toBe('从未建立');
+
+    // Health: a freshly built index must report as healthy, not "needs rebuild".
+    // (The first version of the health check used the wrong field name and would
+    // have called every record corrupt, sending users to rebuild a good index.)
+    await expect(page.getByTestId('index-health-ok')).toBeVisible();
+    await expect(page.getByTestId('index-health-warning')).toHaveCount(0);
+  });
+
+  test('索引损坏时健康检查明确提示并可重建', async ({ page }) => {
+    await mock(page);
+    // A store with one malformed record (missing `text`) alongside a valid one.
+    await page.addInitScript(`
+      (async () => {
+        if (localStorage.getItem('__bad_record_seeded')) return;
+        await new Promise((resolve) => {
+          const req = indexedDB.open('self_hub_vault_index', 1);
+          req.onupgradeneeded = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains('docs')) db.createObjectStore('docs', { keyPath: 'key' });
+          };
+          req.onsuccess = () => {
+            const db = req.result;
+            const tx = db.transaction('docs', 'readwrite');
+            tx.objectStore('docs').put({ key: 'bad.md', title: '坏记录' });
+            tx.oncomplete = () => { db.close(); resolve(); };
+            tx.onerror = () => { db.close(); resolve(); };
+          };
+          req.onerror = () => resolve();
+        });
+        localStorage.setItem('__bad_record_seeded', '1');
+      })();
+    `);
+    await page.goto('/');
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('__bad_record_seeded'))).toBe('1');
+
+    await seedState(page, state());
+    await boot(page);
+
+    await page.getByTestId('index-status').click();
+    const warning = page.getByTestId('index-health-warning');
+    await expect(warning).toBeVisible({ timeout: 10_000 });
+    await expect(warning).toContainText('格式不正确');
+    await expect(warning).toContainText('建议重建索引');
   });
 
   test('清除索引会清空 IndexedDB 并回到未建立状态', async ({ page }) => {
@@ -184,7 +227,7 @@ test.describe('全文索引管理', () => {
 
     await seedState(page, state());
     await page.goto('/');
-    await page.locator('nav button', { hasText: '多平台数据互通' }).click();
+    await gotoTab(page, '多平台数据互通');
     await expect(page.locator('main')).toContainText('对象 2');
 
     // Building works after recovery, and the store is correct again.

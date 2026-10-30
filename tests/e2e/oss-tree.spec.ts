@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState, STORAGE_KEY } from './helpers';
+import { seedState, baseState, STORAGE_KEY, gotoTab } from './helpers';
 
 /**
  * Multi-level OSS browsing.
@@ -9,9 +9,9 @@ import { seedState, baseState, STORAGE_KEY } from './helpers';
  * bucket browsable: full pagination, tree rendering, and cross-level search.
  */
 
-const KEY_ID = 'LTAI5t8JAm7fyYaDsK5ECJer';
+const KEY_ID = 'LTAI5tEXAMPLE000000000';
 const KEY_SECRET = 'test-secret';
-const BUCKET = 'uiuecho-obsidian';
+const BUCKET = 'example-obsidian-vault';
 const ENDPOINT = 'oss-cn-beijing.aliyuncs.com';
 
 /** 1200 objects in 3 top-level folders — more than one 1000-key page. */
@@ -58,7 +58,7 @@ async function configure(page: any, prefix: string) {
     })
   );
   await page.goto('/');
-  await page.locator('nav button', { hasText: '多平台数据互通' }).click();
+  await gotoTab(page, '多平台数据互通');
   await expect(page.locator('main')).toContainText('测连通');
 }
 
@@ -87,7 +87,7 @@ test.describe('OSS 多层目录树', () => {
     await expect(page.locator('main')).toContainText('对象 1200', { timeout: 15_000 });
 
     markers.length = 0;
-    await page.locator('button[title*="从 OSS 刷新"]').click();
+    await page.locator('[data-testid="oss-refresh"]').click();
 
     // Two pages: 1000 + 200.
     await expect.poll(() => markers.length, { timeout: 15_000 }).toBe(2);
@@ -121,7 +121,7 @@ test.describe('OSS 多层目录树', () => {
     });
 
     await configure(page, '');
-    await page.locator('button[title*="从 OSS 刷新"]').click();
+    await page.locator('[data-testid="oss-refresh"]').click();
     await expect(page.locator('main')).toContainText('对象 1200');
 
     // Root folders are visible and expandable.
@@ -154,7 +154,7 @@ test.describe('OSS 多层目录树', () => {
     });
 
     await configure(page, '');
-    await page.locator('button[title*="从 OSS 刷新"]').click();
+    await page.locator('[data-testid="oss-refresh"]').click();
     await expect(page.locator('main')).toContainText('对象 1200');
 
     // '子目录' only appears on the third folder path.
@@ -189,7 +189,7 @@ test.describe('OSS 多层目录树', () => {
     });
 
     await configure(page, 'vault/');
-    await page.locator('button[title*="从 OSS 刷新"]').click();
+    await page.locator('[data-testid="oss-refresh"]').click();
 
     await expect(page.locator('main')).toContainText('前缀把内容过滤空了', { timeout: 10_000 });
     await expect(page.locator('main')).toContainText('文件前缀');

@@ -152,6 +152,20 @@ html:not(.dark) select {
 .md-body > *:first-child { margin-top: 0 !important; }
 .md-body > *:last-child { margin-bottom: 0 !important; }
 
+/* Light theme: the reading view used to keep its dark palette while the page around it turned
+   white, which made headings and body text unreadable. */
+html:not(.dark) .md-body {
+  --md-fg: #1f2937;
+  --md-fg-strong: #0f172a;
+  --md-fg-muted: #64748b;
+  --md-border: #e2e8f0;
+  --md-surface: #f8fafc;
+  --md-surface-2: #f1f5f9;
+  --md-accent: #6d28d9;
+  --md-link: #1d4ed8;
+  --md-code-fg: #0f172a;
+}
+
 /* Headings */
 .md-h {
   color: var(--md-fg-strong);
@@ -472,3 +486,137 @@ html:not(.dark) .md-editor-textarea { background: #ffffff; color: #0f172a; }
 html:not(.dark) .md-editor-preview { background: transparent; }
 html:not(.dark) .md-table tbody tr:nth-child(even) { background: #f8fafc; }
 
+
+/* =========================================
+   Semantic tokens (P1-02)
+
+   Components built during the redesign must not pick literal greys, because
+   then light mode is decided by whoever edits the file next. Every new surface
+   uses these names, and the two blocks below are the only place a colour is
+   chosen. Contrast pairs were checked at 4.5:1 for text and 3:1 for the
+   focus ring against their background.
+   ========================================= */
+:root,
+html.dark {
+  /* Lifted from near-black (#090a0c / #121316): on a bright screen the old values read as
+     "everything is a black rectangle" and the ~#8b8b93 subtext sat too close to the surface
+     to read comfortably. These keep the dark identity but give text room: muted/subtle both
+     clear 4.5:1 against #1b1e24. */
+  --sh-bg: #16181d;
+  --sh-surface: #1e2128;
+  --sh-surface-2: #252932;
+  --sh-line: #333845;
+  --sh-line-strong: #4a5160;
+  --sh-fg: #f3f5f8;
+  --sh-fg-muted: #b7bdc8;
+  --sh-fg-subtle: #9aa1ad;
+  --sh-accent: #f3f5f8;
+  --sh-accent-fg: #1b1e24;
+  --sh-ok: #4ade80;
+  --sh-warn: #fbbf24;
+  --sh-danger: #f87171;
+  --sh-info: #7cb3ff;
+  --sh-focus: #b4a0ff;
+  --sh-overlay: rgba(0, 0, 0, 0.66);
+}
+
+html:not(.dark) {
+  --sh-bg: #f5f6f8;
+  --sh-surface: #ffffff;
+  --sh-surface-2: #f1f5f9;
+  --sh-line: #e2e8f0;
+  --sh-line-strong: #cbd5e1;
+  --sh-fg: #0f172a;
+  --sh-fg-muted: #475569;
+  --sh-fg-subtle: #64748b;
+  --sh-accent: #18181b;
+  --sh-accent-fg: #ffffff;
+  --sh-ok: #047857;
+  --sh-warn: #b45309;
+  --sh-danger: #b91c1c;
+  --sh-info: #1d4ed8;
+  --sh-focus: #7c3aed;
+  --sh-overlay: rgba(15, 23, 42, 0.45);
+}
+
+/* Focus visibility: keyboard users must see where they are, and the ring has to
+   survive on both themes. */
+*:focus-visible {
+  outline: 2px solid var(--sh-focus);
+  outline-offset: 2px;
+}
+
+/* Touch/click targets: the design doc asks for >=40px on desktop and >=44px on
+   narrow screens for the primary actions. */
+.sh-tap {
+  min-height: 40px;
+}
+@media (max-width: 767px) {
+  .sh-tap {
+    min-height: 44px;
+  }
+}
+
+/* Skip link for keyboard navigation past the sidebar. */
+.sh-skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 8px 12px;
+  background: var(--sh-accent);
+  color: var(--sh-accent-fg);
+  border-radius: 0 0 8px 0;
+  font-size: 12px;
+}
+.sh-skip-link:focus {
+  left: 0;
+}
+
+/* ── 动效（Apple 风格：纯淡入/轻浮，Apple 缓动曲线，尊重减少动态设置） ────── */
+/*
+ * 性能铁律：
+ * 1. 视图切换只用 opacity（WAAPI 驱动，见 App.tsx），不做位移——大内容区位移
+ *    又重又晃，正是"看起来卡"的来源；
+ * 2. 动画重放不用 classList remove + offsetWidth 强制回流，那在重页面上
+ *    一次就是几十毫秒的同步布局；
+ * 3. 缓动统一用 Apple 系曲线：cubic-bezier(0.2, 0, 0, 1)（交互）
+ *    与 cubic-bezier(0.32, 0.72, 0, 1)（浮层/抽屉）。
+ */
+@keyframes sh-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sh-rise-in {
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes sh-drawer-in {
+  from { transform: translate3d(100%, 0, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
+
+/* 让代码里既有的 tailwindcss-animate 命名类真正生效（此前无插件，是无效类）。 */
+.animate-in {
+  animation: sh-fade-in 0.2s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.animate-in.slide-in-from-bottom-2 {
+  animation-name: sh-rise-in;
+  animation-duration: 0.28s;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* 右侧抽屉：整面滑入，iOS sheet 曲线。 */
+.sh-drawer-in {
+  animation: sh-drawer-in 0.3s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in,
+  .sh-drawer-in {
+    animation: none;
+  }
+}

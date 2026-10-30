@@ -5,8 +5,12 @@
  * clicking "打卡" twice in one day counted as two days, and there was no record
  * of which days were actually done. History is now the source of truth and the
  * streak is derived from it.
+ *
+ * Only a real HTTP success counts (P1-07 / 开发文档 §11.4): "打开页面手动完成"
+ * is recorded with its own outcome and appears in the strip as a non-success, so
+ * the streak can never be inflated by merely opening a tab.
  */
-import { CheckInRun, CheckInTask } from '../types';
+import { CheckInOutcome, CheckInRun, CheckInTask } from '../types';
 
 export const HISTORY_LIMIT = 120;
 
@@ -29,6 +33,25 @@ export interface RunOutcome {
   /** false when we merely opened a page and cannot know the result. */
   verified?: boolean;
   message: string;
+  statusCode?: number;
+  /** Set explicitly by callers that know the mode (e.g. "打开页面手动完成"). */
+  outcome?: CheckInOutcome;
+}
+
+/**
+ * Map an execution result to the stored outcome. Explicit `outcome` wins, which
+ * is how the "打开页面手动完成" path stays out of the success column; otherwise a
+ * non-verified run is treated as "opened page" and anything else follows success.
+ */
+export function outcomeOf(outcome: RunOutcome): CheckInOutcome {
+  if (outcome.outcome) return outcome.outcome;
+  if (outcome.verified === false) return 'opened_page';
+  return outcome.success ? 'http_success' : 'http_failure';
+}
+
+/** Only a verified HTTP success counts for the streak. */
+export function countsForStreak(outcome: RunOutcome): boolean {
+  return outcome.verified !== false && outcome.success === true;
 }
 
 /**
@@ -38,15 +61,18 @@ export interface RunOutcome {
  *   double click can never inflate the streak.
  * - A run that could not be verified (e.g. "opened the check-in page") is stored
  *   as failed-for-streak but still recorded, with its message explaining why.
+ * - `lastOutcome` is always written so the card can say what actually happened.
  */
 export function recordRun(task: CheckInTask, outcome: RunOutcome, now: number = Date.now()): CheckInTask {
   const date = localDateKey(now);
-  const counted = outcome.success && outcome.verified !== false;
+  const counted = countsForStreak(outcome);
+  const kind = outcomeOf(outcome);
   const entry: CheckInRun = {
     date,
     at: now,
     status: counted ? 'success' : 'failed',
-    message: outcome.message
+    message: outcome.message,
+    outcome: kind
   };
 
   const history = [...(task.history || []).filter((h) => h.date !== date), entry]
@@ -56,8 +82,9 @@ export function recordRun(task: CheckInTask, outcome: RunOutcome, now: number = 
   return {
     ...task,
     lastRun: now,
-    lastStatus: outcome.success ? 'success' : 'failed',
+    lastStatus: counted ? 'success' : 'failed',
     lastMessage: outcome.message,
+    lastOutcome: kind,
     history,
     streakDays: computeStreak(history, now)
   };
@@ -68,7 +95,9 @@ export function recordRun(task: CheckInTask, outcome: RunOutcome, now: number = 
  * Yesterday still counts as "current" (you may simply not have run it yet today).
  */
 export function computeStreak(history: CheckInRun[], now: number = Date.now()): number {
-  const successDays = new Set(history.filter((h) => h.status === 'success').map((h) => h.date));
+  const successDays = new Set(
+    history.filter((h) => h.status === 'success' && (h.outcome === undefined || h.outcome === 'http_success')).map((h) => h.date)
+  );
   if (successDays.size === 0) return 0;
 
   const today = localDateKey(now);
@@ -87,6 +116,8 @@ export interface DayCell {
   date: string;
   /** success | failed | none (no run recorded) */
   status: 'success' | 'failed' | 'none';
+  /** What the run did: http_success / http_failure / opened_page / never. */
+  outcome: CheckInOutcome;
   /** 'YYYY-MM-DD' === today */
   isToday: boolean;
 }
@@ -102,6 +133,7 @@ export function recentDays(history: CheckInRun[], days = 14, now: number = Date.
     cells.push({
       date,
       status: entry ? (entry.status === 'success' ? 'success' : 'failed') : 'none',
+      outcome: entry ? entry.outcome || (entry.status === 'success' ? 'http_success' : 'http_failure') : 'never',
       isToday: date === today
     });
   }
@@ -115,3 +147,10 @@ export function hasRunToday(task: CheckInTask, now: number = Date.now()): { done
   if (!entry) return { done: false, failed: false };
   return { done: entry.status === 'success', failed: entry.status === 'failed' };
 }
+
+export const OUTCOME_LABEL: Record<CheckInOutcome, string> = {
+  never: '未执行过',
+  http_success: '已签到',
+  http_failure: '执行失败',
+  opened_page: '仅打开页面（未校验）'
+};

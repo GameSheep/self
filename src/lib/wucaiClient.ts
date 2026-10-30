@@ -1,6 +1,12 @@
 import { WucaiHighlight, WucaiConfig } from '../types';
 
-export const SAMPLE_WUCAI_HIGHLIGHTS: WucaiHighlight[] = [];
+const WUCAI_COLORS = ['yellow', 'green', 'blue', 'purple', 'red'] as const;
+
+function normalizeWucaiColor(value: unknown): WucaiHighlight['color'] {
+  return (WUCAI_COLORS as readonly string[]).includes(value as string)
+    ? (value as WucaiHighlight['color'])
+    : 'yellow';
+}
 
 /**
  * Format a Wucai highlight into standard Obsidian Markdown
@@ -41,45 +47,57 @@ ${hl.note ? hl.note : '*暂无批注思考*'}
 }
 
 /**
- * Fetch Wucai highlights via OpenAPI token or cached data
+ * Pull highlights from the Wucai OpenAPI and return only the records the app
+ * does not already have.
+ *
+ * Import-only, the same contract as `importExtensionAnnotations`: ids the app
+ * knows are skipped, nothing on either side is deleted or overwritten, so a
+ * locally edited note can never be clobbered by the cloud copy.
+ *
+ * Throws on transport or API failure so the caller can surface a real error;
+ * a successful pull with nothing new resolves to `[]`. Without an enabled
+ * config this resolves to `[]` without touching the network.
  */
 export async function fetchWucaiHighlights(
   config: WucaiConfig,
-  current: WucaiHighlight[]
+  knownIds: ReadonlySet<string>
 ): Promise<WucaiHighlight[]> {
-  if (current && current.length > 0) {
-    return current;
-  }
+  if (!config?.enabled || !config.token) return [];
 
-  // If user provided a real Wucai OpenAPI token
-  if (config.enabled && config.token) {
-    try {
-      const res = await fetch('https://api.doc.wucai.site/openapi/v1/highlights', {
-        headers: {
-          'Authorization': `Bearer ${config.token}`,
-          'Accept': 'application/json'
-        }
-      }).catch(() => null);
-
-      if (res && res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.items)) {
-          return data.items.map((item: any) => ({
-            id: item.id || `wc-${Date.now()}`,
-            pageTitle: item.title || '网页划线',
-            pageUrl: item.url || '',
-            text: item.highlight_text || item.text || '',
-            note: item.note || '',
-            color: item.color || 'yellow',
-            tags: item.tags || [],
-            createdAt: item.created_at ? new Date(item.created_at).getTime() : Date.now()
-          }));
-        }
-      }
-    } catch (e) {
-      console.warn('Wucai OpenAPI fetch failed, falling back to cached sample', e);
+  const res = await fetch('https://api.doc.wucai.site/openapi/v1/highlights', {
+    headers: {
+      'Authorization': `Bearer ${config.token}`,
+      'Accept': 'application/json'
     }
+  });
+  if (!res.ok) {
+    throw new Error(`五彩接口返回 ${res.status}${res.status === 401 ? '（Token 无效或已过期）' : ''}`);
   }
 
-  return current || [];
+  const data = await res.json();
+  if (!data || !Array.isArray(data.items)) {
+    throw new Error('五彩接口返回了意外的数据格式');
+  }
+
+  const fresh: WucaiHighlight[] = [];
+  for (const item of data.items) {
+    const id = item && (typeof item.id === 'string' || typeof item.id === 'number') ? String(item.id) : '';
+    const text = typeof item?.highlight_text === 'string' && item.highlight_text
+      ? item.highlight_text
+      : typeof item?.text === 'string' ? item.text : '';
+    if (!id || !text || knownIds.has(id)) continue;
+    fresh.push({
+      id,
+      pageTitle: typeof item.title === 'string' && item.title ? item.title : '网页划线',
+      pageUrl: typeof item.url === 'string' ? item.url : '',
+      text,
+      note: typeof item.note === 'string' ? item.note : '',
+      color: normalizeWucaiColor(item.color),
+      tags: Array.isArray(item.tags) ? item.tags.filter((t: unknown): t is string => typeof t === 'string') : [],
+      createdAt: typeof item.created_at === 'string' && item.created_at && !Number.isNaN(new Date(item.created_at).getTime())
+        ? new Date(item.created_at).getTime()
+        : Date.now()
+    });
+  }
+  return fresh;
 }

@@ -4,7 +4,9 @@
  * Zero external dependencies, 100% client-side security
  */
 import { rememberMasterPassword, recallMasterPassword, forgetMasterPassword } from './trustedDevice';
-import { normalizeHubState } from './storage';
+// From `hubState`, not `storage`: this module is reachable from the lazy v3/migration
+// stack, and importing the eager payload module here co-located the two in the first load.
+import { normalizeHubState } from './hubState';
 
 // Helper to convert ArrayBuffer to Base64
 export function bufferToBase64(buffer: ArrayBuffer | Uint8Array): string {
@@ -165,14 +167,6 @@ export function createMaskedPreview(secret: string): string {
 // Trusted Device Token Management (Local-First IndexedDB session storage)
 const TRUSTED_DEVICE_KEY = 'self_hub_trusted_device';
 
-export interface TrustedDeviceSession {
-  trusted: boolean;
-  expiresAt: number;
-  encryptedKeyMaterial?: string;
-  iv?: string;
-  salt?: string;
-}
-
 // In-memory active session reference
 let memorySessionPassword: string | null = null;
 
@@ -191,18 +185,6 @@ export async function saveTrustedSession(password: string, days = 30): Promise<v
     console.warn('Failed to save session', err);
   }
   await rememberMasterPassword(password, days);
-}
-
-/** Synchronous in-memory lookup (used during a live session). */
-export function getTrustedSession(): { password?: string; isValid: boolean } {
-  try {
-    localStorage.removeItem(TRUSTED_DEVICE_KEY);
-  } catch {}
-
-  if (memorySessionPassword) {
-    return { password: memorySessionPassword, isValid: true };
-  }
-  return { isValid: false };
 }
 
 /**

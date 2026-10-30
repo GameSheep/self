@@ -146,20 +146,27 @@ function MarkdownImage({
     loading: !isRemote
   });
 
+  // Destructure only the stable pieces of the render state: the parent recreates
+  // `ctx` on every keystroke (renderMarkdown builds a fresh RenderState), and
+  // depending on the whole object re-ran this effect per keystroke — every image
+  // flickered back to the "读取中" placeholder while typing in split view.
+  const loadImage = ctx.ctx.loadImage;
+  const vaultKeys = ctx.keys;
+  const currentKey = ctx.ctx.currentKey;
+
   useEffect(() => {
     if (isRemote) {
       setState({ url: src, loading: false });
       return;
     }
     let alive = true;
-    const key = resolveVaultKey(src, ctx.keys, ctx.ctx.currentKey);
-    if (!key || !ctx.ctx.loadImage) {
+    const key = resolveVaultKey(src, vaultKeys, currentKey);
+    if (!key || !loadImage) {
       setState({ loading: false, error: `未在库中找到附件：${src}` });
       return;
     }
     setState({ loading: true });
-    ctx.ctx
-      .loadImage(key)
+    loadImage(key)
       .then((url) => {
         if (!alive) return;
         setState(url ? { url, loading: false } : { loading: false, error: `附件读取失败：${key}` });
@@ -170,7 +177,7 @@ function MarkdownImage({
     return () => {
       alive = false;
     };
-  }, [src, isRemote, ctx]);
+  }, [src, isRemote, loadImage, vaultKeys, currentKey]);
 
   if (state.loading) {
     return <span className="md-image-pending">正在从 OSS 读取图片…</span>;
@@ -292,6 +299,18 @@ function renderInlineToken(token: Tokens.Generic, st: RenderState, index: number
           >
             {link.tokens ? renderInline(link.tokens, st) : link.text}
           </button>
+        );
+      }
+      // Protocol whitelist: note content (often clipped from arbitrary web
+      // pages) is untrusted input, and marked does not sanitise hrefs — a
+      // `javascript:` link would otherwise execute on click.
+      const protocol = href.match(/^([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase();
+      const safeProtocol = protocol == null || protocol === 'http' || protocol === 'https' || protocol === 'mailto';
+      if (!safeProtocol) {
+        return (
+          <span key={key} className="md-link md-link-blocked" title="此链接协议不受支持，已禁用">
+            {link.tokens ? renderInline(link.tokens, st) : link.text}
+          </span>
         );
       }
       return (
@@ -417,7 +436,12 @@ function renderBlocks(tokens: Tokens.Generic[] | undefined, st: RenderState): Re
           const rest = firstLineEnd === -1 ? '' : text.slice(firstLineEnd + 1);
           const bodyTokens = rest.trim() ? (marked.lexer(rest) as Tokens.Generic[]) : [];
 
-          const body = <div className="md-callout-body">{renderBlocks(bodyTokens, st)}</div>;
+          // Headings inside the callout get a fresh heading cursor: they are
+          // re-lexed here, so consuming the top-level headingIds shifted every
+          // later real heading's anchor to the wrong section. taskIndex stays
+          // shared — toggle positions count all rendered tasks in order.
+          const nestedSt: RenderState = { ...st, headingIds: [], headingIndex: { value: 0 } };
+          const body = <div className="md-callout-body">{renderBlocks(bodyTokens, nestedSt)}</div>;
 
           if (fold === '-') {
             out.push(
@@ -553,6 +577,10 @@ function renderListItemBody(tokens: Tokens.Generic[] | undefined, st: RenderStat
 
 const MARKED_OPTIONS = { gfm: true, breaks: true, pedantic: false } as const;
 
+/** Stable empty key list: `|| []` allocated a fresh array per render and kept
+ * MarkdownImage's effect re-firing on every keystroke. */
+const EMPTY_VAULT_KEYS: string[] = [];
+
 export function renderMarkdown(content: string, ctx: MarkdownContext = {}): RenderedMarkdown {
   const { frontmatter, body } = splitFrontmatter(content);
   const tokens = marked.lexer(body, MARKED_OPTIONS) as Tokens.Generic[];
@@ -562,7 +590,7 @@ export function renderMarkdown(content: string, ctx: MarkdownContext = {}): Rend
 
   const st: RenderState = {
     ctx,
-    keys: ctx.vaultKeys || [],
+    keys: ctx.vaultKeys ?? EMPTY_VAULT_KEYS,
     taskIndex: { value: 0 },
     headingIds,
     headingIndex: { value: 0 },
@@ -581,17 +609,74 @@ export function renderMarkdown(content: string, ctx: MarkdownContext = {}): Rend
 
 /** Flip the Nth task checkbox (`- [ ]` / `- [x]`) in the source markdown. */
 export function toggleTaskInSource(markdown: string, taskIndex: number): string {
-  const lines = markdown.split('\n');
-  let seen = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const m = /^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]/.exec(lines[i]);
-    if (!m) continue;
-    if (seen === taskIndex) {
-      const checked = m[2].toLowerCase() === 'x';
-      lines[i] = lines[i].replace(/^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]/, `$1[${checked ? ' ' : 'x'}]`);
-      return lines.join('\n');
-    }
-    seen++;
+  const positions = collectTaskPositions(markdown);
+  const target = positions[taskIndex];
+  if (!target) return markdown;
+  const checked = markdown.slice(target.start + 1, target.end - 1).toLowerCase() === 'x';
+  return markdown.slice(0, target.start) + `[${checked ? ' ' : 'x'}]` + markdown.slice(target.end);
+}
+
+interface TaskPosition {
+  start: number;
+  end: number;
+}
+
+/**
+ * Source offsets of every rendered task checkbox, in render order.
+ *
+ * The renderer counts tasks while walking `marked.lexer` output, so the toggle
+ * must use the same walk. Scanning source lines with a regex disagreed in two
+ * ways: `- [ ]` inside a code fence was counted but never rendered, and a task
+ * inside a blockquote (`> - [ ]`) was rendered but never matched — clicking the
+ * Nth checkbox then flipped the wrong task and corrupted the note.
+ */
+function collectTaskPositions(markdown: string): TaskPosition[] {
+  let tokens: Tokens.Generic[];
+  try {
+    tokens = marked.lexer(markdown) as Tokens.Generic[];
+  } catch {
+    return [];
   }
-  return markdown;
+  const positions: TaskPosition[] = [];
+
+  /** Walk tokens whose raws tile the source from `startOffset`; returns the end. */
+  const walk = (toks: Tokens.Generic[], startOffset: number): number => {
+    let cursor = startOffset;
+    for (const tok of toks) {
+      const raw = tok.raw || '';
+      let at = cursor;
+      if (raw) {
+        const found = markdown.indexOf(raw, cursor);
+        if (found !== -1) {
+          at = found;
+          cursor = found + raw.length;
+        }
+      }
+      if (tok.type === 'list') {
+        const list = tok as unknown as Tokens.List;
+        let itemCursor = at;
+        for (const item of list.items) {
+          const itemRaw = item.raw || '';
+          const itemStart = itemRaw ? markdown.indexOf(itemRaw, itemCursor) : itemCursor;
+          if (itemStart !== -1 && itemRaw) itemCursor = itemStart + itemRaw.length;
+          if (item.task) {
+            const m = /^(\s*(?:[-*+]|\d+[.)])\s+)\[([ xX])\]/.exec(itemRaw);
+            if (m && itemStart !== -1) {
+              const bracketStart = itemStart + m[1].length;
+              positions.push({ start: bracketStart, end: bracketStart + m[2].length + 2 });
+            }
+          }
+          if (item.tokens && item.tokens.length > 0) {
+            walk(item.tokens as Tokens.Generic[], itemStart);
+          }
+        }
+      } else if (tok.tokens && tok.tokens.length > 0) {
+        cursor = walk(tok.tokens as Tokens.Generic[], at);
+      }
+    }
+    return cursor;
+  };
+
+  walk(tokens, 0);
+  return positions;
 }

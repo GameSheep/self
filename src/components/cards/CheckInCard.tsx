@@ -1,85 +1,52 @@
-import React, { useState } from 'react';
-import { CheckCircle2, Clock, AlertCircle, Play, ExternalLink, Flame, Trash2, Code2, Copy, Check, X } from 'lucide-react';
+import React from 'react';
+import { CheckCircle2, ExternalLink, Flame, Trash2, Clock } from 'lucide-react';
 import { CheckInTask } from '../../types';
-import { generateUserScript } from '../../lib/automation';
-import { hasRunToday, recentDays, computeStreak } from '../../lib/checkInHistory';
+import { hasRunToday, recentDays, computeStreak, OUTCOME_LABEL } from '../../lib/checkInHistory';
+import { StatusPill } from '../../shared/ui';
 
 interface CheckInCardProps {
   task: CheckInTask;
-  onRun: (id: string) => Promise<void>;
+  /** `mode: 'open_page'` opens the site; `'mark_done'` records the user's confirmation. */
+  onRun: (id: string, mode: 'open_page' | 'mark_done') => Promise<void>;
   onDelete: (id: string) => void;
 }
 
+/**
+ * Check-in site card — a plain list entry, not an automation control.
+ *
+ * The automatic paths (HTTP request, userscript, enable toggle) were removed:
+ * the app's job is to hold the list, open the site and remember what happened —
+ * the checking itself is the user's gesture on the target site. The card keeps
+ * the honest 14-day record: green = you marked it done, amber = you only opened
+ * the page, red = URL failed to open.
+ */
 export const CheckInCard: React.FC<CheckInCardProps> = ({ task, onRun, onDelete }) => {
-  const [running, setRunning] = useState(false);
-  const [showScriptModal, setShowScriptModal] = useState(false);
-  const [copiedScript, setCopiedScript] = useState(false);
-
-  const handleRun = async () => {
-    setRunning(true);
-    try {
-      await onRun(task.id);
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  const scriptCode = generateUserScript(task);
   const cells = recentDays(task.history || [], 14);
   const today = hasRunToday(task);
   // Derive from history when present: a stored counter can be stale (imported
   // data, or records written by an older version).
   const streak = task.history && task.history.length > 0 ? computeStreak(task.history) : task.streakDays || 0;
-
-  const handleCopyScript = () => {
-    navigator.clipboard.writeText(scriptCode);
-    setCopiedScript(true);
-    setTimeout(() => setCopiedScript(false), 2000);
-  };
-
-  const getStatusBadge = () => {
-    switch (task.lastStatus) {
-      case 'success':
-        return (
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-950/60 text-emerald-400 border border-emerald-800/50 whitespace-nowrap">
-            <CheckCircle2 className="w-3 h-3 shrink-0" />
-            <span>已签到</span>
-          </span>
-        );
-      case 'failed':
-        return (
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-950/60 text-red-400 border border-red-800/50 whitespace-nowrap">
-            <AlertCircle className="w-3 h-3 shrink-0" />
-            <span>失败</span>
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-950/60 text-amber-400 border border-amber-800/50 whitespace-nowrap">
-            <Clock className="w-3 h-3 shrink-0" />
-            <span>待执行</span>
-          </span>
-        );
-    }
-  };
+  const outcome = task.lastOutcome || 'never';
 
   return (
-    <div className="group relative p-3.5 sm:p-4 rounded-xl bg-[#121316] border border-[#22242a] card-hover shadow-sm flex flex-col justify-between">
+    <div className="group relative p-3.5 sm:p-4 rounded-xl bg-sh-surface border border-sh-line shadow-sm flex flex-col justify-between">
       <div>
         {/* Header */}
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <h3 className="text-xs sm:text-sm font-semibold text-zinc-100 truncate">
-                {task.name}
-              </h3>
-              {getStatusBadge()}
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+              <h3 className="text-xs sm:text-sm font-semibold text-sh-fg truncate">{task.name}</h3>
+              {today.done ? (
+                <StatusPill tone="ok" label="今日已签" />
+              ) : (
+                <StatusPill tone="neutral" label="今日未签" />
+              )}
             </div>
             <a
               href={task.url}
               target="_blank"
               rel="noreferrer"
-              className="text-[11px] text-zinc-500 hover:text-zinc-300 truncate block mt-0.5 font-mono"
+              className="text-[11px] text-sh-subtle hover:text-sh-fg truncate block mt-0.5 font-mono"
             >
               {task.url.replace(/^https?:\/\//, '')}
             </a>
@@ -87,43 +54,65 @@ export const CheckInCard: React.FC<CheckInCardProps> = ({ task, onRun, onDelete 
 
           <button
             onClick={() => {
-              if (confirm(`确定删除签到任务 ${task.name} 吗？`)) {
+              if (confirm(`确定从清单移除 ${task.name} 吗？`)) {
                 onDelete(task.id);
               }
             }}
-            className="opacity-100 sm:opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-red-400 transition-opacity shrink-0"
-            title="删除"
+            className="opacity-100 sm:opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-sh-surface2 text-sh-subtle hover:text-sh-danger transition-opacity shrink-0"
+            title="移除"
+            aria-label={`移除签到任务 ${task.name}`}
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 className="w-3.5 h-3.5" aria-hidden />
           </button>
         </div>
 
-        {/* Message Banner */}
-        {task.lastMessage && (
-          <div className="text-[11px] text-zinc-400 bg-zinc-900/80 p-2 rounded-lg border border-zinc-800/80 my-2 leading-relaxed break-words">
-            {task.lastMessage}
+        {/* Last note: what the app actually observed, one line */}
+        <div
+          className="text-[11px] text-sh-muted bg-sh-surface2 p-2 rounded-lg border border-sh-line my-2 leading-relaxed break-words"
+          data-testid={`checkin-last-result-${task.id}`}
+        >
+          <div className="flex items-center gap-1.5 mb-0.5">
+            <Clock className="w-3 h-3 text-sh-subtle shrink-0" aria-hidden />
+            {task.lastRun ? (
+              <span className="text-sh-subtle font-mono">{new Date(task.lastRun).toLocaleString()}</span>
+            ) : (
+              <span className="text-sh-subtle">还没有记录</span>
+            )}
+            {task.lastRun && outcome !== 'never' && (
+              <StatusPill tone={outcome === 'http_success' ? 'ok' : outcome === 'opened_page' ? 'warn' : 'danger'} label={OUTCOME_LABEL[outcome]} />
+            )}
           </div>
-        )}
+          {task.lastMessage && <p>{task.lastMessage}</p>}
+        </div>
 
-        {/* Last 14 days: honest per-day record instead of a bare counter */}
+        {/* Last 14 days: per-day record */}
         {cells.length > 0 && (
           <div className="flex items-center gap-1 my-2" data-testid="checkin-history">
-            <span className="text-[10px] text-zinc-500 font-mono mr-1 shrink-0">近 14 天</span>
+            <span className="text-[10px] text-sh-subtle font-mono mr-1 shrink-0">近 14 天</span>
             {cells.map((cell) => (
               <span
                 key={cell.date}
                 title={`${cell.date} · ${
-                  cell.status === 'success' ? '已签到' : cell.status === 'failed' ? '失败' : '未签到'
+                  cell.status === 'success'
+                    ? '已签到'
+                    : cell.outcome === 'opened_page'
+                      ? '仅打开页面'
+                      : cell.status === 'failed'
+                        ? '打开失败'
+                        : '未签到'
                 }`}
                 data-day={cell.date}
                 data-status={cell.status}
+                data-outcome={cell.outcome}
                 className={`w-2.5 h-2.5 rounded-sm shrink-0 ${
                   cell.status === 'success'
-                    ? 'bg-emerald-500'
-                    : cell.status === 'failed'
-                    ? 'bg-rose-500/80'
-                    : 'bg-zinc-800 border border-zinc-700'
-                } ${cell.isToday ? 'ring-1 ring-offset-1 ring-offset-[#121316] ring-zinc-500' : ''}`}
+                    ? 'bg-sh-ok'
+                    : cell.outcome === 'opened_page'
+                      ? 'bg-sh-warn/70'
+                      : cell.status === 'failed'
+                        ? 'bg-sh-danger/80'
+                        : 'bg-sh-surface2 border border-sh-line'
+                } ${cell.isToday ? 'ring-1 ring-offset-1 ring-offset-sh-surface ring-sh-line-strong' : ''}`}
               />
             ))}
           </div>
@@ -131,84 +120,37 @@ export const CheckInCard: React.FC<CheckInCardProps> = ({ task, onRun, onDelete 
       </div>
 
       {/* Footer & Actions */}
-      <div className="flex items-center justify-between pt-2 border-t border-zinc-800/60 mt-2 text-[11px] text-zinc-500">
+      <div className="flex items-center justify-between gap-2 pt-2 border-t border-sh-line mt-2 text-[11px] text-sh-subtle">
         <div className="flex items-center gap-1.5 font-mono whitespace-nowrap">
-          <Flame className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-          <span className="text-[10px] sm:text-[11px]" data-testid="checkin-streak">
-            连续 {streak} 天
-          </span>
-          {today.done && (
-            <span className="text-[10px] text-emerald-400 font-sans">今日已签</span>
-          )}
+          <Flame className="w-3.5 h-3.5 text-sh-warn shrink-0" />
+          <span data-testid="checkin-streak">连续 {streak} 天</span>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
-          {/* Tampermonkey Script Modal Trigger */}
+        <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
           <button
-            onClick={() => setShowScriptModal(true)}
-            className="p-1 sm:px-2 sm:py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 text-[11px] flex items-center gap-1 transition-colors border border-zinc-800"
-            title="查看/获取自动模拟点击油猴脚本"
+            onClick={() => void onRun(task.id, 'mark_done')}
+            disabled={today.done}
+            data-testid={`checkin-mark-done-${task.id}`}
+            title="签完回来点一下，记作今天已签（以你确认为准）"
+            className="p-1 sm:px-2 sm:py-1 rounded border border-sh-line bg-sh-surface2 text-sh-muted hover:text-sh-fg text-[11px] flex items-center gap-1 disabled:opacity-50 disabled:cursor-default"
           >
-            <Code2 className="w-3 h-3 shrink-0" />
-            <span className="hidden sm:inline">油猴脚本</span>
+            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden sm:inline">{today.done ? '已签' : '标记今天已签'}</span>
           </button>
 
           <button
-            onClick={handleRun}
-            disabled={running}
-            className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs flex items-center gap-1.5 transition-colors font-medium disabled:opacity-50 whitespace-nowrap"
+            onClick={() => void onRun(task.id, 'open_page')}
+            data-testid={`checkin-open-page-${task.id}`}
+            title="打开这个网站，由你自己完成签到"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sh-accent text-sh-accent-fg text-[11px] font-semibold"
           >
-            <Play className={`w-3 h-3 shrink-0 ${running ? 'animate-spin' : ''}`} />
-            <span>{running ? '执行中' : '立即签到'}</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+            打开网站
           </button>
         </div>
       </div>
-
-      {/* Tampermonkey Script View Modal */}
-      {showScriptModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-2xl bg-[#121316] border border-zinc-800 rounded-2xl p-5 shadow-2xl flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800 mb-3">
-              <div className="flex items-center gap-2">
-                <Code2 className="w-4 h-4 text-emerald-400" />
-                <h4 className="text-sm font-semibold text-zinc-100">
-                  油猴自动模拟点击脚本 · {task.name}
-                </h4>
-              </div>
-              <button
-                onClick={() => setShowScriptModal(false)}
-                className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-xs text-zinc-400 leading-relaxed mb-3">
-              对于需要登录且有复杂界面的网站，在 Chrome/Edge 安装 <strong>Tampermonkey (油猴插件)</strong>，将下方脚本安装进去。之后每次点击【立即签到】，浏览器打开页面后将<strong>自动寻找按钮并模拟点击签到</strong>！
-            </p>
-
-            <pre className="flex-1 overflow-y-auto bg-black/70 p-3.5 rounded-xl border border-zinc-800 text-[11px] font-mono text-zinc-300 leading-relaxed select-all">
-              {scriptCode}
-            </pre>
-
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800 mt-3">
-              <button
-                onClick={() => setShowScriptModal(false)}
-                className="px-3 py-1.5 rounded-lg bg-zinc-900 text-zinc-300 text-xs hover:bg-zinc-800"
-              >
-                关闭
-              </button>
-              <button
-                onClick={handleCopyScript}
-                className="px-3.5 py-1.5 rounded-lg bg-zinc-100 text-zinc-900 font-semibold text-xs flex items-center gap-1.5 hover:bg-white"
-              >
-                {copiedScript ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedScript ? '已复制脚本代码' : '一键复制脚本'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
+
+export default CheckInCard;

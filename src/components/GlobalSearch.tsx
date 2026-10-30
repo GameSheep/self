@@ -1,100 +1,156 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Search, 
-  ExternalLink, 
-  Server, 
-  Key, 
-  BookOpen, 
-  Clock, 
-  FileText, 
-  ArrowRight, 
-  X, 
-  Copy, 
-  Check,
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowRight,
+  BookOpen,
+  Clock,
+  ExternalLink,
+  FileText,
   FolderKanban,
-  Inbox
+  Inbox,
+  Key,
+  PenLine,
+  Search,
+  Server,
+  X
 } from 'lucide-react';
-import { NavSite, ServerDeployment, SecretItem, ObsidianNote, ReminderItem, QuickNote, ProjectItem, InboxItem } from '../types';
-import { matchesQuery } from '../lib/searchEngine';
-import { decryptText } from '../lib/crypto';
-import { loadIndex, searchIndex, type IndexedDoc } from '../lib/vaultIndex';
+import type { HubState, SecretItem } from '../types';
+import { loadIndex, type IndexedDoc } from '../lib/vaultIndex';
+import { searchEverything, type SearchHit, type SearchKind, type SearchResult } from '../domain/search';
+
+/**
+ * Global command palette.
+ *
+ * Thin by design: the searching itself lives in `domain/search.ts`
+ * (`searchEverything`), which is the single place that knows what is searchable and
+ * what is not. This component renders groups, highlights the match inside a real
+ * snippet, shows how many matches each group has, and reports its coverage — so a
+ * "no results" answer can no longer mean "this box didn't look there".
+ */
 
 interface GlobalSearchProps {
   isOpen: boolean;
   onClose: () => void;
-  sites: NavSite[];
-  servers: ServerDeployment[];
-  secrets: SecretItem[];
-  notes: QuickNote[];
-  reminders: ReminderItem[];
-  obsidianNotes: ObsidianNote[];
-  projects?: ProjectItem[];
-  inbox?: InboxItem[];
-  masterPassword: string | null;
-  onRequireUnlock: () => void;
-  onSelectSite: (url: string) => void;
-  onSelectServer: (server: ServerDeployment) => void;
-  onSelectNote?: (note: QuickNote) => void;
-  onSelectProject?: (proj: ProjectItem) => void;
-  onSelectInbox?: (item: InboxItem) => void;
-  /** Open a note from the OSS vault by its key (full-text index hit). */
-  onSelectVaultNote?: (key: string) => void;
+  state: HubState;
+  /** Bodies from the local vault index, when one has been built. */
+  vaultDocs?: IndexedDoc[];
+  masterPassword?: string | null;
+  onRequireUnlock?: () => void;
+  /** The caller decides what "open" means for each kind. */
+  onOpenResult: (hit: SearchHit) => void;
+  /** Copy a credential; only called when unlocked. */
+  onCopySecret?: (secret: SecretItem) => void;
+}
+
+const KIND_ICONS: Record<SearchKind, React.ReactNode> = {
+  note: <FileText className="w-3.5 h-3.5 text-purple-400" />,
+  annotation: <BookOpen className="w-3.5 h-3.5 text-amber-400" />,
+  drawing: <PenLine className="w-3.5 h-3.5 text-pink-400" />,
+  bookmark: <ExternalLink className="w-3.5 h-3.5 text-sky-400" />,
+  server: <Server className="w-3.5 h-3.5 text-emerald-400" />,
+  reminder: <Clock className="w-3.5 h-3.5 text-orange-400" />,
+  project: <FolderKanban className="w-3.5 h-3.5 text-emerald-400" />,
+  inbox: <Inbox className="w-3.5 h-3.5 text-amber-400" />,
+  secret: <Key className="w-3.5 h-3.5 text-amber-400" />,
+  remote: <BookOpen className="w-3.5 h-3.5 text-purple-400" />,
+  vault: <Search className="w-3.5 h-3.5 text-purple-400" />
+};
+
+/** Snippet with the literal match highlighted (pinyin matches have no offset). */
+function Snippet({ hit }: { hit: SearchHit }) {
+  if (!hit.snippet) return null;
+  const { snippet, matchIndex, matchLength } = hit;
+  if (matchIndex === undefined || !matchLength) {
+    return <div className="text-[11px] text-zinc-400 truncate">{snippet}</div>;
+  }
+  const end = matchIndex + matchLength;
+  return (
+    <div className="text-[11px] text-zinc-400 truncate" data-search-snippet>
+      {snippet.slice(0, matchIndex)}
+      <mark className="bg-amber-400/30 text-amber-100 rounded px-0.5">{snippet.slice(matchIndex, end)}</mark>
+      {snippet.slice(end)}
+    </div>
+  );
 }
 
 export const GlobalSearch: React.FC<GlobalSearchProps> = ({
   isOpen,
   onClose,
-  sites,
-  servers,
-  secrets,
-  notes,
-  reminders,
-  obsidianNotes,
-  projects = [],
-  inbox = [],
+  state,
+  vaultDocs,
   masterPassword,
   onRequireUnlock,
-  onSelectSite,
-  onSelectServer,
-  onSelectNote,
-  onSelectProject,
-  onSelectInbox,
-  onSelectVaultNote
+  onOpenResult,
+  onCopySecret
 }) => {
   const [query, setQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState<'all' | 'site' | 'server' | 'secret' | 'reminder' | 'note' | 'project' | 'inbox'>('all');
+  const [activeKind, setActiveKind] = useState<'all' | SearchKind>('all');
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [indexDocs, setIndexDocs] = useState<IndexedDoc[]>([]);
+  const [loadedDocs, setLoadedDocs] = useState<IndexedDoc[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Pull the local full-text index the first time the palette opens.
+  /**
+   * Remote note bodies come from the local vault index, which this dialog reads
+   * itself when the caller did not supply it. Loading is deferred to the first open so
+   * the palette costs nothing until it is used, and a failure degrades to "not
+   * indexed" (reported in the coverage line) instead of an empty-looking search.
+   */
   useEffect(() => {
-    if (!isOpen || indexDocs.length > 0) return;
+    if (!isOpen || vaultDocs) return;
     let alive = true;
-    loadIndex().then((docs) => {
-      if (alive) setIndexDocs(docs);
-    });
+    loadIndex()
+      .then((docs) => {
+        if (alive) setLoadedDocs(docs);
+      })
+      .catch(() => undefined);
     return () => {
       alive = false;
     };
-  }, [isOpen, indexDocs.length]);
+  }, [isOpen, vaultDocs]);
 
+  const docs = vaultDocs ?? loadedDocs;
+
+  // Keep the keyboard-selected row inside the scrollable viewport: without this,
+  // arrow keys past the first screen highlighted rows the user could not see and
+  // Enter opened something invisible.
+  const listRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (isOpen) {
-      setTimeout(() => inputRef.current?.focus(), 50);
-      setQuery('');
-      setSelectedIndex(0);
-      setActiveFilter('all');
-    }
+    if (!isOpen) return;
+    const container = listRef.current;
+    if (!container) return;
+    container.querySelector('[data-search-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [selectedIndex, isOpen]);
+
+  // Restore focus to the trigger when the palette closes; dropping focus on body
+  // forced keyboard users to Tab from the top of the page.
+  const triggerRef = useRef<Element | null>(null);
+  useEffect(() => {
+    if (!isOpen) return;
+    triggerRef.current = document.activeElement;
+    return () => {
+      const el = triggerRef.current;
+      if (el && el.isConnected && document.contains(el)) {
+        (el as HTMLElement).focus?.();
+      }
+      triggerRef.current = null;
+    };
   }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
+    setQuery('');
+    setActiveKind('all');
+    setSelectedIndex(0);
+    // Focus immediately, not on a timer: a user who presses ⌘K and types straight away
+    // must not lose the first characters. (The old 30ms delay lost them, and it was
+    // only invisible because the home page happened to show the same title.)
+    inputRef.current?.focus();
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
         onClose();
       }
     };
@@ -102,258 +158,211 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
     return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
   }, [isOpen, onClose]);
 
+  const result: SearchResult = useMemo(
+    () =>
+      searchEverything({
+        state,
+        vaultDocs: docs,
+        query,
+        kinds: activeKind === 'all' ? undefined : [activeKind],
+        // A single-category view is a deliberate "show me more of this", so it gets a
+        // bigger page than the mixed view's 5-per-kind preview.
+        limits: activeKind === 'all' ? undefined : { [activeKind]: 50 }
+      }),
+    [state, docs, query, activeKind]
+  );
+
+  /** Flat list in render order, so arrow keys and Enter agree with what is visible. */
+  const visibleHits = useMemo(() => result.groups.flatMap((group) => group.hits), [result]);
+  const totalForKind = useMemo(() => {
+    const map = new Map<SearchKind, number>();
+    for (const group of result.groups) map.set(group.kind, group.total);
+    return map;
+  }, [result]);
+
   if (!isOpen) return null;
 
-  const q = query.trim();
-
-  // Multi-entity search with Pinyin & full-text matching
-  const matchedSites = sites
-    .filter(s => matchesQuery(`${s.title} ${s.url} ${s.category} ${s.description || ''} ${(s.tags || []).join(' ')}`, q))
-    .slice(0, 6);
-
-  const matchedServers = servers
-    .filter(srv => matchesQuery(`${srv.name} ${srv.publicIp} ${srv.domain || ''} ${srv.sshUser || ''} ${srv.notes || ''} ${srv.env}`, q))
-    .slice(0, 5);
-
-  const matchedSecrets = secrets
-    .filter(sec => matchesQuery(`${sec.name} ${sec.description || ''} ${sec.category} ${(sec.tags || []).join(' ')}`, q))
-    .slice(0, 4);
-
-  const matchedReminders = reminders
-    .filter(rem => matchesQuery(`${rem.title} ${rem.cost || ''} ${rem.notes || ''} ${rem.category}`, q))
-    .slice(0, 4);
-
-  const matchedNotes = notes
-    .filter(n => matchesQuery(`${n.title} ${n.content} ${n.category || ''} ${(n.tags || []).join(' ')}`, q))
-    .slice(0, 4);
-
-  const matchedObsidian = obsidianNotes
-    .filter(n => matchesQuery(`${n.title} ${n.path} ${n.content || ''}`, q))
-    .slice(0, 4);
-
-  const matchedProjects = projects
-    .filter(p => matchesQuery(`${p.name} ${p.description} ${(p.tags || []).join(' ')} ${p.status}`, q))
-    .slice(0, 4);
-
-  const matchedInbox = inbox
-    .filter(i => matchesQuery(`${i.content} ${i.title || ''} ${i.url || ''} ${i.type}`, q))
-    .slice(0, 4);
-
-  /**
-   * Full-text hits over the local vault index. Grouped separately from the
-   * filename-based `obsidianNotes` matches, which only see loaded metadata.
-   */
-  const matchedVault = q.length >= 2 ? searchIndex(indexDocs, q, 6) : [];
-
-  // Group all results based on activeFilter
-  const allResults = [
-    ...(activeFilter === 'all' || activeFilter === 'project' ? matchedProjects.map(p => ({ type: 'project' as const, item: p, title: p.name, sub: p.description, category: `项目·${p.status}` })) : []),
-    ...(activeFilter === 'all' || activeFilter === 'inbox' ? matchedInbox.map(i => ({ type: 'inbox' as const, item: i, title: i.title || i.content.slice(0, 30), sub: i.url || i.content, category: '收件箱' })) : []),
-    ...(activeFilter === 'all' || activeFilter === 'site' ? matchedSites.map(s => ({ type: 'site' as const, item: s, title: s.title, sub: s.url, category: s.category })) : []),
-    ...(activeFilter === 'all' || activeFilter === 'server' ? matchedServers.map(srv => ({ type: 'server' as const, item: srv, title: srv.name, sub: `${srv.publicIp}:${srv.port} (${srv.sshUser})`, category: srv.env.toUpperCase() })) : []),
-    ...(activeFilter === 'all' || activeFilter === 'secret' ? matchedSecrets.map(sec => ({ type: 'secret' as const, item: sec, title: sec.name, sub: sec.maskedPreview, category: 'AES加密' })) : []),
-    ...(activeFilter === 'all' || activeFilter === 'reminder' ? matchedReminders.map(rem => ({ type: 'reminder' as const, item: rem, title: rem.title, sub: `到期日: ${new Date(rem.targetDate).toLocaleDateString()} ${rem.cost || ''}`, category: '时效提醒' })) : []),
-    ...(activeFilter === 'all' || activeFilter === 'note' ? matchedVault.map(hit => ({ type: 'vault' as const, item: hit, title: hit.title, sub: hit.snippet, category: `正文·${hit.key.split('/').slice(0, -1).join('/') || '根目录'}` })) : []),
-    ...(activeFilter === 'all' || activeFilter === 'note' ? matchedNotes.map(n => ({ type: 'note' as const, item: n, title: n.title, sub: n.content.slice(0, 60), category: n.category || '知识文档' })) : []),
-    ...(activeFilter === 'all' || activeFilter === 'note' ? matchedObsidian.map(obs => ({ type: 'obsidian' as const, item: obs, title: obs.title, sub: obs.path, category: 'Obsidian' })) : [])
-  ];
-
-  const handleExecute = async (res: typeof allResults[0]) => {
-    if (res.type === 'site') {
-      onSelectSite((res.item as NavSite).url);
-    } else if (res.type === 'server') {
-      onSelectServer(res.item as ServerDeployment);
-    } else if (res.type === 'secret') {
-      const sec = res.item as SecretItem;
+  const activate = (hit: SearchHit) => {
+    if (hit.kind === 'secret') {
+      const secret = hit.entity as SecretItem | undefined;
+      if (!secret) return;
       if (!masterPassword) {
-        onRequireUnlock();
+        onRequireUnlock?.();
         return;
       }
-      try {
-        const plain = await decryptText(sec.encryptedValue, sec.iv, sec.salt, masterPassword);
-        navigator.clipboard.writeText(plain);
-        setCopiedId(sec.id);
-        setTimeout(() => setCopiedId(null), 2000);
-      } catch {
-        onRequireUnlock();
-      }
-    } else if (res.type === 'reminder') {
-      const rem = res.item as ReminderItem;
-      if (rem.url) window.open(rem.url, '_blank');
-    } else if (res.type === 'note' && onSelectNote) {
-      onSelectNote(res.item as QuickNote);
-    } else if (res.type === 'project' && onSelectProject) {
-      onSelectProject(res.item as ProjectItem);
-    } else if (res.type === 'inbox' && onSelectInbox) {
-      onSelectInbox(res.item as InboxItem);
-    } else if (res.type === 'vault' && onSelectVaultNote) {
-      onSelectVaultNote((res.item as { key: string }).key);
+      onCopySecret?.(secret);
+      onClose();
+      return;
     }
+    onOpenResult(hit);
     onClose();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setSelectedIndex(prev => (prev + 1) % Math.max(1, allResults.length));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setSelectedIndex(prev => (prev - 1 + allResults.length) % Math.max(1, allResults.length));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      const current = allResults[selectedIndex];
-      if (current) handleExecute(current);
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setSelectedIndex((prev) => (prev + 1) % Math.max(1, visibleHits.length));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setSelectedIndex((prev) => (prev - 1 + visibleHits.length) % Math.max(1, visibleHits.length));
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const hit = visibleHits[selectedIndex];
+      if (hit) activate(hit);
     }
   };
 
+  const chips: Array<{ id: 'all' | SearchKind; label: string; count: number }> = [
+    { id: 'all', label: '全部', count: result.total },
+    ...result.groups.map((group) => ({ id: group.kind, label: group.label, count: group.total }))
+  ];
+
+  let runningIndex = -1;
+
   return (
-    <div 
+    <div
       onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="全局搜索"
       className="fixed inset-0 z-50 flex items-start justify-center pt-14 sm:pt-20 p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
     >
-      <div 
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl bg-[#121316] border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+      <div
+        onClick={(event) => event.stopPropagation()}
+        className="w-full max-w-2xl bg-sh-surface border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
       >
-        {/* Search Input Bar */}
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-zinc-800">
           <Search className="w-4 h-4 text-zinc-400 shrink-0" />
           <input
             ref={inputRef}
             type="text"
+            autoFocus
             value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
+            onChange={(event) => {
+              setQuery(event.target.value);
               setSelectedIndex(0);
             }}
             onKeyDown={handleKeyDown}
-            placeholder="强力拼音/英文/全文检索 (如: github, cf, chat, vps, 1.2.3.4, 密码)..."
+            placeholder="搜索笔记、批注、收藏、服务器、提醒、项目、收件箱…（支持拼音首字母）"
+            aria-label="搜索全部数据"
+            data-testid="global-search-input"
             className="w-full bg-transparent text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
           />
           <div className="flex items-center gap-1.5 shrink-0">
             <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono bg-zinc-800 text-zinc-400 rounded border border-zinc-700">
               ESC
             </kbd>
-            <button
-              onClick={onClose}
-              className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white"
-            >
+            <button onClick={onClose} aria-label="关闭搜索" className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white">
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Faceted Filter Filter Strip */}
-        <div className="flex items-center gap-1 px-3 py-1.5 bg-zinc-900/60 border-b border-zinc-800 text-[11px] overflow-x-auto scrollbar-none">
-          <button
-            onClick={() => setActiveFilter('all')}
-            className={`px-2.5 py-1 rounded-md transition-colors ${activeFilter === 'all' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
-          >
-            全部 ({allResults.length})
-          </button>
-          <button
-            onClick={() => setActiveFilter('site')}
-            className={`px-2.5 py-1 rounded-md transition-colors ${activeFilter === 'site' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
-          >
-            网站 ({matchedSites.length})
-          </button>
-          <button
-            onClick={() => setActiveFilter('server')}
-            className={`px-2.5 py-1 rounded-md transition-colors ${activeFilter === 'server' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
-          >
-            服务器 ({matchedServers.length})
-          </button>
-          <button
-            onClick={() => setActiveFilter('project')}
-            className={`px-2.5 py-1 rounded-md transition-colors ${activeFilter === 'project' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
-          >
-            项目 ({matchedProjects.length})
-          </button>
-          <button
-            onClick={() => setActiveFilter('inbox')}
-            className={`px-2.5 py-1 rounded-md transition-colors ${activeFilter === 'inbox' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
-          >
-            收件箱 ({matchedInbox.length})
-          </button>
-          <button
-            onClick={() => setActiveFilter('secret')}
-            className={`px-2.5 py-1 rounded-md transition-colors ${activeFilter === 'secret' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
-          >
-            金库 ({matchedSecrets.length})
-          </button>
-          <button
-            onClick={() => setActiveFilter('reminder')}
-            className={`px-2.5 py-1 rounded-md transition-colors ${activeFilter === 'reminder' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
-          >
-            提醒 ({matchedReminders.length})
-          </button>
-          <button
-            onClick={() => setActiveFilter('note')}
-            className={`px-2.5 py-1 rounded-md transition-colors ${activeFilter === 'note' ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'}`}
-          >
-            知识文档 ({matchedNotes.length + matchedObsidian.length})
-          </button>
-        </div>
+        {chips.length > 1 && (
+          <div className="flex items-center gap-1 px-3 py-1.5 bg-zinc-900/60 border-b border-zinc-800 text-[11px] overflow-x-auto">
+            {chips.map((chip) => (
+              <button
+                key={chip.id}
+                onClick={() => {
+                  setActiveKind(chip.id);
+                  setSelectedIndex(0);
+                }}
+                data-search-chip={chip.id}
+                data-active={activeKind === chip.id ? 'true' : 'false'}
+                className={`px-2.5 py-1 rounded-md transition-colors ${
+                  activeKind === chip.id ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                {chip.label} ({chip.count})
+              </button>
+            ))}
+          </div>
+        )}
 
-        {/* Results List */}
-        <div className="p-2 max-h-[60vh] overflow-y-auto space-y-1" data-testid="global-search-results">
-          {allResults.length === 0 ? (
-            <div className="p-8 text-center text-xs text-zinc-500">
-              未找到匹配资产，支持输入拼音首字母（如 ali 匹配阿里云，gh 匹配 GitHub）
+        <div ref={listRef} role="listbox" aria-label="搜索结果" className="p-2 max-h-[60vh] overflow-y-auto space-y-1" data-testid="global-search-results">
+          {query.trim() === '' ? (
+            <div className="p-6 text-center text-xs text-zinc-500">
+              输入关键词开始搜索。批注的原文与你的批注、笔记正文都会被检索；金库只匹配名称，明文不参与搜索。
+            </div>
+          ) : result.total === 0 ? (
+            <div className="p-6 text-center text-xs text-zinc-500 space-y-1">
+              <div>没有匹配「{query.trim()}」的结果。</div>
+              <div className="text-[10px] text-zinc-600" data-testid="search-coverage-empty">
+                {result.coverage.skipped.join(' ')}
+              </div>
             </div>
           ) : (
-            allResults.map((res, idx) => {
-              const isSelected = idx === selectedIndex;
-              return (
-                <div
-                  key={`${res.type}-${idx}`}
-                  onClick={() => handleExecute(res)}
-                  onMouseEnter={() => setSelectedIndex(idx)}
-                  className={`flex items-center justify-between p-2.5 rounded-xl text-xs cursor-pointer transition-colors ${
-                    isSelected ? 'bg-zinc-800 text-white' : 'text-zinc-300 hover:bg-zinc-900'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <div className="w-6 h-6 rounded-md bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
-                      {res.type === 'site' && <ExternalLink className="w-3.5 h-3.5 text-sky-400" />}
-                      {res.type === 'server' && <Server className="w-3.5 h-3.5 text-emerald-400" />}
-                      {res.type === 'secret' && <Key className="w-3.5 h-3.5 text-amber-400" />}
-                      {res.type === 'reminder' && <Clock className="w-3.5 h-3.5 text-orange-400" />}
-                      {res.type === 'note' && <FileText className="w-3.5 h-3.5 text-purple-400" />}
-                      {res.type === 'obsidian' && <BookOpen className="w-3.5 h-3.5 text-purple-400" />}
-                      {res.type === 'project' && <FolderKanban className="w-3.5 h-3.5 text-emerald-400" />}
-                      {res.type === 'inbox' && <Inbox className="w-3.5 h-3.5 text-amber-400" />}
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold truncate">{res.title}</div>
-                      <div className="text-[11px] text-zinc-400 font-mono truncate">{res.sub}</div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0 ml-2">
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
-                      {res.category}
-                    </span>
-                    {isSelected && <ArrowRight className="w-3.5 h-3.5 text-zinc-400" />}
-                  </div>
+            result.groups.map((group) => (
+              <div key={group.kind} data-search-group={group.kind}>
+                <div className="flex items-center justify-between px-2 pt-2 pb-1 text-[10px] text-zinc-500 font-mono">
+                  <span>
+                    {group.label} · {group.total}
+                  </span>
+                  {group.total > group.hits.length && (
+                    <span data-search-more={group.kind}>还有 {group.total - group.hits.length} 条，可切换到这个分类查看</span>
+                  )}
                 </div>
-              );
-            })
+                {group.hits.map((hit) => {
+                  runningIndex += 1;
+                  const index = runningIndex;
+                  const isSelected = index === selectedIndex;
+                  return (
+                    <div
+                      key={`${hit.kind}-${hit.id}`}
+                      onClick={() => activate(hit)}
+                      onMouseEnter={() => setSelectedIndex(index)}
+                      data-search-hit={hit.kind}
+                      data-search-id={hit.id}
+                      data-search-selected={isSelected ? 'true' : undefined}
+                      role="option"
+                      aria-selected={isSelected}
+                      className={`flex items-center justify-between p-2.5 rounded-xl text-xs cursor-pointer transition-colors ${
+                        isSelected ? 'bg-zinc-800 text-white' : 'text-zinc-300 hover:bg-zinc-900'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="w-6 h-6 rounded-md bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
+                          {KIND_ICONS[hit.kind]}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold truncate">{hit.title}</div>
+                          <Snippet hit={hit} />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                        {hit.meta && (
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
+                            {hit.meta}
+                          </span>
+                        )}
+                        {isSelected && <ArrowRight className="w-3.5 h-3.5 text-zinc-400" />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))
           )}
         </div>
 
-        {/* Footer shortcuts info */}
-        <div className="flex items-center justify-between px-4 py-2 border-t border-zinc-800/80 bg-zinc-900/40 text-[10px] text-zinc-500 font-mono">
-          <div className="flex items-center gap-3">
-            <span>↑↓ 切换</span>
-            <span>Enter 执行</span>
-            <span>ESC 关闭</span>
+        <div className="px-4 py-2 border-t border-zinc-800/80 bg-zinc-900/40 text-[10px] text-zinc-500 font-mono space-y-1">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span>↑↓ 切换</span>
+              <span>Enter 打开</span>
+              <span>ESC 关闭</span>
+            </div>
+            <span>已匹配 {result.total} 条</span>
           </div>
-          <span>支持拼音首字母检索 · Command Palette</span>
+          {result.coverage.skipped.length > 0 && (
+            <div className="text-zinc-600" data-testid="search-coverage">
+              未覆盖：{result.coverage.skipped.join(' ')}
+            </div>
+          )}
         </div>
-
       </div>
     </div>
   );
 };
+
+export default GlobalSearch;

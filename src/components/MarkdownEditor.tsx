@@ -30,6 +30,8 @@ export type EditorMode = 'edit' | 'split' | 'preview';
 interface MarkdownEditorProps {
   value: string;
   onChange: (next: string) => void;
+  /** Stable id of the note being edited; switching it resets the preview scroll. */
+  noteKey?: string;
   /** Ctrl/Cmd+S handler. */
   onSave?: () => void;
   mode: EditorMode;
@@ -89,6 +91,28 @@ function insertBlock(value: string, start: number, end: number, block: string): 
   return { text, selectionStart: caret, selectionEnd: caret + block.length };
 }
 
+/**
+ * Remove up to one level of indentation (≤2 spaces or 1 tab) per selected line.
+ * `prefixLines('')` was a no-op (startsWith('') is always true and the slice is
+ * identity), which made Shift+Tab do nothing at all.
+ */
+function outdentLines(value: string, start: number, end: number): Edit {
+  const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+  const lineEnd = value.indexOf('\n', end);
+  const stop = lineEnd === -1 ? value.length : lineEnd;
+  const block = value.slice(lineStart, stop);
+  const lines = block.split('\n');
+  let firstStrip = 0;
+  const nextLines = lines.map((line, i) => {
+    const strip = /^( {1,2}|\t)/.exec(line)?.[0].length || 0;
+    if (i === 0) firstStrip = strip;
+    return strip > 0 ? line.slice(strip) : line;
+  });
+  const text = value.slice(0, lineStart) + nextLines.join('\n') + value.slice(stop);
+  const delta = nextLines.join('\n').length - block.length;
+  return { text, selectionStart: Math.max(lineStart, start - firstStrip), selectionEnd: end + delta };
+}
+
 const TABLE_TEMPLATE = `| 列 1 | 列 2 |\n| --- | --- |\n|  |  |\n`;
 
 /* -------------------------------------------------------------- component */
@@ -96,6 +120,7 @@ const TABLE_TEMPLATE = `| 列 1 | 列 2 |\n| --- | --- |\n|  |  |\n`;
 export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   value,
   onChange,
+  noteKey,
   onSave,
   mode,
   onModeChange,
@@ -122,13 +147,36 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   const previewStale = deferredValue !== value;
 
   const applyEdit = useCallback(
-    (edit: Edit) => {
+    (edit: Edit, replaceRange?: { start: number; end: number }) => {
+      const el = textareaRef.current;
+      // Prefer a real browser edit command: programmatically setting a
+      // controlled textarea's value wipes the native undo stack, so Ctrl+Z
+      // after a toolbar action jumped to some earlier typing state instead of
+      // undoing the formatting. execCommand keeps undo working; fall back to
+      // the plain assignment when it is unavailable or refuses.
+      if (el && replaceRange && typeof document !== 'undefined' && document.execCommand) {
+        try {
+          el.focus();
+          el.setSelectionRange(replaceRange.start, replaceRange.end);
+          const ok = document.execCommand('insertText', false, edit.text);
+          if (ok && el.value === edit.text) {
+            requestAnimationFrame(() => {
+              const ta = textareaRef.current;
+              if (!ta) return;
+              ta.setSelectionRange(edit.selectionStart, edit.selectionEnd);
+            });
+            return;
+          }
+        } catch {
+          /* fall through to the controlled update */
+        }
+      }
       onChange(edit.text);
       requestAnimationFrame(() => {
-        const el = textareaRef.current;
-        if (!el) return;
-        el.focus();
-        el.setSelectionRange(edit.selectionStart, edit.selectionEnd);
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.focus();
+        ta.setSelectionRange(edit.selectionStart, edit.selectionEnd);
       });
     },
     [onChange]
@@ -138,7 +186,9 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
     (action: (value: string, start: number, end: number) => Edit) => {
       const el = textareaRef.current;
       if (!el) return;
-      applyEdit(action(value, el.selectionStart, el.selectionEnd));
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      applyEdit(action(value, start, end), { start, end });
     },
     [applyEdit, value]
   );
@@ -177,22 +227,11 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       e.preventDefault();
       const start = el.selectionStart;
       const end = el.selectionEnd;
-      if (start !== end || e.shiftKey) {
-        runAction((v, s, en) =>
-          e.shiftKey ? prefixLines(v, s, en, '') : prefixLines(v, s, en, '  ')
-        );
-      } else if (e.shiftKey) {
-        // Outdent current line by up to two spaces.
-        const lineStart = value.lastIndexOf('\n', start - 1) + 1;
-        const line = value.slice(lineStart, start);
-        const strip = /^ {1,2}/.exec(line)?.[0].length || 0;
-        if (strip > 0) {
-          applyEdit({
-            text: value.slice(0, lineStart) + line.slice(strip) + value.slice(start),
-            selectionStart: start - strip,
-            selectionEnd: start - strip
-          });
-        }
+      if (e.shiftKey) {
+        // Outdent: every selected line (or the current one) loses one indent level.
+        runAction((v, s, en) => outdentLines(v, s, en));
+      } else if (start !== end) {
+        runAction((v, s, en) => prefixLines(v, s, en, '  '));
       } else {
         applyEdit({ text: `${value.slice(0, start)}  ${value.slice(end)}`, selectionStart: start + 2, selectionEnd: start + 2 });
       }
@@ -250,13 +289,21 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
 
   const [uploadingCount, setUploadingCount] = useState(0);
 
+  // Latest editor text for async insertions: an upload await can finish after
+  // the user typed more, and rebuilding the value from a stale closure would
+  // discard those keystrokes (and overwrite earlier inserted attachments).
+  const latestValueRef = useRef(value);
+  latestValueRef.current = value;
+
   /** Insert text at the caret and leave the caret after it. */
   const insertAtCaret = useCallback(
     (text: string) => {
       const el = textareaRef.current;
-      const start = el ? el.selectionStart : value.length;
-      const end = el ? el.selectionEnd : value.length;
-      const next = `${value.slice(0, start)}${text}${value.slice(end)}`;
+      const current = latestValueRef.current;
+      const start = el ? Math.min(el.selectionStart, current.length) : current.length;
+      const end = el ? Math.min(el.selectionEnd, current.length) : current.length;
+      const next = `${current.slice(0, start)}${text}${current.slice(end)}`;
+      latestValueRef.current = next;
       onChange(next);
       const caret = start + text.length;
       requestAnimationFrame(() => {
@@ -266,7 +313,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         ta.setSelectionRange(caret, caret);
       });
     },
-    [onChange, value]
+    [onChange]
   );
 
   /**
@@ -354,9 +401,12 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   };
 
   useLayoutEffect(() => {
-    // Keep the preview pinned to the top when switching notes.
+    // Keep the preview pinned to the top when switching notes. Depends on the
+    // note identity, not on emptiness: the previous condition (`value.length
+    // === 0`) only fired on empty↔non-empty switches, so going from one non-empty
+    // note to another kept the old scroll position.
     if (previewRef.current) previewRef.current.scrollTop = 0;
-  }, [value.length === 0]);
+  }, [noteKey]);
 
   const headingSignature = headings.map((h) => `${h.depth}:${h.id}`).join('|');
   useEffect(() => {
@@ -408,7 +458,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   return (
     <div className="md-editor">
       {/* Toolbar */}
-      <div className="md-editor-toolbar border-[#1e2026] bg-[#0f1013]">
+      <div className="md-editor-toolbar border-sh-line bg-sh-surface">
         <div className="flex items-center gap-0.5 mr-auto flex-wrap">
           {tools.map((t) => (
             <button key={t.title} type="button" title={t.title} onClick={t.run} className="md-editor-tool">
@@ -479,14 +529,14 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       </div>
 
       {uploadingCount > 0 && (
-        <div className="px-3 py-1.5 text-[11px] text-sky-400 border-t border-[#1e2026] bg-[#0f1013] flex items-center gap-1.5">
+        <div className="px-3 py-1.5 text-[11px] text-sky-400 border-t border-sh-line bg-sh-surface flex items-center gap-1.5">
           <Loader2 className="w-3 h-3 animate-spin" />
           正在上传 {uploadingCount} 个附件到 OSS…
         </div>
       )}
 
       {/* Status bar */}
-      <div className="md-editor-status border-[#1e2026] bg-[#0f1013]">
+      <div className="md-editor-status border-sh-line bg-sh-surface">
         <span className="flex items-center gap-3">
           <span>{value.length} 字符</span>
           <span>{value.split('\n').length} 行</span>

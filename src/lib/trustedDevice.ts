@@ -145,10 +145,3 @@ export async function recallMasterPassword(): Promise<string | null> {
 export async function forgetMasterPassword(): Promise<void> {
   await deleteRecord();
 }
-
-/** Expiry timestamp of the current remembered session, or null. */
-export async function rememberedSessionExpiry(): Promise<number | null> {
-  const record = await getRecord();
-  if (!record?.value?.expiresAt) return null;
-  return record.value.expiresAt > Date.now() ? record.value.expiresAt : null;
-}

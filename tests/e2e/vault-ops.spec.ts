@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState, STORAGE_KEY } from './helpers';
+import { seedState, baseState, STORAGE_KEY, gotoTab } from './helpers';
 
 /**
  * Vault file operations: upload, rename, move, folders, attachment preview.
@@ -8,9 +8,9 @@ import { seedState, baseState, STORAGE_KEY } from './helpers';
  * typo in a filename meant re-creating the note, and pasted screenshots vanished.
  */
 
-const KEY_ID = 'LTAI5t8JAm7fyYaDsK5ECJer';
+const KEY_ID = 'LTAI5tEXAMPLE000000000';
 const ENDPOINT = 'oss-cn-beijing.aliyuncs.com';
-const BUCKET = 'uiuecho-obsidian';
+const BUCKET = 'example-obsidian-vault';
 
 const LIST_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult><Name>${BUCKET}</Name><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>
@@ -97,7 +97,7 @@ async function mockOss(page: any, captured: Captured[]) {
 
 async function boot(page: any) {
   await page.goto('/');
-  await page.locator('nav button', { hasText: '多平台数据互通' }).click();
+  await gotoTab(page, '多平台数据互通');
   await expect(page.locator('.md-body')).toBeVisible();
 }
 

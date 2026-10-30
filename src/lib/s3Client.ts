@@ -1,8 +1,6 @@
 import { ObsidianConfig, ObsidianNote } from '../types';
 import { hmacSha1 } from './crypto';
 
-export const SAMPLE_OBSIDIAN_NOTES: ObsidianNote[] = [];
-
 /** Percent-encode a key for use in a URL path, segment by segment. */
 export function encodeOssKey(key: string): string {
   return key
@@ -144,13 +142,6 @@ export async function testOssConnection(config: ObsidianConfig): Promise<{
       isRealOss: false
     };
   }
-}
-
-export interface OssFetchResult {
-  notes: ObsidianNote[];
-  /** 'oss' = 来自云端；'oss-empty' = 云端可访问但没有 .md；'error' = 请求失败，返回本地缓存；'cache' = 未配置密钥 */
-  source: 'oss' | 'oss-empty' | 'error' | 'cache';
-  error?: string;
 }
 
 export interface OssObject {
@@ -588,81 +579,6 @@ export function removeTreeNode(root: OssTreeNode, key: string): OssTreeNode {
     return { ...node, children };
   };
   return walk(root);
-}
-
-/**
- * Fetch Note List from Aliyun OSS.
- *
- * The result carries its provenance so the UI never claims "已从阿里云 OSS 同步拉取"
- * when it actually fell back to a local cache after a failure.
- */
-export async function fetchObsidianNotes(config: ObsidianConfig, cachedNotes?: ObsidianNote[]): Promise<OssFetchResult> {
-  const cached = cachedNotes || [];
-  const hasRealKeys = hasRealOssKeys(config);
-
-  if (!hasRealKeys) {
-    return { notes: cached, source: 'cache' };
-  }
-
-  const cleanEndpoint = config.endpoint.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-  const prefix = config.prefix || '';
-
-  try {
-    const headers = await generateOssAuthHeaders(
-      'GET',
-      config.bucket,
-      '',
-      '',
-      config.accessKeyId,
-      config.accessKeySecret
-    );
-    const url = `https://${config.bucket}.${cleanEndpoint}/?prefix=${encodeURIComponent(prefix)}&max-keys=200`;
-    const res = await fetch(url, { method: 'GET', headers, mode: 'cors' });
-
-    if (!res.ok) {
-      return { notes: cached, source: 'error', error: await describeOssError(res) };
-    }
-
-    const xmlText = await res.text();
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-    const contents = xmlDoc.getElementsByTagName('Contents');
-
-    const notes: ObsidianNote[] = [];
-    for (let i = 0; i < contents.length; i++) {
-      const key = contents[i].getElementsByTagName('Key')[0]?.textContent || '';
-      if (key.endsWith('.md')) {
-        const size = parseInt(contents[i].getElementsByTagName('Size')[0]?.textContent || '0', 10);
-        const rawMod = contents[i].getElementsByTagName('LastModified')[0]?.textContent || '';
-        const parsedMod = new Date(rawMod).getTime();
-        const title = key.split('/').pop()?.replace('.md', '') || key;
-
-        // Retain any existing cached content for fast reading
-        const existing = cached.find((n) => n.key === key);
-        notes.push({
-          key,
-          title,
-          path: key,
-          size: Number.isFinite(size) ? size : 0,
-          lastModified: Number.isFinite(parsedMod) ? parsedMod : Date.now(),
-          content: existing?.content
-        });
-      }
-    }
-
-    if (notes.length === 0) {
-      // The bucket is reachable but holds no markdown: keep local cache so the
-      // user's locally stored note bodies are not silently discarded.
-      return { notes: cached, source: 'oss-empty' };
-    }
-    return { notes, source: 'oss' };
-  } catch (err: any) {
-    return {
-      notes: cached,
-      source: 'error',
-      error: err?.message || '网络或 CORS 错误'
-    };
-  }
 }
 
 /**
@@ -1159,7 +1075,4 @@ export async function deleteObsidianNote(
 
   return { success: !configured || remoteDeleted, notes: newNotes, message };
 }
-
-
-
 

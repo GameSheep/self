@@ -50,7 +50,7 @@ export const ServerCard: React.FC<ServerCardProps> = ({ server, onDelete, onChec
   };
 
   return (
-    <div className="group relative p-3.5 sm:p-4 rounded-xl bg-[#121316] border border-[#22242a] card-hover shadow-sm flex flex-col justify-between">
+    <div className="group relative p-3.5 sm:p-4 rounded-xl bg-sh-surface border border-sh-line card-hover shadow-sm flex flex-col justify-between">
       <div>
         {/* Header */}
         <div className="flex items-start justify-between gap-2 mb-2.5">
@@ -87,8 +87,9 @@ export const ServerCard: React.FC<ServerCardProps> = ({ server, onDelete, onChec
             }}
             className="opacity-100 sm:opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-red-400 transition-opacity shrink-0"
             title="删除"
+            aria-label={`删除服务器 ${server.name}`}
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 className="w-3.5 h-3.5" aria-hidden />
           </button>
         </div>
 

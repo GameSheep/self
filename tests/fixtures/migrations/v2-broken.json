@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 2,
+  "theme": "dark",
+  "categories": ["全部", "技术开发"],
+  "sites": [
+    {
+      "id": "broken-site-0001",
+      "title": "损坏样本：站点",
+      "url": "https://fixture.invalid/broken",
+      "category": "技术开发",
+      "createdAt": 1735689600000
+    }
+  ],
+  "servers": [
+    {
+      "id": "broken-srv-0001",
+      "name": "损坏样本：服务器",
+      "publicIp": "192.0.2.99",
+      "env": "dev",
+      "notes": "此行之后文件被截断，JSON.parse 必定抛错

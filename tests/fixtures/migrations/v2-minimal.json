@@ -1,0 +1,32 @@
+{
+  "theme": "dark",
+  "sites": [
+    {
+      "id": "min-site-0001",
+      "title": "Fixture 最小站点",
+      "url": "https://fixture.invalid/minimal",
+      "category": "技术开发",
+      "createdAt": 1735689600000
+    }
+  ],
+  "servers": [],
+  "secrets": [],
+  "reminders": [
+    {
+      "id": "min-rem-0001",
+      "title": "Fixture 最小提醒",
+      "category": "other",
+      "targetDate": 1793404800000,
+      "completed": false,
+      "createdAt": 1735689600000
+    }
+  ],
+  "notes": [
+    {
+      "id": "min-note-0001",
+      "title": "Fixture 最小笔记",
+      "content": "仅提供归一化所需的必填集合。",
+      "updatedAt": 1735689600000
+    }
+  ]
+}

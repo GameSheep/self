@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { 
   Inbox, 
   Plus, 
@@ -22,16 +22,28 @@ import {
   Layers
 } from 'lucide-react';
 import { InboxItem, QuickNote, NavSite, ProjectItem } from '../../types';
+import { ConfirmDialog } from '../../shared/ui';
+import type { BatchPreview, ConversionResult } from '../../hooks/useInboxActions';
 
 interface InboxViewProps {
   inbox: InboxItem[];
   onAddInboxItem: (item: InboxItem) => void;
   onUpdateInboxItem: (item: InboxItem) => void;
   onDeleteInboxItem: (id: string) => void;
-  onConvertToNote: (item: InboxItem) => void;
-  onConvertToSite: (item: InboxItem) => void;
+  /** Returns the real outcome: the target id, or why nothing was created. */
+  onConvertToNote: (item: InboxItem) => ConversionResult;
+  onConvertToSite: (item: InboxItem) => ConversionResult;
   projects?: ProjectItem[];
-  onAssignToProject?: (itemId: string, projectId: string) => void;
+  onAssignToProject?: (itemId: string, projectId: string) => ConversionResult;
+  /** What a batch conversion would do, for the preview step. */
+  onPreviewBatch?: (items: InboxItem[], target: 'note' | 'site') => BatchPreview;
+  /** Run a batch; failures come back per item instead of aborting everything. */
+  onConvertMany?: (
+    items: InboxItem[],
+    target: 'note' | 'site'
+  ) => { results: Array<{ id: string; result: ConversionResult }> };
+  /** Open the entity an already-converted item points at. */
+  onOpenTarget?: (type: 'note' | 'site' | 'project', id: string) => void;
 }
 
 export const InboxView: React.FC<InboxViewProps> = ({
@@ -42,7 +54,10 @@ export const InboxView: React.FC<InboxViewProps> = ({
   onConvertToNote,
   onConvertToSite,
   projects = [],
-  onAssignToProject
+  onAssignToProject,
+  onPreviewBatch,
+  onConvertMany,
+  onOpenTarget
 }) => {
   const [filter, setFilter] = useState<'inbox' | 'processed' | 'all'>('inbox');
   const [typeFilter, setTypeFilter] = useState<'all' | 'url' | 'text' | 'snippet'>('all');
@@ -50,6 +65,12 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [quickInput, setQuickInput] = useState('');
   const [quickTitle, setQuickTitle] = useState('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  /**
+   * Items converted during this session stay in the current list so the user can
+   * see the outcome and open the original target. Cleared when the filter
+   * changes, at which point the normal status filter applies again.
+   */
+  const [justProcessed, setJustProcessed] = useState<Set<string>>(() => new Set());
 
   // Edit Modal State
   const [editingItem, setEditingItem] = useState<InboxItem | null>(null);
@@ -57,9 +78,13 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [editContent, setEditContent] = useState('');
   const [editType, setEditType] = useState<'text' | 'url' | 'snippet'>('text');
 
+  // One timer handle per view: without clearing, a second toast within 2.5s was
+  // cut short by the first toast's timer.
+  const toastTimerRef = useRef<number | null>(null);
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 2500);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToastMessage(null), 2500);
   };
 
   const isUrl = (text: string) => /^https?:\/\//i.test(text.trim());
@@ -135,7 +160,42 @@ export const InboxView: React.FC<InboxViewProps> = ({
       pending.forEach(item => {
         onUpdateInboxItem({ ...item, status: 'processed' });
       });
-      showToast(`✅ 已批量处理 ${pending.length} 项`);
+      showToast(`已批量处理 ${pending.length} 项`);
+    }
+  };
+
+  /**
+   * Batch conversion replaces the old "mark everything processed" shortcut as
+   * the primary batch action. It shows what will be created first, then reports
+   * partial failures per item instead of pretending the whole batch succeeded.
+   */
+  const [batchTarget, setBatchTarget] = useState<'note' | 'site' | null>(null);
+  const [batchReport, setBatchReport] = useState<string | null>(null);
+
+  const batchPreview: BatchPreview | null = batchTarget
+    ? (onPreviewBatch?.(inbox.filter((i) => i.status === 'inbox'), batchTarget) ?? null)
+    : null;
+
+  const runBatch = () => {
+    if (!batchTarget) return;
+    const pending = inbox.filter((i) => i.status === 'inbox');
+    if (!onConvertMany) return;
+    const { results } = onConvertMany(pending, batchTarget);
+    const ok = results.filter((r) => r.result.ok).length;
+    const reused = results.filter((r) => r.result.reused).length;
+    const failed = results.filter((r) => !r.result.ok);
+    setBatchTarget(null);
+    if (failed.length === 0) {
+      showToast(`已处理 ${ok} 项${reused > 0 ? `（其中 ${reused} 项此前已转换，打开原目标）` : ''}`);
+      setBatchReport(null);
+    } else {
+      setBatchReport(
+        `完成 ${ok - reused} 项，另有 ${failed.length} 项未处理（内容已保留在收件箱）：` +
+          failed
+            .slice(0, 3)
+            .map((f) => f.result.error || '未知原因')
+            .join('；')
+      );
     }
   };
 
@@ -151,6 +211,11 @@ export const InboxView: React.FC<InboxViewProps> = ({
   };
 
   const filteredItems = inbox.filter((item) => {
+    // An item converted while the user is looking at the 待整理 list must not
+    // vanish from under the cursor: it stays visible with its "打开原目标"
+    // action until the filter changes, which is what makes the repeat action
+    // discoverable instead of a dead end.
+    if (justProcessed.has(item.id)) return true;
     if (filter !== 'all' && item.status !== filter) return false;
     if (typeFilter !== 'all' && item.type !== typeFilter) return false;
     if (searchQuery.trim()) {
@@ -177,7 +242,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
       )}
 
       {/* View Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#121316] p-4 sm:p-5 rounded-2xl border border-[#22242a]">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-sh-surface p-4 sm:p-5 rounded-2xl border border-sh-line">
         <div>
           <h2 className="text-sm sm:text-base font-semibold text-zinc-100 flex items-center gap-2">
             <Inbox className="w-4 h-4 text-indigo-400" />
@@ -193,6 +258,24 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
         {/* Batch Operations */}
         <div className="flex items-center gap-2">
+          {pendingCount > 0 && onConvertMany && (
+            <>
+              <button
+                onClick={() => setBatchTarget('note')}
+                data-testid="inbox-batch-note"
+                className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-[11px] text-zinc-300 hover:text-white transition-colors"
+              >
+                批量转为笔记 ({pendingCount})
+              </button>
+              <button
+                onClick={() => setBatchTarget('site')}
+                data-testid="inbox-batch-site"
+                className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-[11px] text-zinc-300 hover:text-white transition-colors"
+              >
+                批量存为书签
+              </button>
+            </>
+          )}
           {pendingCount > 0 && (
             <button
               onClick={handleBatchMarkAllProcessed}
@@ -212,8 +295,43 @@ export const InboxView: React.FC<InboxViewProps> = ({
         </div>
       </div>
 
+      {batchReport && (
+        <div
+          data-testid="inbox-batch-report"
+          className="rounded-2xl border border-amber-900/50 bg-amber-950/30 p-3 text-[11px] text-amber-300 leading-relaxed flex items-start justify-between gap-3"
+        >
+          <span>{batchReport}</span>
+          <button onClick={() => setBatchReport(null)} className="shrink-0" aria-label="关闭">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={batchTarget !== null}
+        title="批量转换预览"
+        description={
+          batchPreview ? (
+            <ul className="space-y-1">
+              <li>共选中 {batchPreview.total} 项待整理内容。</li>
+              <li>将新建 {batchPreview.willCreate} 条，写入 {batchPreview.destination}。</li>
+              {batchPreview.alreadyConverted > 0 && (
+                <li>{batchPreview.alreadyConverted} 项此前已转换，将打开原目标而不重复创建。</li>
+              )}
+              {batchPreview.notConvertible > 0 && (
+                <li className="text-amber-400">{batchPreview.notConvertible} 项没有可识别的网址，无法存为书签，将保持原样。</li>
+              )}
+              <li>失败的项目会保留在收件箱，并说明原因。</li>
+            </ul>
+          ) : null
+        }
+        confirmLabel="开始转换"
+        onConfirm={runBatch}
+        onCancel={() => setBatchTarget(null)}
+      />
+
       {/* Filter and Search Bar */}
-      <div className="p-3 bg-[#121316] rounded-2xl border border-[#22242a] flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div className="p-3 bg-sh-surface rounded-2xl border border-sh-line flex flex-col md:flex-row md:items-center justify-between gap-3">
         {/* Search */}
         <div className="relative flex-1 max-w-md">
           <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-2.5" />
@@ -222,6 +340,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索碎片内容、网址或标题..."
+            aria-label="搜索碎片"
             className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
           />
           {searchQuery && (
@@ -239,7 +358,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
           {/* Status filter */}
           <div className="flex items-center gap-1 p-1 bg-zinc-900 rounded-xl border border-zinc-800 text-xs">
             <button
-              onClick={() => setFilter('inbox')}
+              onClick={() => { setFilter('inbox'); setJustProcessed(new Set()); }}
               className={`px-2.5 py-1 rounded-lg text-xs transition-all ${
                 filter === 'inbox' ? 'bg-indigo-950/80 text-indigo-200 border border-indigo-800/80 font-medium' : 'text-zinc-400 hover:text-zinc-200'
               }`}
@@ -247,7 +366,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
               待整理 ({pendingCount})
             </button>
             <button
-              onClick={() => setFilter('processed')}
+              onClick={() => { setFilter('processed'); setJustProcessed(new Set()); }}
               className={`px-2.5 py-1 rounded-lg text-xs transition-all ${
                 filter === 'processed' ? 'bg-zinc-800 text-zinc-200 font-medium' : 'text-zinc-400 hover:text-zinc-200'
               }`}
@@ -255,7 +374,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
               已分流 ({processedCount})
             </button>
             <button
-              onClick={() => setFilter('all')}
+              onClick={() => { setFilter('all'); setJustProcessed(new Set()); }}
               className={`px-2.5 py-1 rounded-lg text-xs transition-all ${
                 filter === 'all' ? 'bg-zinc-800 text-zinc-200 font-medium' : 'text-zinc-400 hover:text-zinc-200'
               }`}
@@ -269,7 +388,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
             {(['all', 'url', 'text', 'snippet'] as const).map(t => (
               <button
                 key={t}
-                onClick={() => setTypeFilter(t)}
+                onClick={() => { setTypeFilter(t); setJustProcessed(new Set()); }}
                 className={`px-2 py-0.5 rounded-lg capitalize transition-colors ${
                   typeFilter === t ? 'bg-zinc-800 text-zinc-100 font-bold' : 'text-zinc-500 hover:text-zinc-300'
                 }`}
@@ -282,7 +401,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
       </div>
 
       {/* Quick Capture Dock */}
-      <div className="p-4 rounded-2xl bg-[#121316] border border-[#22242a] space-y-3">
+      <div className="p-4 rounded-2xl bg-sh-surface border border-sh-line space-y-3">
         <div className="flex items-center gap-2">
           <input
             type="text"
@@ -300,7 +419,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
             onKeyDown={handleKeyDown}
             placeholder="粘贴任意文字、网址 (如 https://...) 或代码片段... 按 Ctrl+Enter 极速存入"
             rows={3}
-            className="w-full bg-[#090a0c] border border-zinc-800/80 rounded-xl p-3 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-mono resize-none"
+            className="w-full bg-sh-bg border border-zinc-800/80 rounded-xl p-3 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-mono resize-none"
           />
           <div className="flex items-center justify-between mt-2 pt-1">
             <span className="text-[11px] text-zinc-500 font-mono">
@@ -321,7 +440,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
       {/* Inbox Items Feed */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         {filteredItems.length === 0 ? (
-          <div className="col-span-full py-16 text-center text-zinc-500 font-mono text-xs bg-[#121316]/50 rounded-2xl border border-zinc-800/50">
+          <div className="col-span-full py-16 text-center text-zinc-500 font-mono text-xs bg-sh-surface/50 rounded-2xl border border-zinc-800/50">
             <Inbox className="w-8 h-8 mx-auto mb-2 opacity-40 text-indigo-400" />
             <p>收件箱空空如也，所有碎片资料已整理完毕！</p>
           </div>
@@ -335,7 +454,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                 className={`p-4 rounded-2xl border transition-all flex flex-col justify-between space-y-3 ${
                   isProcessed
                     ? 'bg-zinc-900/30 border-zinc-800/50 opacity-70'
-                    : 'bg-[#121316] border-[#22242a] hover:border-zinc-700 shadow-sm'
+                    : 'bg-sh-surface border-sh-line hover:border-zinc-700 shadow-sm'
                 }`}
               >
                 <div>
@@ -375,7 +494,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                       <span>{item.url}</span>
                     </a>
                   ) : (
-                    <div className="p-3 rounded-xl bg-[#090a0c] border border-zinc-800/60 font-mono text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap select-text max-h-36 overflow-y-auto">
+                    <div className="p-3 rounded-xl bg-sh-bg border border-zinc-800/60 font-mono text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap select-text max-h-36 overflow-y-auto">
                       {item.content}
                     </div>
                   )}
@@ -384,55 +503,78 @@ export const InboxView: React.FC<InboxViewProps> = ({
                 {/* Triage Action Toolbar */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-zinc-800/60 text-xs">
                   <div className="flex items-center gap-1.5">
-                    {/* Convert to Note */}
-                    <button
-                      onClick={() => {
-                        if (item.status === 'processed') {
-                          showToast('ℹ️ 该条目已分流过，请勿重复转换（如需再次转换请先恢复为待整理）');
-                          return;
-                        }
-                        // Only convert: the parent already records targetType/targetId.
-                        // A second onUpdateInboxItem() with this stale snapshot used to
-                        // overwrite targetId with undefined and break the traceability link.
-                        onConvertToNote(item);
-                        showToast('✅ 已成功转为深度知识笔记');
-                      }}
-                      disabled={item.status === 'processed'}
-                      className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-purple-300 text-[11px] flex items-center gap-1 disabled:opacity-45 disabled:cursor-not-allowed"
-                      title={item.status === 'processed' ? '已分流，不可重复转换' : '转为长期知识笔记并归档'}
-                    >
-                      <FileText className="w-3 h-3 text-purple-400" />
-                      <span>转为笔记</span>
-                    </button>
-
-                    {/* Convert to Site (if URL) */}
-                    {item.url && (
+                    {/* Convert to Note — or open the note it already produced. */}
+                    {item.status !== 'inbox' && item.targetType === 'note' && item.targetId && onOpenTarget ? (
+                      <button
+                        onClick={() => onOpenTarget('note', item.targetId!)}
+                        data-testid={`inbox-open-target-${item.id}`}
+                        className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-purple-300 text-[11px] flex items-center gap-1"
+                        title="打开此前生成的笔记，不会重复创建"
+                      >
+                        <FileText className="w-3 h-3 text-purple-400" />
+                        <span>打开原笔记</span>
+                      </button>
+                    ) : (
                       <button
                         onClick={() => {
-                          if (item.status === 'processed') {
-                            showToast('ℹ️ 该条目已分流过，请勿重复转换');
+                          const result = onConvertToNote(item);
+                          if (!result.ok) {
+                            showToast(result.error || '转换失败，内容仍保留在收件箱');
                             return;
                           }
-                          onConvertToSite(item);
-                          showToast('✅ 已存为常用工作台书签');
+                          setJustProcessed((prev) => new Set(prev).add(item.id));
+                          showToast(result.reused ? '该条目此前已转换，已打开原笔记' : '已转为笔记');
+                          if (result.reused && result.targetId && onOpenTarget) onOpenTarget('note', result.targetId);
                         }}
-                        disabled={item.status === 'processed'}
-                        className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-sky-300 text-[11px] flex items-center gap-1 disabled:opacity-45 disabled:cursor-not-allowed"
-                        title={item.status === 'processed' ? '已分流，不可重复转换' : '添加到常用网站导航'}
+                        data-testid={`inbox-convert-note-${item.id}`}
+                        className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-purple-300 text-[11px] flex items-center gap-1"
+                        title="转为长期知识笔记并记录目标引用"
+                      >
+                        <FileText className="w-3 h-3 text-purple-400" />
+                        <span>转为笔记</span>
+                      </button>
+                    )}
+
+                    {/* Convert to Site (if URL) — or open the saved bookmark. */}
+                    {item.status !== 'inbox' && item.targetType === 'site' && item.targetId && onOpenTarget ? (
+                      <button
+                        onClick={() => onOpenTarget('site', item.targetId!)}
+                        className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-sky-300 text-[11px] flex items-center gap-1"
+                        title="打开此前的收藏，不会重复创建"
                       >
                         <Globe className="w-3 h-3 text-sky-400" />
-                        <span>存为书签</span>
+                        <span>打开原收藏</span>
                       </button>
+                    ) : (
+                      item.url && (
+                        <button
+                          onClick={() => {
+                            const result = onConvertToSite(item);
+                            if (!result.ok) {
+                              showToast(result.error || '转换失败，内容仍保留在收件箱');
+                              return;
+                            }
+                            setJustProcessed((prev) => new Set(prev).add(item.id));
+                            showToast(result.reused ? '该条目此前已存为书签，已打开原收藏' : '已存为书签');
+                            if (result.reused && result.targetId && onOpenTarget) onOpenTarget('site', result.targetId);
+                          }}
+                          data-testid={`inbox-convert-site-${item.id}`}
+                          className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-sky-300 text-[11px] flex items-center gap-1"
+                          title="添加到快捷导航收藏"
+                        >
+                          <Globe className="w-3 h-3 text-sky-400" />
+                          <span>存为书签</span>
+                        </button>
+                      )
                     )}
 
                     {/* Assign to Project */}
                     {projects.length > 0 && onAssignToProject && (
                       <select
                         onChange={(e) => {
-                          if (e.target.value) {
-                            onAssignToProject(item.id, e.target.value);
-                            showToast('📁 已关联到项目');
-                          }
+                          if (!e.target.value) return;
+                          const result = onAssignToProject(item.id, e.target.value);
+                          showToast(result.ok ? '已关联到项目' : result.error || '关联失败');
                         }}
                         defaultValue=""
                         className="px-2 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 text-[11px] focus:outline-none"
@@ -451,8 +593,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
                       onClick={() => handleOpenEdit(item)}
                       className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-200 transition-colors"
                       title="编辑碎片内容与类型"
+                      aria-label="编辑碎片内容与类型"
                     >
-                      <Edit3 className="w-3.5 h-3.5" />
+                      <Edit3 className="w-3.5 h-3.5" aria-hidden />
                     </button>
 
                     {item.status === 'inbox' ? (
@@ -463,8 +606,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
                         }}
                         className="p-1.5 rounded-lg text-zinc-500 hover:text-emerald-400"
                         title="标为已处理"
+                        aria-label="标为已处理"
                       >
-                        <Check className="w-3.5 h-3.5" />
+                        <Check className="w-3.5 h-3.5" aria-hidden />
                       </button>
                     ) : (
                       <button
@@ -474,8 +618,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
                         }}
                         className="p-1.5 rounded-lg text-zinc-500 hover:text-indigo-400"
                         title="重新放回收件箱"
+                        aria-label="重新放回收件箱"
                       >
-                        <Inbox className="w-3.5 h-3.5" />
+                        <Inbox className="w-3.5 h-3.5" aria-hidden />
                       </button>
                     )}
 
@@ -489,8 +634,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
                       }}
                       className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-400"
                       title="删除此碎片"
+                      aria-label="删除此碎片"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-3.5 h-3.5" aria-hidden />
                     </button>
                   </div>
                 </div>
@@ -503,7 +649,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
       {/* In-place Item Edit Modal */}
       {editingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-lg bg-[#121316] border border-[#262830] rounded-2xl p-5 shadow-2xl space-y-4">
+          <div className="w-full max-w-lg bg-sh-surface border border-sh-line rounded-2xl p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
               <div className="flex items-center gap-2">
                 <Edit3 className="w-4 h-4 text-indigo-400" />
@@ -511,9 +657,10 @@ export const InboxView: React.FC<InboxViewProps> = ({
               </div>
               <button
                 onClick={() => setEditingItem(null)}
+                aria-label="关闭编辑"
                 className="p-1 rounded-lg text-zinc-500 hover:text-zinc-300"
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" aria-hidden />
               </button>
             </div>
 
@@ -554,7 +701,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                   rows={5}
-                  className="w-full bg-[#090a0c] border border-zinc-800 rounded-xl p-3 text-xs font-mono text-zinc-200 focus:outline-none focus:border-indigo-500 resize-none"
+                  className="w-full bg-sh-bg border border-zinc-800 rounded-xl p-3 text-xs font-mono text-zinc-200 focus:outline-none focus:border-indigo-500 resize-none"
                 />
               </div>
             </div>

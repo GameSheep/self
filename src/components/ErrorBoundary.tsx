@@ -55,22 +55,38 @@ export class ErrorBoundary extends React.Component<Props, State> {
     if (!confirm('这会清空浏览器本地保存的全部 Self-Hub 数据（含金库凭据密文）并重置为出厂状态，且不可撤销。确定继续？')) {
       return;
     }
-    try {
-      localStorage.clear();
-      sessionStorage.clear();
-      if (indexedDB?.databases) {
-        indexedDB.databases().then((dbs) => dbs.forEach((d) => d.name && indexedDB.deleteDatabase(d.name)));
+    const wipeStores = async () => {
+      try {
+        localStorage.clear();
+        sessionStorage.clear();
+        if (indexedDB?.databases) {
+          // Deletion is async and aborted by navigation — reload only after
+          // every database reports closed, or the v3 library survives the
+          // "factory reset" intact.
+          const dbs = await indexedDB.databases();
+          await Promise.all(dbs.filter((d) => d.name).map((d) => {
+            return new Promise<void>((resolve) => {
+              const req = indexedDB.deleteDatabase(d.name!);
+              req.onsuccess = () => resolve();
+              req.onerror = () => resolve();
+              req.onblocked = () => resolve();
+            });
+          }));
+        }
+      } catch {
+        // ignore: the reload below still resets the storage-backed UI state
       }
-    } catch {}
-    window.location.reload();
+      window.location.reload();
+    };
+    void wipeStores();
   };
 
   render() {
     if (!this.state.error) return this.props.children;
 
     return (
-      <div className="min-h-screen bg-[#090a0c] text-zinc-100 flex items-center justify-center p-6">
-        <div className="max-w-2xl w-full bg-[#121316] border border-red-900/50 rounded-2xl p-6 space-y-4">
+      <div className="min-h-screen bg-sh-bg text-zinc-100 flex items-center justify-center p-6">
+        <div className="max-w-2xl w-full bg-sh-surface border border-red-900/50 rounded-2xl p-6 space-y-4">
           <div className="flex items-center gap-2 text-red-400">
             <AlertTriangle className="w-5 h-5" />
             <h1 className="text-base font-semibold">

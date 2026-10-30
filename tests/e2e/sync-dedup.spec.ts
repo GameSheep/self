@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState, readState } from './helpers';
+import { seedState, baseState, readState, openSettings, gotoSettingsPane } from './helpers';
 
 /**
  * The extension ships its own SyncManager (sites / annotations / inbox / quick
@@ -66,10 +66,12 @@ async function stubChrome(page: any, syncConfig: Record<string, unknown> | null,
 }
 
 async function openSyncTab(page: any) {
-  await page.locator('aside button[title*="系统设置"]').click();
-  await expect(page.getByText('系统与服务集成设置')).toBeVisible();
-  await page.locator('[data-settings-nav="sync"]').click();
+  await openSettings(page);
+  // 改版后旧 `sync` 分区并入「浏览器与设备」(browser)；helpers 的别名仍然可用，
+  // 这里直接用新 id，顺便断言扩展同步那一段真的渲染在该分区里。
+  await gotoSettingsPane(page, 'browser');
   await expect(page.getByTestId('extension-sync-section')).toBeVisible();
+  await expect(page.getByTestId('extension-sync-section')).toContainText('浏览器扩展内置同步');
 }
 
 test.describe('扩展同步与应用备份的去重', () => {
@@ -92,7 +94,7 @@ test.describe('扩展同步与应用备份的去重', () => {
       {
         provider: 'webdav',
         autoSync: true,
-        webdav: { serverUrl: 'https://kurio.infini-cloud.net/dav/', username: 'u', pathPrefix: 'self' }
+        webdav: { serverUrl: 'https://your-host.example.com/dav/', username: 'u', pathPrefix: 'self' }
       },
       { lastSyncTime: Date.now() - 3600_000, lastMessage: 'ok', state: 'idle' }
     );

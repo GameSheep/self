@@ -44,6 +44,8 @@ export interface BuildResult {
   skipped: number;
   failed: number;
   errors: string[];
+  /** True when the run stopped early at the caller's request. */
+  cancelled?: boolean;
 }
 
 let cachedDb: IDBDatabase | null = null;
@@ -55,6 +57,8 @@ export interface IndexMeta {
   lastBuiltAt?: number;
   /** Docs written in the most recent build. */
   docs?: number;
+  /** True when the last run was cancelled before finishing. */
+  partial?: boolean;
 }
 
 export function readIndexMeta(): IndexMeta {
@@ -152,16 +156,120 @@ function openDb(): Promise<IDBDatabase> {
  */
 export async function loadIndex(): Promise<IndexedDoc[]> {
   try {
-    return await readAllDocs();
+    return (await readValidatedDocs()).docs;
   } catch (err) {
     console.warn('[Self-Hub] vault index unreadable, resetting it', err);
     await resetIndexDatabase();
     try {
-      return await readAllDocs();
+      return (await readValidatedDocs()).docs;
     } catch {
       return [];
     }
   }
+}
+
+/**
+ * Runtime shape check for stored documents.
+ *
+ * The index is a cache of *other people's* content fetched over the network, so a
+ * malformed row must not be able to break search for the whole library: one bad
+ * record is dropped and counted, not thrown. (The IO layer normally enforces the
+ * shape; this is the belt-and-braces check that also survives a schema change.)
+ */
+export function validateIndexDocs(raw: unknown[]): { docs: IndexedDoc[]; corrupt: number } {
+  const docs: IndexedDoc[] = [];
+  let corrupt = 0;
+  for (const entry of raw) {
+    const row = entry as Partial<IndexedDoc> | null;
+    // Field names matter here: the body is `text` (not `content`). Getting this wrong
+    // would classify every healthy record as corrupt and send the user to rebuild an
+    // index that is fine — which is why the health check has a "healthy" test.
+    if (
+      !row ||
+      typeof row !== 'object' ||
+      typeof row.key !== 'string' ||
+      !row.key ||
+      typeof row.title !== 'string' ||
+      typeof row.text !== 'string'
+    ) {
+      corrupt += 1;
+      continue;
+    }
+    docs.push({
+      ...(row as IndexedDoc),
+      key: row.key,
+      title: row.title,
+      text: row.text,
+      tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === 'string') : [],
+      links: Array.isArray(row.links) ? row.links.filter((link): link is string => typeof link === 'string') : [],
+      lastModified: typeof row.lastModified === 'number' ? row.lastModified : 0,
+      size: typeof row.size === 'number' ? row.size : row.text.length,
+      indexedAt: typeof row.indexedAt === 'number' ? row.indexedAt : 0
+    });
+  }
+  return { docs, corrupt };
+}
+
+async function readValidatedDocs(): Promise<{ docs: IndexedDoc[]; corrupt: number }> {
+  return validateIndexDocs(await readAllDocs());
+}
+
+export interface IndexHealth {
+  /** Usable documents in the store. */
+  docs: number;
+  /** Documents the store held but that could not be used. */
+  corrupt: number;
+  meta: IndexMeta;
+  /** The store could not be read at all (it self-heals on the next load). */
+  unreadable: boolean;
+  /** Plain-language problems; empty means healthy. */
+  problems: string[];
+  /** True when a rebuild is the only way back to a trustworthy index. */
+  needsRebuild: boolean;
+}
+
+/**
+ * Report whether the persisted index can be trusted (§P2-07 "损坏重建").
+ *
+ * `loadIndex()` silently resets an unreadable store, which keeps the app working but
+ * hides the fact that search just lost its cache. This is the visible half: the panel
+ * can say "N 篇可用，M 条损坏，建议重建" instead of showing an empty result the user
+ * would read as "my notes aren't there".
+ */
+export async function inspectIndex(): Promise<IndexHealth> {
+  const meta = readIndexMeta();
+  const problems: string[] = [];
+  let docs = 0;
+  let corrupt = 0;
+  let unreadable = false;
+
+  try {
+    const result = await readValidatedDocs();
+    docs = result.docs.length;
+    corrupt = result.corrupt;
+  } catch {
+    unreadable = true;
+  }
+
+  if (unreadable) problems.push('本机索引无法读取（可能已损坏），重新打开时会被清空并需要重建。');
+  if (corrupt > 0) problems.push(`有 ${corrupt} 条索引记录格式不正确，已忽略；建议重建索引。`);
+  if (typeof meta.docs === 'number' && meta.docs !== docs + corrupt) {
+    problems.push(`索引元信息记录 ${meta.docs} 篇，本机实际 ${docs + corrupt} 篇，两者不一致。`);
+  }
+  if (docs > 0 && !meta.lastBuiltAt) problems.push('索引没有记录建立时间，无法判断是否过期。');
+  if (meta.partial) problems.push('上次建立索引没有跑完，可能缺少部分笔记正文；可以再跑一次补齐。');
+  if (meta.lastBuiltAt && meta.lastBuiltAt > Date.now() + 60_000) {
+    problems.push('索引的建立时间在未来，可能是设备时间被改过。');
+  }
+
+  return {
+    docs,
+    corrupt,
+    meta,
+    unreadable,
+    problems,
+    needsRebuild: unreadable || corrupt > 0
+  };
 }
 
 async function readAllDocs(): Promise<IndexedDoc[]> {
@@ -189,10 +297,6 @@ export async function putDocs(docs: IndexedDoc[]): Promise<void> {
   } catch (err) {
     console.warn('[Self-Hub] vault index write failed', err);
   }
-}
-
-export async function clearIndex(): Promise<void> {
-  await resetIndexDatabase();
 }
 
 /* -------------------------------------------------------------- extraction */
@@ -253,7 +357,15 @@ export async function buildIndex(
   notes: ObsidianNote[],
   existing: IndexedDoc[],
   onProgress?: (p: BuildProgress) => void,
-  concurrency = 4
+  concurrency = 4,
+  /**
+   * Cancellation (§P2-07 "导入与索引可取消，可看到进度").
+   *
+   * A vault index can mean hundreds of HTTP fetches; on a slow connection the user
+   * must be able to stop it. Everything fetched so far is still persisted, so a
+   * cancelled run is progress rather than a lost one.
+   */
+  options: { signal?: AbortSignal } = {}
 ): Promise<BuildResult> {
   const byKey = new Map(existing.map((d) => [d.key, d]));
   const targets = notes.filter((n) => n.key.toLowerCase().endsWith('.md'));
@@ -281,6 +393,7 @@ export async function buildIndex(
 
   const worker = async () => {
     while (cursor < pending.length) {
+      if (options.signal?.aborted) return;
       const note = pending[cursor++];
       progress.currentKey = note.key;
       try {
@@ -339,14 +452,16 @@ export async function buildIndex(
   fresh.forEach((doc) => merged.set(doc.key, doc));
   stale.forEach((key) => merged.delete(key));
 
-  writeIndexMeta({ lastBuiltAt: Date.now(), docs: merged.size });
+  const cancelled = Boolean(options.signal?.aborted);
+  writeIndexMeta({ lastBuiltAt: Date.now(), docs: merged.size, partial: cancelled });
 
   return {
     records: [...merged.values()],
     fetched: progress.fetched,
     skipped,
     failed: progress.failed,
-    errors
+    errors,
+    cancelled
   };
 }
 
@@ -362,6 +477,39 @@ export interface SearchHit {
   /** Offset of the match inside `snippet` (for highlighting). */
   matchIndex: number;
   matchLength: number;
+}
+
+export interface SearchPage {
+  hits: SearchHit[];
+  /** Total matches, not just the ones on this page. */
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+/**
+ * Paged search over the index (§P2-07 "分页与按需加载").
+ *
+ * `searchIndex` used to cap at a fixed limit with no way to tell whether that was
+ * everything — so a query with 300 matches and one with 80 looked the same. This
+ * returns the real total so the UI can say "还有 N 条".
+ */
+export function searchIndexPage(
+  records: IndexedDoc[],
+  query: string,
+  options: { offset?: number; limit?: number } = {}
+): SearchPage {
+  const offset = Math.max(0, options.offset ?? 0);
+  const limit = Math.max(1, options.limit ?? 40);
+  const all = searchIndex(records, query, Number.MAX_SAFE_INTEGER);
+  return {
+    hits: all.slice(offset, offset + limit),
+    total: all.length,
+    offset,
+    limit,
+    hasMore: offset + limit < all.length
+  };
 }
 
 function makeSnippet(text: string, index: number, length: number, radius = 48): { snippet: string; matchIndex: number } {

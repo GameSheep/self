@@ -75,7 +75,8 @@ export function seedRichNote(page: any, extraNotes: any[] = []) {
 }
 
 export async function openInterop(page: any) {
-  await page.goto('/');
-  await page.locator('nav button', { hasText: '多平台数据互通' }).click();
+  // 多平台数据互通 is now 资料库 → 来源与导入 (P1-05), reached by route rather than
+  // by a module entry in the sidebar.
+  await page.goto('/#/library?view=sources');
   await expect(page.locator('.md-body')).toBeVisible();
 }

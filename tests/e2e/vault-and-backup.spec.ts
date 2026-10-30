@@ -1,5 +1,5 @@
-import { test, expect } from '@playwright/test';
-import { resetApp, readState, visible, openAddModal } from './helpers';
+import { test, expect, type Page } from '@playwright/test';
+import { resetApp, readState, visible, openAddModal, openSettings, gotoSettingsPane, gotoTab } from './helpers';
 
 /**
  * Regression tests for the vault / backup flows that used to make the app
@@ -23,23 +23,45 @@ test.describe('金库', () => {
     await resetApp(page);
   });
 
-  async function setMasterPassword(page: any, password = 'regression-pass') {
-    await page.locator('nav button', { hasText: '加密安全金库' }).click();
-    await page.locator('button', { hasText: /解锁金库|初始化/ }).first().click();
+  /**
+   * Global unlocked signal.
+   *
+   * The redesign dropped the old 「金库已解密」 banner. The sidebar footer button
+   * now carries the state for every page: 金库已解锁 / 金库已锁定
+   * (src/components/Sidebar.tsx), so specs no longer depend on a vault-only toast.
+   */
+  async function expectUnlocked(page: Page) {
+    await expect(page.locator('aside').getByText('金库已解锁')).toBeVisible();
+  }
+
+  /**
+   * The unlocked vault page is the only one that renders the search box; the
+   * locked screen renders no list, no search and no previews at all
+   * (src/features/resources/VaultView.tsx), which is the new lock contract.
+   */
+  async function expectVaultUnlocked(page: Page) {
+    await expect(page.getByTestId('vault-search')).toBeVisible();
+    await expect(page.getByTestId('vault-unlock')).toHaveCount(0);
+  }
+
+  async function setMasterPassword(page: Page, password = 'regression-pass') {
+    await gotoTab(page, '加密安全金库');
+    // New UI: the vault route renders a dedicated locked screen whose only action
+    // is data-testid="vault-unlock" (创建主密码 / 输入主密码解锁).
+    await page.getByTestId('vault-unlock').click();
     const inputs = page.locator('input[type="password"]');
     await inputs.first().fill(password);
     if ((await inputs.count()) > 1) await inputs.nth(1).fill(password);
     await page.locator('button', { hasText: /完成设置并开启金库|立即解锁/ }).click();
-    await expect(page.getByText('金库已解密')).toBeVisible();
+    await expectUnlocked(page);
   }
 
   test('设置主密码后新增凭据并加密落盘', async ({ page }) => {
     await setMasterPassword(page);
     await page.locator('button', { hasText: '新建凭据' }).first().click();
-    await page.locator('div.fixed.inset-0 button', { hasText: '金库凭据' }).click();
     await visible(page, 'input[placeholder*="Gemini"]').fill('回归凭据');
     await visible(page, 'input[placeholder*="粘贴完整"]').fill('sk-regression-1234567890');
-    await page.locator('div.fixed.inset-0 button', { hasText: '保存资产' }).click();
+    await page.getByTestId('add-item-submit').click();
 
     await expect.poll(async () => (await readState(page)).secrets.length).toBe(1);
     const secret = (await readState(page)).secrets[0];
@@ -49,11 +71,10 @@ test.describe('金库', () => {
   });
 
   test('金库锁定时录入凭据：解锁弹窗必须可交互（不被遮罩挡住）', async ({ page }) => {
-    await openAddModal(page);
-    await page.locator('div.fixed.inset-0 button', { hasText: '金库凭据' }).click();
+    await openAddModal(page, 'secret');
     await visible(page, 'input[placeholder*="Gemini"]').fill('锁定态凭据');
     await visible(page, 'input[placeholder*="粘贴完整"]').fill('sk-locked-secret');
-    await page.locator('div.fixed.inset-0 button', { hasText: '保存资产' }).click();
+    await page.getByTestId('add-item-submit').click();
 
     const password = page.locator('input[type="password"]').first();
     await expect(password).toBeVisible();
@@ -72,33 +93,39 @@ test.describe('金库', () => {
     await inputs.first().fill('new-pass-123');
     if ((await inputs.count()) > 1) await inputs.nth(1).fill('new-pass-123');
     await page.locator('button', { hasText: /完成设置并开启金库|立即解锁/ }).click();
-    await expect(page.getByText('金库已解密')).toBeVisible();
+    await expectUnlocked(page);
   });
 
   test('“记住这台设备”刷新后仍然解锁（30 天免密）', async ({ page }) => {
     await setMasterPassword(page, 'remember-me-123');
-    await expect(page.getByText('金库已解密')).toBeVisible();
+    await expectVaultUnlocked(page);
 
     await page.reload();
-    await expect(page.getByText('金库已解密')).toBeVisible({ timeout: 10_000 });
+    // 刷新后由 App 启动时的 restoreTrustedSession() 异步恢复免密会话，
+    // 因此这里等的是「金库页重新可用」：解锁态才渲染 vault-search。
+    await expect(page.getByTestId('vault-search')).toBeVisible({ timeout: 10_000 });
+    await expectUnlocked(page);
   });
 
   test('锁定金库会清除卡片上的明文', async ({ page }) => {
     await setMasterPassword(page, 'lock-me-123');
     await page.locator('button', { hasText: '新建凭据' }).first().click();
-    await page.locator('div.fixed.inset-0 button', { hasText: '金库凭据' }).click();
     await visible(page, 'input[placeholder*="Gemini"]').fill('锁定测试');
     await visible(page, 'input[placeholder*="粘贴完整"]').fill('sk-plaintext-should-vanish');
-    await page.locator('div.fixed.inset-0 button', { hasText: '保存资产' }).click();
+    await page.getByTestId('add-item-submit').click();
     await expect.poll(async () => (await readState(page)).secrets.length).toBe(1);
 
-    await page.locator('nav button', { hasText: '加密安全金库' }).click();
+    await gotoTab(page, '加密安全金库');
+    await expectVaultUnlocked(page);
     await page.locator('button[title*="查看明文"]').first().click();
     await expect(page.locator('main')).toContainText('sk-plaintext-should-vanish');
 
-    await page.locator('button', { hasText: '金库已解密' }).click();
+    // 新契约：解锁态页面头部的「立即锁定」按钮取代了旧的侧边栏解锁横幅。
+    await page.getByRole('button', { name: '立即锁定' }).click();
     await expect(page.locator('main')).not.toContainText('sk-plaintext-should-vanish');
-    await expect(page.getByText('金库锁定中')).toBeVisible();
+    // 锁定后渲染的是锁屏页（金库已锁定），列表与搜索框都不存在。
+    await expect(page.getByTestId('vault-unlock')).toBeVisible();
+    await expect(page.getByTestId('vault-search')).toHaveCount(0);
   });
 });
 
@@ -112,9 +139,9 @@ test.describe('备份与恢复', () => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(String(e)));
 
-    await page.locator('aside button[title*="系统设置"]').click();
-    await page.locator('[data-settings-nav="data"]').click();
-    await page.setInputFiles('input[type="file"]', {
+    await openSettings(page);
+    await gotoSettingsPane(page, 'data');
+    await page.setInputFiles('[data-testid="import-backup-file"]', {
       name: 'partial-backup.json',
       mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify(partialBackup), 'utf-8')
@@ -137,8 +164,8 @@ test.describe('备份与恢复', () => {
   });
 
   test('导出明文 JSON 备份可以下载', async ({ page }) => {
-    await page.locator('aside button[title*="系统设置"]').click();
-    await page.locator('[data-settings-nav="data"]').click();
+    await openSettings(page);
+    await gotoSettingsPane(page, 'data');
     const [download] = await Promise.all([
       page.waitForEvent('download'),
       page.locator('button', { hasText: '导出明文' }).click()
@@ -151,7 +178,7 @@ test.describe('备份与恢复', () => {
     await openAddModal(page);
     await visible(page, 'input[placeholder="例如: GitHub 个人中心"]').fill('IDB-标记');
     await visible(page, 'input[placeholder="https://..."]').fill('https://idb-marker.example.com');
-    await page.locator('div.fixed.inset-0 button', { hasText: '保存资产' }).click();
+    await page.getByTestId('add-item-submit').click();
     await page.waitForTimeout(2000);
 
     const before = await page.evaluate(async () => {
@@ -160,8 +187,8 @@ test.describe('备份与恢复', () => {
     });
     expect(before).toContain('self_hub_idb');
 
-    await page.locator('aside button[title*="系统设置"]').click();
-    await page.locator('[data-settings-nav="data"]').click();
+    await openSettings(page);
+    await gotoSettingsPane(page, 'data');
     await page.locator('button', { hasText: '重置所有数据' }).click();
     await page.waitForTimeout(3500);
 

@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { test, expect } from '@playwright/test';
-import { seedState, baseState, STORAGE_KEY } from './helpers';
+import { seedState, baseState, STORAGE_KEY, gotoTab } from './helpers';
 
 /**
  * Aliyun OSS V1 signature over fetch().
@@ -16,7 +16,7 @@ import { seedState, baseState, STORAGE_KEY } from './helpers';
  *   /<bucket>/
  */
 
-const KEY_ID = 'LTAI5t8JAm7fyYaDsK5ECJer';
+const KEY_ID = 'LTAI5tEXAMPLE000000000';
 const KEY_SECRET = 'test-secret-not-a-real-key';
 const BUCKET = 'self-hub';
 const ENDPOINT = 'oss-cn-beijing.aliyuncs.com';
@@ -57,7 +57,7 @@ async function configureOss(page: any) {
   );
   await page.addInitScript(() => sessionStorage.clear());
   await page.goto('/');
-  await page.locator('nav button', { hasText: '多平台数据互通' }).click();
+  await gotoTab(page, '多平台数据互通');
   await expect(page.locator('main')).toContainText('测连通');
 }
 
@@ -125,7 +125,7 @@ test.describe('阿里云 OSS 签名', () => {
     });
 
     await configureOss(page);
-    await page.locator('button[title*="从 OSS 刷新"]').click();
+    await page.locator('[data-testid="oss-refresh"]').click();
     await expect
       .poll(async () => {
         const raw = await page.evaluate((k) => localStorage.getItem(k), STORAGE_KEY);

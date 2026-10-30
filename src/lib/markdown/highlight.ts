@@ -148,9 +148,3 @@ export function highlightCode(code: string, language?: string): HlSpan[] | null 
     return null;
   }
 }
-
-export function isLanguageSupported(language?: string): boolean {
-  registerAll();
-  const lang = (language || '').trim().toLowerCase().split(/[\s:,]/)[0];
-  return Boolean(lang) && Boolean(hljs.getLanguage(lang));
-}

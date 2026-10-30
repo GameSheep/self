@@ -1,0 +1,395 @@
+{
+  "schemaVersion": 2,
+  "theme": "dark",
+  "categories": ["全部", "常用工具", "技术开发", "运维部署", "API与服务", "知识资讯"],
+  "sites": [
+    {
+      "id": "full-site-0001",
+      "title": "Fixture 控制台",
+      "url": "https://fixture.invalid/dashboard",
+      "category": "运维部署",
+      "description": "虚构的运维控制台入口，仅用于夹具样本。",
+      "icon": "Cloud",
+      "tags": ["夹具", "运维"],
+      "pinned": true,
+      "visitCount": 7,
+      "lastVisited": 1749945600000,
+      "expiresAt": 1793404800000,
+      "createdAt": 1735689600000
+    },
+    {
+      "id": "full-site-0002",
+      "title": "Fixture 文档",
+      "url": "https://docs.fixture.invalid/guide",
+      "category": "技术开发",
+      "description": "虚构文档站，无真实内容。",
+      "icon": "BookOpen",
+      "tags": ["夹具", "文档"],
+      "pinned": false,
+      "visitCount": 3,
+      "lastVisited": 1740787200000,
+      "createdAt": 1735689600000
+    },
+    {
+      "id": "full-site-0003",
+      "title": "Fixture 对象存储",
+      "url": "https://oss.fixture.invalid/console",
+      "category": "API与服务",
+      "description": "虚构对象存储控制台。",
+      "icon": "Zap",
+      "tags": ["夹具"],
+      "pinned": false,
+      "visitCount": 1,
+      "createdAt": 1740787200000
+    }
+  ],
+  "servers": [
+    {
+      "id": "full-srv-0001",
+      "name": "fixture-prod-01",
+      "domain": "prod.fixture.invalid",
+      "publicIp": "192.0.2.10",
+      "internalIp": "10.0.0.10",
+      "port": 22,
+      "env": "prod",
+      "sshUser": "fixture-user",
+      "sshPort": 22,
+      "sshCommand": "ssh fixture-user@192.0.2.10 -p 22",
+      "deployPath": "/srv/fixture",
+      "healthUrl": "https://prod.fixture.invalid/healthz",
+      "status": "unknown",
+      "lastCheckedAt": 1749945600000,
+      "lastCheckMessage": "夹具样本：未真实探测",
+      "lastLatencyMs": 0,
+      "notes": "RFC 5737 文档用地址，不可路由。",
+      "expiresAt": 1793404800000,
+      "renewalCost": "¥199 / 年",
+      "createdAt": 1735689600000
+    },
+    {
+      "id": "full-srv-0002",
+      "name": "fixture-test-01",
+      "domain": "test.fixture.invalid",
+      "publicIp": "198.51.100.7",
+      "port": 2222,
+      "env": "test",
+      "status": "offline",
+      "createdAt": 1740787200000
+    }
+  ],
+  "secrets": [
+    {
+      "id": "full-sec-0001",
+      "name": "Fixture API Key",
+      "category": "api_key",
+      "encryptedValue": "VEVTVEtFWS1ub3QtYS1yZWFsLXNlY3JldC0wMDAx",
+      "iv": "RklYVFVSRS1JVi0wMDAx",
+      "salt": "RklYVFVSRS1TQUxULTAwMDE=",
+      "maskedPreview": "TEST••••••0001",
+      "description": "密文是虚构标记 TESTKEY-not-a-real-secret-0001 的 Base64，不是真实密钥。",
+      "tags": ["夹具"],
+      "expiresAt": 1793404800000,
+      "updatedAt": 1749945600000
+    },
+    {
+      "id": "full-sec-0002",
+      "name": "Fixture DB Password",
+      "category": "db_credential",
+      "encryptedValue": "VEVTVEtFWS1ub3QtYS1yZWFsLXNlY3JldC0wMDAy",
+      "iv": "RklYVFVSRS1JVi0wMDAy",
+      "salt": "RklYVFVSRS1TQUxULTAwMDI=",
+      "maskedPreview": "TEST••••••0002",
+      "updatedAt": 1740787200000
+    }
+  ],
+  "checkIns": [
+    {
+      "id": "full-chk-0001",
+      "name": "Fixture 每日签到",
+      "url": "https://checkin.fixture.invalid/api/daily",
+      "method": "POST",
+      "type": "http",
+      "headers": { "Content-Type": "application/json", "X-Fixture-Key": "TESTKEY-not-a-real-secret-0003" },
+      "body": "{\"action\":\"fixture-checkin\"}",
+      "lastRun": 1792281600000,
+      "lastStatus": "success",
+      "lastMessage": "夹具样本：未真实请求",
+      "streakDays": 3,
+      "history": [
+        { "date": "2026-10-16", "at": 1792108800000, "status": "success", "message": "夹具样本" },
+        { "date": "2026-10-17", "at": 1792195200000, "status": "success", "message": "夹具样本" },
+        { "date": "2026-10-18", "at": 1792281600000, "status": "success", "message": "夹具样本" }
+      ],
+      "createdAt": 1735689600000
+    },
+    {
+      "id": "full-chk-0002",
+      "name": "Fixture 跳转签到",
+      "url": "https://checkin.fixture.invalid/go",
+      "method": "GET",
+      "type": "redirect",
+      "lastStatus": "failed",
+      "lastMessage": "夹具样本：故意标记失败",
+      "history": [
+        { "date": "2026-10-17", "at": 1792195200000, "status": "failed", "message": "夹具样本" }
+      ],
+      "createdAt": 1740787200000
+    }
+  ],
+  "reminders": [
+    {
+      "id": "full-rem-0001",
+      "title": "Fixture 月末账单",
+      "category": "subscription",
+      "targetDate": 1793404800000,
+      "recurring": "monthly",
+      "cost": "¥30 / 月",
+      "url": "https://billing.fixture.invalid/",
+      "notes": "样本：锚定 2026-10-31（月末）。",
+      "completed": false,
+      "autoRollover": false,
+      "createdAt": 1735689600000
+    },
+    {
+      "id": "full-rem-0002",
+      "title": "Fixture 闰日证书",
+      "category": "cert",
+      "targetDate": 1835395200000,
+      "recurring": "yearly",
+      "cost": "¥0",
+      "url": "https://certs.fixture.invalid/",
+      "notes": "样本：锚定 2028-02-29（闰日）。",
+      "completed": false,
+      "autoRollover": false,
+      "createdAt": 1740787200000
+    },
+    {
+      "id": "full-rem-0003",
+      "title": "Fixture 域名续费",
+      "category": "domain",
+      "targetDate": 1769817600000,
+      "recurring": "yearly",
+      "cost": "¥88 / 年",
+      "url": "https://domains.fixture.invalid/",
+      "completed": true,
+      "autoRollover": false,
+      "createdAt": 1735689600000
+    }
+  ],
+  "notes": [
+    {
+      "id": "full-note-0001",
+      "title": "Fixture 部署手册",
+      "content": "### Fixture 部署手册\n\n本笔记是脱敏夹具，命令与域名均为虚构。\n\n```bash\nssh fixture-user@192.0.2.10\ncd /srv/fixture && ./deploy.sh --dry-run\n```\n\n参考 [[Fixture 文档]] 与 https://docs.fixture.invalid/guide 。\n",
+      "category": "运维",
+      "tags": ["夹具", "部署"],
+      "pinned": true,
+      "updatedAt": 1749945600000
+    },
+    {
+      "id": "full-note-0002",
+      "title": "Fixture 排障记录",
+      "content": "- 现象：夹具样本，无真实故障\n- 结论：记录格式测试\n",
+      "category": "运维",
+      "tags": ["夹具"],
+      "pinned": false,
+      "updatedAt": 1740787200000
+    }
+  ],
+  "handwritings": [
+    {
+      "id": "full-hw-0001",
+      "title": "Fixture 拓扑手绘",
+      "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAABfElEQVR42u2czQ2CQBBGgVAEiSdb4EgFNkIBxgM1cDAWQCNWwJEWbMUDCdmEv9ndwGaHNzcFSXiZ77GzRtOiuCXUemUgABCAjqzcfPF4/yCSJMn3daeDnDpozu9qNc8QHYSkAXS2g8Zq28/VWDTN0wLQ4tlEjAIQDvKUDg4iYgDCQSGlg4OIGIBwUEjp4CAiBiAcFFI6OIiIAQgHhZQODiJiAMJBvtIp+3r+5lB1V3fQIpf5UStSuZosmHQWEUwnlH0tZ5QpozNU3drNm4e2ey0yB+2GfbxbYVOMp5V9Leyj6B1kRcfEJGSUKUiW2+NpaiXWQerWQcJ0y0W7e52NHozeQW75Mk1ExI6JmI7VsxIH+cTZJ2ISvuwHaR81fCIm+WzEgDzDJbxOGAdFlN+4HSQfqZzHlOgdJBypnIc4DQtFcwdDgsZqxD3JQUcHdhoaNm5+d8tR+TrIHKy2W+mie9LmnZ/xrYYOUoc85vntM9sdFpXy3x10EIAAFLD+lK2t2OOtBQ4AAAAASUVORK5CYII=",
+      "tags": ["夹具"],
+      "createdAt": 1740787200000
+    }
+  ],
+  "inbox": [
+    {
+      "id": "full-inbox-0001",
+      "content": "临时想法：夹具样本，待整理。",
+      "type": "text",
+      "status": "inbox",
+      "createdAt": 1749945600000
+    },
+    {
+      "id": "full-inbox-0002",
+      "content": "https://docs.fixture.invalid/guide",
+      "title": "Fixture 文档链接",
+      "url": "https://docs.fixture.invalid/guide",
+      "type": "url",
+      "status": "processed",
+      "targetType": "site",
+      "targetId": "full-site-0002",
+      "createdAt": 1740787200000
+    }
+  ],
+  "projects": [
+    {
+      "id": "full-prj-0001",
+      "name": "Fixture 项目空间",
+      "description": "虚构项目，用于验证跨集合引用。",
+      "status": "active",
+      "repoUrl": "https://git.fixture.invalid/fixture/self-hub-fixture",
+      "deployUrl": "https://prod.fixture.invalid/",
+      "tags": ["夹具"],
+      "noteIds": ["full-note-0001", "full-note-0002"],
+      "siteIds": ["full-site-0001"],
+      "serverIds": ["full-srv-0001"],
+      "reminderIds": ["full-rem-0001"],
+      "decisions": [
+        { "date": 1749945600000, "title": "夹具决策", "note": "样本记录，无真实含义。" }
+      ],
+      "createdAt": 1735689600000,
+      "updatedAt": 1749945600000
+    }
+  ],
+  "annotations": [
+    {
+      "id": "full-ann-0001",
+      "pageUrl": "https://docs.fixture.invalid/guide",
+      "pageTitle": "Fixture 文档",
+      "text": "第一条虚拟高亮文本。",
+      "note": "夹具批注 A",
+      "color": "yellow",
+      "tags": ["夹具"],
+      "anchor": { "prefix": "前文", "suffix": "后文", "startOffset": 10, "endOffset": 20 },
+      "projectId": "full-prj-0001",
+      "createdAt": 1740787200000,
+      "updatedAt": 1740787200000
+    },
+    {
+      "id": "full-ann-0002",
+      "pageUrl": "https://docs.fixture.invalid/guide",
+      "pageTitle": "Fixture 文档",
+      "text": "第二条虚拟高亮文本，与第一条不同。",
+      "color": "green",
+      "tags": ["夹具"],
+      "projectId": "full-prj-0001",
+      "createdAt": 1749945600000,
+      "updatedAt": 1749945600000
+    }
+  ],
+  "obsidianConfig": {
+    "enabled": true,
+    "bucket": "fixture-vault-bucket",
+    "endpoint": "oss-cn-hangzhou.aliyuncs.com",
+    "region": "oss-cn-hangzhou",
+    "accessKeyId": "TESTKEY-not-a-real-oss-id",
+    "accessKeySecret": "TESTKEY-not-a-real-oss-secret",
+    "prefix": "FixtureVault/"
+  },
+  "obsidianNotes": [
+    {
+      "key": "FixtureVault/fixture-note.md",
+      "title": "fixture-note",
+      "path": "FixtureVault/",
+      "size": 128,
+      "lastModified": 1749945600000,
+      "content": "# Fixture Note\n\n虚构笔记内容。\n"
+    },
+    {
+      "key": "FixtureVault/图片位置/fixture-pic.png",
+      "title": "fixture-pic",
+      "path": "FixtureVault/图片位置/",
+      "size": 437,
+      "lastModified": 1740787200000
+    }
+  ],
+  "wucaiConfig": { "enabled": true, "token": "TESTKEY-not-a-real-wucai-token", "lastSyncTime": 1749945600000 },
+  "wucaiHighlights": [
+    {
+      "id": "full-wc-0001",
+      "pageTitle": "Fixture 文档",
+      "pageUrl": "https://docs.fixture.invalid/guide",
+      "text": "五彩虚拟划词文本。",
+      "note": "夹具思考",
+      "color": "blue",
+      "tags": ["夹具"],
+      "createdAt": 1740787200000,
+      "updatedAt": 1749945600000
+    },
+    {
+      "id": "full-wc-0002",
+      "pageTitle": "Fixture 首页",
+      "pageUrl": "https://fixture.invalid/",
+      "text": "第二条五彩虚拟划词。",
+      "color": "purple",
+      "tags": ["夹具"],
+      "createdAt": 1749945600000
+    }
+  ],
+  "youdaoConfig": { "enabled": true, "token": "TESTKEY-not-a-real-youdao-token", "cookie": "YNOTE_SKEY=TESTKEY-not-a-real-cookie", "lastSyncTime": 1749945600000 },
+  "youdaoNotes": [
+    {
+      "id": "full-yd-0001",
+      "title": "Fixture 有道笔记",
+      "folder": "/夹具/",
+      "content": "虚构有道笔记内容。\n",
+      "size": 64,
+      "updatedAt": 1740787200000
+    }
+  ],
+  "aiConfig": {
+    "provider": "deepseek",
+    "cloudAiEnabled": false,
+    "apiKey": "TESTKEY-not-a-real-ai-key",
+    "baseUrl": "https://ai.fixture.invalid/v1",
+    "model": "fixture-model"
+  },
+  "cloudflareSync": {
+    "enabled": true,
+    "workerUrl": "https://sync.fixture.invalid/state",
+    "syncKey": "TESTKEY-not-a-real-sync-key",
+    "autoSync": false,
+    "lastSyncTime": 1749945600000
+  },
+  "webdavConfig": {
+    "enabled": true,
+    "url": "https://dav.fixture.invalid/dav/",
+    "username": "fixture-user@example.invalid",
+    "password": "TESTKEY-not-a-real-webdav-password",
+    "pathPrefix": "selfhub_fixture",
+    "lastBackupAt": 1749945600000
+  },
+  "backupPolicy": { "provider": "webdav", "enabled": false },
+  "homeBlocks": [
+    { "id": "sites", "hidden": false, "collapsed": false },
+    { "id": "capture" },
+    { "id": "continue" },
+    { "id": "todo", "collapsed": true },
+    { "id": "ops" }
+  ],
+  "connectionTests": {
+    "obsidian": {
+      "at": 1749945600000,
+      "ok": false,
+      "message": "夹具样本：未真实连接",
+      "fingerprint": "fixture-fingerprint-0001",
+      "capabilities": [],
+      "environment": "web"
+    }
+  },
+  "purposes": { "backup": false, "remote-vault": true, "source-import": true, "cloud-ai": false },
+  "sampleBatch": ["full-site-0003", "full-note-0002"],
+  "features": {
+    "inbox": true,
+    "projects": true,
+    "servers": true,
+    "secrets": true,
+    "notes": true,
+    "checkin": true,
+    "handwriting": true,
+    "wucai": true,
+    "youdao": true
+  },
+  "gotabPrefs": {
+    "searchEngine": "bing",
+    "wallpaperType": "custom",
+    "customWallpaperUrl": "https://fixture.invalid/wallpaper.png",
+    "showQuickNotes": true,
+    "showProjects": true,
+    "dockLayout": "dense"
+  }
+}

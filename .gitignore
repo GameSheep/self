@@ -30,6 +30,12 @@ test-results
 playwright-report
 tests/.report
 tests/.artifacts
+tests/.pw-*
+
+# Local scratch / unrelated media
+.workbuddy-ai
+chinese_numbers_video
+docs/screenshots
 
 # Local audit scratch space (probes/reports generated during the bug audit)
 .audit

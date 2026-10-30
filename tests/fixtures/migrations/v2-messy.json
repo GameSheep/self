@@ -1,0 +1,241 @@
+{
+  "schemaVersion": 2,
+  "legacyVersion": 1,
+  "migratedFrom": "chrome.storage.local:fixture.legacy.mirror",
+  "customSections": [
+    { "id": "custom-0001", "label": "迁移时必须保留的自定义分区", "items": ["a", "b"] }
+  ],
+  "theme": "dark",
+  "categories": ["全部", "常用工具", "技术开发", "运维部署", "API与服务", "知识资讯"],
+  "sites": [
+    {
+      "id": "src-0001",
+      "title": "碰撞源 A（站点）",
+      "url": "https://collision.fixture.invalid/a",
+      "category": "技术开发",
+      "description": "与笔记 src-0001 使用同一个来源 ID，用于复现跨集合 ID 碰撞。",
+      "tags": ["夹具", "碰撞"],
+      "pinned": false,
+      "visitCount": 2,
+      "legacySource": "extension-bookmarks",
+      "createdAt": 1735689600000
+    },
+    {
+      "id": "src-0002",
+      "title": "同 URL 不同批注站点",
+      "url": "https://annotated.fixture.invalid/article",
+      "category": "知识资讯",
+      "description": "同一页面被多次批注。",
+      "tags": ["夹具"],
+      "pinned": false,
+      "visitCount": 5,
+      "createdAt": 1740787200000
+    }
+  ],
+  "servers": [
+    {
+      "id": "src-0001",
+      "name": "collision-fixture-host",
+      "publicIp": "203.0.113.42",
+      "env": "dev",
+      "status": "unknown",
+      "notes": "与站点 / 笔记共用 src-0001，用于跨集合碰撞复现。",
+      "createdAt": 1740787200000
+    }
+  ],
+  "secrets": [],
+  "checkIns": [],
+  "reminders": [
+    {
+      "id": "messy-rem-0001",
+      "title": "Fixture 月末（31 日）续费",
+      "category": "subscription",
+      "targetDate": 1793404800000,
+      "recurring": "monthly",
+      "cost": "¥30 / 月",
+      "url": "https://billing.fixture.invalid/",
+      "notes": "2026-10-31：月末锚点，2 月没有 31 日时不得崩溃。",
+      "completed": false,
+      "autoRollover": false,
+      "createdAt": 1735689600000
+    },
+    {
+      "id": "messy-rem-0002",
+      "title": "Fixture 闰日（2 月 29 日）续费",
+      "category": "subscription",
+      "targetDate": 1835395200000,
+      "recurring": "yearly",
+      "cost": "¥365 / 年",
+      "url": "https://billing.fixture.invalid/leap",
+      "notes": "2028-02-29：闰日锚点。",
+      "completed": false,
+      "autoRollover": false,
+      "createdAt": 1740787200000
+    },
+    {
+      "id": "messy-rem-0003",
+      "title": "Fixture 月末（30 日）年费",
+      "category": "other",
+      "targetDate": 1769817600000,
+      "recurring": "once",
+      "notes": "2026-01-31：已过期但 autoRollover=false，必须保持原值。",
+      "completed": false,
+      "autoRollover": false,
+      "createdAt": 1735689600000
+    }
+  ],
+  "notes": [
+    {
+      "id": "src-0001",
+      "title": "碰撞源 A（笔记）",
+      "content": "与站点 src-0001 共用 ID。此笔记引用一个不存在的附件：\n\n![缺失附件](../图片位置/missing-fixture-diagram.png)\n\n也引用了不存在的库内文件：![[missing-fixture-attachment.pdf]]\n",
+      "category": "知识资讯",
+      "tags": ["夹具", "碰撞"],
+      "pinned": false,
+      "attachments": ["FixtureVault/图片位置/missing-fixture-diagram.png"],
+      "updatedAt": 1749945600000
+    },
+    {
+      "id": "messy-note-0002",
+      "title": "同 URL 批注索引",
+      "content": "本页被批注两次：\n\n1. 第一条虚拟高亮（黄色）\n2. 第二条虚拟高亮（红色，内容不同）\n",
+      "category": "知识资讯",
+      "updatedAt": 1740787200000
+    }
+  ],
+  "handwritings": [
+    {
+      "id": "messy-hw-0001",
+      "title": "Fixture 大手绘（合成 PNG）",
+      "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAABfElEQVR42u2czQ2CQBBGgVAEiSdb4EgFNkIBxgM1cDAWQCNWwJEWbMUDCdmEv9ndwGaHNzcFSXiZ77GzRtOiuCXUemUgABCAjqzcfPF4/yCSJMn3daeDnDpozu9qNc8QHYSkAXS2g8Zq28/VWDTN0wLQ4tlEjAIQDvKUDg4iYgDCQSGlg4OIGIBwUEjp4CAiBiAcFFI6OIiIAQgHhZQODiJiAMJBvtIp+3r+5lB1V3fQIpf5UStSuZosmHQWEUwnlH0tZ5QpozNU3drNm4e2ey0yB+2GfbxbYVOMp5V9Leyj6B1kRcfEJGSUKUiW2+NpaiXWQerWQcJ0y0W7e52NHozeQW75Mk1ExI6JmI7VsxIH+cTZJ2ISvuwHaR81fCIm+WzEgDzDJbxOGAdFlN+4HSQfqZzHlOgdJBypnIc4DQtFcwdDgsZqxD3JQUcHdhoaNm5+d8tR+TrIHKy2W+mie9LmnZ/xrYYOUoc85vntM9sdFpXy3x10EIAAFLD+lK2t2OOtBQ4AAAAASUVORK5CYII=",
+      "tags": ["夹具", "大对象"],
+      "createdAt": 1749945600000
+    }
+  ],
+  "inbox": [
+    {
+      "id": "messy-inbox-0001",
+      "content": "夹具样本：待整理的孤立条目。",
+      "type": "text",
+      "status": "inbox",
+      "createdAt": 1749945600000
+    }
+  ],
+  "projects": [
+    {
+      "id": "messy-prj-0001",
+      "name": "Fixture 孤立引用项目",
+      "description": "关联 ID 全部指向不存在的条目，项目视图不得崩溃。",
+      "status": "planning",
+      "tags": ["夹具", "孤立引用"],
+      "noteIds": ["ghost-note-9999", "src-0001"],
+      "siteIds": ["ghost-site-9999"],
+      "serverIds": ["ghost-srv-9999", "src-0001"],
+      "reminderIds": ["ghost-rem-9999"],
+      "decisions": [],
+      "createdAt": 1735689600000,
+      "updatedAt": 1749945600000
+    }
+  ],
+  "annotations": [
+    {
+      "id": "ann-shared-0001",
+      "pageUrl": "https://annotated.fixture.invalid/article",
+      "pageTitle": "同 URL 不同批注样本",
+      "text": "第一条虚拟高亮：本段用于验证同 URL 多次批注。",
+      "note": "夹具批注一",
+      "color": "yellow",
+      "tags": ["夹具"],
+      "anchor": { "prefix": "A", "suffix": "B", "startOffset": 0, "endOffset": 24 },
+      "projectId": "ghost-project-9999",
+      "createdAt": 1740787200000,
+      "updatedAt": 1740787200000
+    },
+    {
+      "id": "ann-shared-0002",
+      "pageUrl": "https://annotated.fixture.invalid/article",
+      "pageTitle": "同 URL 不同批注样本",
+      "text": "第二条虚拟高亮：与第一条 URL 相同但文本完全不同。",
+      "note": "夹具批注二",
+      "color": "red",
+      "tags": ["夹具"],
+      "anchor": { "prefix": "C", "suffix": "D", "startOffset": 100, "endOffset": 130 },
+      "projectId": "ghost-project-9999",
+      "createdAt": 1749945600000,
+      "updatedAt": 1749945600000
+    },
+    {
+      "id": "wc-collide-0001",
+      "pageUrl": "https://collision.fixture.invalid/a",
+      "pageTitle": "碰撞源 A",
+      "text": "与五彩划词共用 wc-collide-0001 的来源 ID。",
+      "color": "blue",
+      "createdAt": 1749945600000,
+      "updatedAt": 1749945600000
+    }
+  ],
+  "wucaiConfig": { "enabled": false, "token": "" },
+  "wucaiHighlights": [
+    {
+      "id": "wc-collide-0001",
+      "pageTitle": "碰撞源 A",
+      "pageUrl": "https://collision.fixture.invalid/a",
+      "text": "五彩侧的同 ID 划词记录（来源碰撞样本）。",
+      "color": "green",
+      "tags": ["夹具", "碰撞"],
+      "createdAt": 1749945600000
+    }
+  ],
+  "youdaoConfig": { "enabled": false, "token": "" },
+  "obsidianConfig": {
+    "enabled": false,
+    "bucket": "",
+    "endpoint": "oss-cn-hangzhou.aliyuncs.com",
+    "region": "oss-cn-hangzhou",
+    "accessKeyId": "",
+    "accessKeySecret": "",
+    "prefix": "FixtureVault/"
+  },
+  "aiConfig": {
+    "provider": "gemini",
+    "cloudAiEnabled": false,
+    "apiKey": "",
+    "baseUrl": "https://ai.fixture.invalid",
+    "model": "fixture-model"
+  },
+  "cloudflareSync": { "enabled": false, "workerUrl": "", "syncKey": "", "autoSync": false },
+  "webdavConfig": {
+    "enabled": false,
+    "url": "https://dav.fixture.invalid/dav/",
+    "username": "fixture-user@example.invalid",
+    "password": "TESTKEY-not-a-real-webdav-password",
+    "pathPrefix": "selfhub_fixture"
+  },
+  "legacyIdbMirror": {
+    "db": "self_hub_idb",
+    "version": 1,
+    "stores": {
+      "metadata": [
+        { "key": "schema_version", "value": 1 },
+        { "key": "theme", "value": "dark" }
+      ],
+      "sites": [
+        {
+          "id": "src-0001",
+          "title": "碰撞源 A（站点）",
+          "url": "https://collision.fixture.invalid/a",
+          "category": "技术开发",
+          "createdAt": 1735689600000
+        }
+      ],
+      "blobs": [
+        { "id": "blob-fixture-0001", "mime": "image/png", "size": 437, "note": "旧 IDB 二进制附件槽位（夹具不含真实字节）" }
+      ]
+    }
+  },
+  "extensionMirror": {
+    "source": "chrome.storage.local",
+    "capturedAt": 1749945600000,
+    "payload": { "bookmarks": ["https://fixture.invalid/"], "annotations": ["ann-shared-0001"] }
+  }
+}

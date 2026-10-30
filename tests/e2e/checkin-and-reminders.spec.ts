@@ -47,22 +47,22 @@ test.describe('签到按日记录', () => {
             name: '每日签到',
             url: `https://${ENDPOINT}/checkin`,
             method: 'GET',
-            type: 'http',
+            type: 'redirect',
             streakDays: 0,
             createdAt: Date.now()
           }
         ]
       })
     );
-    await page.goto('/');
-    await page.locator('nav button', { hasText: '自动化与打卡' }).click();
+    await page.goto('/#/tools/checkins');
 
-    await page.locator('button', { hasText: '立即签到' }).click();
+    await page.getByTestId('checkin-mark-done-c1').click();
     await expect(page.getByTestId('checkin-streak')).toContainText('连续 1 天', { timeout: 15_000 });
 
-    // Same day, second run.
-    await page.locator('button', { hasText: '立即签到' }).click();
-    await page.waitForTimeout(2500);
+    // Same day, second mark: the button disables itself, so a double click can
+    // neither fire nor inflate the record.
+    const mark = page.getByTestId('checkin-mark-done-c1');
+    await expect(mark).toBeDisabled({ timeout: 10_000 });
     await expect(page.getByTestId('checkin-streak')).toContainText('连续 1 天');
 
     const state = await readState(page);
@@ -93,8 +93,7 @@ test.describe('签到按日记录', () => {
         ]
       })
     );
-    await page.goto('/');
-    await page.locator('nav button', { hasText: '自动化与打卡' }).click();
+    await page.goto('/#/tools/checkins');
 
     const cells = page.getByTestId('checkin-history').locator('[data-day]');
     await expect(cells).toHaveCount(14);
@@ -123,8 +122,7 @@ test.describe('签到按日记录', () => {
         ]
       })
     );
-    await page.goto('/');
-    await page.locator('nav button', { hasText: '自动化与打卡' }).click();
+    await page.goto('/#/tools/checkins');
     await expect(page.getByTestId('checkin-streak')).toContainText('连续 2 天');
   });
 });
@@ -205,15 +203,18 @@ test.describe('到期提醒通知', () => {
   test('未授权时不推送，提醒页给出开启入口', async ({ page }) => {
     await stubNotifications(page, 'default');
     await seedState(page, dueState());
-    await page.goto('/');
-    await page.locator('nav button', { hasText: '倒计时与续费' }).click();
+    await page.goto('/#/reminders');
 
     await expect(page.locator('button', { hasText: '开启到期提醒' })).toBeVisible();
     const notes = await page.evaluate(() => (window as any).__notifications || []);
     expect(notes).toHaveLength(0);
 
     await page.locator('button', { hasText: '开启到期提醒' }).click();
-    await expect(page.getByText('到期提醒已开启')).toBeVisible({ timeout: 10_000 });
+    // The strip now states the exact limitation (only while this page is open)
+    // instead of a bare "已开启", so assert the granted state plus honest wording.
+    const strip = page.getByTestId('notification-strip');
+    await expect(strip).toHaveAttribute('data-permission', 'granted', { timeout: 10_000 });
+    await expect(strip).toContainText('页面打开时');
   });
 
   test('已完成或远期提醒不通知', async ({ page }) => {

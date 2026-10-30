@@ -7,13 +7,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (tab) {
     document.getElementById('page-title').innerText = tab.title || tab.url || '未知页面';
 
-    chrome.runtime.sendMessage({
-      action: 'GET_PAGE_ANNOTATIONS',
-      url: tab.url
-    }, (res) => {
-      const count = (res && res.annotations) ? res.annotations.length : 0;
-      document.getElementById('page-highlights-count').innerText = `本页划线: ${count} 条 (全站共 ${res?.allCount || 0} 条)`;
-    });
+    // Envelope protocol via SelfHubClient; a raw {action} message is rejected
+    // by the background and the count would always read zero.
+    window.SelfHubClient.send('GET_PAGE_ANNOTATIONS', { url: tab.url })
+      .then((data) => {
+        const count = (data && data.annotations) ? data.annotations.length : 0;
+        document.getElementById('page-highlights-count').innerText =
+          `本页划线: ${count} 条 (全站共 ${(data && data.allCount) || 0} 条)`;
+      })
+      .catch(() => {
+        document.getElementById('page-highlights-count').innerText = '本页划线: 读取失败（扩展未响应）';
+      });
   }
 
   // Open Sidepanel
@@ -42,14 +46,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       isDeleted: false
     };
 
-    chrome.storage.local.get(['selfhub_inbox'], (res) => {
-      const list = res.selfhub_inbox || [];
-      list.unshift(item);
-      chrome.storage.local.set({ selfhub_inbox: list }, () => {
+    // Single writer: the background stores it (and de-duplicates by operationId).
+    window.SelfHubClient.send('CAPTURE_ENTRY', {
+      text: item.content,
+      url: item.url,
+      operationId: 'popup-' + item.id
+    })
+      .then(() => {
         alert('✅ 已将该网页存入 Self-Hub 统一收件箱！');
         window.close();
+      })
+      .catch((err) => {
+        alert('❌ 保存失败：' + (err.message || '扩展未响应'));
       });
-    });
   });
 
   // Open Sync Settings
@@ -70,7 +79,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const customUrl = res.selfhub_web_url;
       const target = (customUrl && !customUrl.includes('localhost:4173'))
         ? customUrl
-        : chrome.runtime.getURL('app/index.html');
+        : chrome.runtime.getURL('app/index.html#/home');
       chrome.tabs.create({ url: target });
       window.close();
     });

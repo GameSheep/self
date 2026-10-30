@@ -8,6 +8,78 @@
   let activePopover = null;
   let currentSelectionRange = null;
 
+  /**
+   * Protocol envelope for the background command API (P2-04).
+   *
+   * Content scripts cannot import the shared client (modules are not allowed
+   * here), so the envelope is built in this one helper. The response shape is
+   * { requestId, ok, data | error }; a failure carries a code so a caller can
+   * tell "forbidden" from "broken".
+   */
+  function newRequestId() {
+    // requestId must be a non-empty *string* (protocol.js validates this).
+    return 'req-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  }
+
+  /**
+   * Human-readable translation for the one error a reload actually causes.
+   *
+   * After the extension is reloaded/updated in chrome://extensions, tabs opened
+   * *before* that keep running the old content-script instance whose
+   * `chrome.runtime` binding is dead: every send throws "Extension context
+   * invalidated". Nothing on this page can fix it — the tab must be refreshed so
+   * the new instance injects. Say that, in the user's language, instead of
+   * surfacing Chrome's raw English error.
+   */
+  function translateSendError(message) {
+    if (/Extension context invalidated/i.test(message)) {
+      return '扩展刚被重新加载，本页面还是旧实例，刷新这个网页（F5）后重试即可';
+    }
+    return message || '扩展未响应';
+  }
+
+  function sendCommand(command, payload) {
+    return new Promise((resolve, reject) => {
+      const message = {
+        protocolVersion: 1,
+        requestId: newRequestId(),
+        command,
+        payload: payload || {}
+      };
+      try {
+        chrome.runtime.sendMessage(message, (response) => {
+          const lastError = chrome.runtime.lastError;
+          if (lastError) {
+            reject(new Error(translateSendError(lastError.message)));
+            return;
+          }
+          if (!response || typeof response !== 'object') {
+            reject(new Error('扩展返回了空响应'));
+            return;
+          }
+          if (!response.ok) {
+            const error = new Error(response.error?.message || '命令失败');
+            error.code = response.error?.code || 'INTERNAL';
+            reject(error);
+            return;
+          }
+          resolve(response.data);
+        });
+      } catch (err) {
+        reject(new Error(translateSendError(err?.message || String(err))));
+      }
+    });
+  }
+
+  /** Every write carries an operationId so a retry cannot duplicate the record. */
+  function operationId(prefix) {
+    return [
+      prefix,
+      Date.now().toString(36),
+      Math.random().toString(36).slice(2, 8)
+    ].join('-');
+  }
+
   const COLORS = [
     { id: 'yellow', hex: '#fde047', label: '黄色' },
     { id: 'green', hex: '#86efac', label: '绿色' },
@@ -106,18 +178,34 @@
     });
     toolbar.appendChild(noteBtn);
 
-    // Copy quote button
+    // Copy button: plain selected text, no quote formatting.
     const copyBtn = document.createElement('button');
     copyBtn.className = 'selfhub-btn';
-    copyBtn.innerHTML = '📋 引用';
+    copyBtn.innerHTML = '📋 复制';
     copyBtn.addEventListener('mousedown', (e) => {
       e.stopPropagation();
       e.preventDefault();
       const text = range.toString().trim();
-      const md = `> ${text}\n>\n> —— 摘自 [${document.title}](${window.location.href})`;
-      navigator.clipboard.writeText(md).then(() => {
-        showToast('已复制 Markdown 引用格式');
+      const done = () => {
+        showToast('已复制选中内容');
         removeToolbar();
+      };
+      navigator.clipboard.writeText(text).then(done).catch(() => {
+        // 剪贴板 API 被页面策略拒绝时退回 execCommand，而不是静默失败。
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          ta.remove();
+          done();
+        } catch (err) {
+          showToast('复制失败，请手动选择复制');
+          removeToolbar();
+        }
       });
     });
     toolbar.appendChild(copyBtn);
@@ -154,10 +242,35 @@
     const text = range.toString().trim();
     if (!text) return;
 
-    // Anchor context (prefix up to 32 chars, suffix up to 32 chars)
-    const containerText = range.commonAncestorContainer.textContent || '';
-    const prefix = containerText.slice(Math.max(0, range.startOffset - 32), range.startOffset);
-    const suffix = containerText.slice(range.endOffset, Math.min(containerText.length, range.endOffset + 32));
+    // Anchor context (prefix up to 32 chars, suffix up to 32 chars).
+    // Range offsets are character offsets inside a text node, but *child
+    // indexes* when the boundary container is an element — slicing the
+    // container's whole textContent by them produced garbage context. Read
+    // each boundary from its own container instead.
+    const boundaryText = (node, offset, side) => {
+      if (!node) return '';
+      if (node.nodeType === Node.TEXT_NODE) {
+        return side === 'before'
+          ? node.textContent.slice(Math.max(0, offset - 32), offset)
+          : node.textContent.slice(offset, Math.min(node.textContent.length, offset + 32));
+      }
+      const kids = Array.from(node.childNodes);
+      const grab = (child) => child.textContent || '';
+      if (side === 'before') {
+        let acc = '';
+        for (let i = Math.min(offset, kids.length) - 1; i >= 0 && acc.length < 32; i--) {
+          acc = grab(kids[i]) + acc;
+        }
+        return acc.slice(-32);
+      }
+      let acc = '';
+      for (let i = Math.max(offset, 0); i < kids.length && acc.length < 32; i++) {
+        acc += grab(kids[i]);
+      }
+      return acc.slice(0, 32);
+    };
+    const prefix = boundaryText(range.startContainer, range.startOffset, 'before');
+    const suffix = boundaryText(range.endContainer, range.endOffset, 'after');
 
     const id = `hl-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const annotation = {
@@ -181,13 +294,14 @@
     // Apply DOM mark
     wrapRangeWithHighlight(range, annotation);
 
-    // Save to background
-    chrome.runtime.sendMessage({
-      action: 'SAVE_ANNOTATION',
-      annotation
-    }, (res) => {
-      showToast(`已高亮并存入 Self-Hub (${COLORS.find(c => c.id === color)?.label || ''})`);
-    });
+    // Save through the background's command API (single writer).
+    sendCommand('SAVE_ANNOTATION', { annotation, operationId: operationId('ann-save') })
+      .then(() => {
+        showToast(`已高亮并存入 Self-Hub (${COLORS.find(c => c.id === color)?.label || ''})`);
+      })
+      .catch((err) => {
+        showToast(`保存失败：${err.message || '扩展未响应'}`);
+      });
 
     removeToolbar();
     window.getSelection()?.removeAllRanges();
@@ -273,27 +387,68 @@
     const popover = document.createElement('div');
     popover.id = 'selfhub-annotation-popover';
 
-    popover.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-        <span style="font-weight:600;font-size:12px;color:#a1a1aa;">Self-Hub 批注与思考</span>
-        <div style="display:flex;gap:4px;">
-          ${COLORS.map(c => `
-            <span class="selfhub-color-dot" data-color="${c.id}" style="width:14px;height:14px;background-color:${c.hex};display:inline-block;" title="${c.label}"></span>
-          `).join('')}
-        </div>
-      </div>
-      <div style="font-size:11px;color:#71717a;margin-bottom:6px;max-height:40px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-        "${annotation.text}"
-      </div>
-      <textarea id="selfhub-note-input" placeholder="写下你的批注、技术思考或要点归纳...">${annotation.note || ''}</textarea>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;">
-        <button id="selfhub-del-btn" style="background:transparent;border:none;color:#ef4444;font-size:11px;cursor:pointer;">删除划线</button>
-        <div style="display:flex;gap:6px;">
-          <button id="selfhub-cancel-btn" class="selfhub-btn">取消</button>
-          <button id="selfhub-save-btn" class="selfhub-btn" style="background:#10b981;border-color:#10b981;color:#000;font-weight:600;">保存批注</button>
-        </div>
-      </div>
-    `;
+    // Built with DOM APIs: annotation.text comes from arbitrary web pages and
+    // annotation.note is persisted user input — interpolating either into
+    // innerHTML was a stored-XSS sink.
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;';
+
+    const headerTitle = document.createElement('span');
+    headerTitle.style.cssText = 'font-weight:600;font-size:12px;color:#71717a;';
+    headerTitle.textContent = 'Self-Hub 批注与思考';
+    header.appendChild(headerTitle);
+
+    const dotRow = document.createElement('div');
+    dotRow.style.cssText = 'display:flex;gap:4px;';
+    COLORS.forEach((c) => {
+      const dot = document.createElement('span');
+      dot.className = 'selfhub-color-dot';
+      dot.setAttribute('data-color', c.id);
+      dot.title = c.label;
+      dot.style.cssText = 'width:14px;height:14px;background-color:' + c.hex + ';display:inline-block;';
+      dotRow.appendChild(dot);
+    });
+    header.appendChild(dotRow);
+    popover.appendChild(header);
+
+    const quoted = document.createElement('div');
+    quoted.style.cssText = 'font-size:11px;color:#71717a;margin-bottom:6px;max-height:40px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    quoted.textContent = '"' + (annotation.text || '') + '"';
+    popover.appendChild(quoted);
+
+    const noteInput = document.createElement('textarea');
+    noteInput.id = 'selfhub-note-input';
+    noteInput.placeholder = '写下你的批注、技术思考或要点归纳...';
+    noteInput.value = annotation.note || '';
+    popover.appendChild(noteInput);
+
+    const footer = document.createElement('div');
+    footer.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-top:8px;';
+
+    const delBtn = document.createElement('button');
+    delBtn.id = 'selfhub-del-btn';
+    delBtn.textContent = '删除划线';
+    delBtn.style.cssText = 'background:transparent;border:none;color:#ef4444;font-size:11px;cursor:pointer;';
+    footer.appendChild(delBtn);
+
+    const footerRight = document.createElement('div');
+    footerRight.style.cssText = 'display:flex;gap:6px;';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.id = 'selfhub-cancel-btn';
+    cancelBtn.className = 'selfhub-btn';
+    cancelBtn.textContent = '取消';
+    footerRight.appendChild(cancelBtn);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.id = 'selfhub-save-btn';
+    saveBtn.className = 'selfhub-btn';
+    saveBtn.textContent = '保存批注';
+    saveBtn.style.cssText = 'background:#10b981;border-color:#10b981;color:#000;font-weight:600;';
+    footerRight.appendChild(saveBtn);
+
+    footer.appendChild(footerRight);
+    popover.appendChild(footer);
 
     document.body.appendChild(popover);
     activePopover = popover;
@@ -309,8 +464,6 @@
     });
 
     // Save Note
-    const saveBtn = popover.querySelector('#selfhub-save-btn');
-    const noteInput = popover.querySelector('#selfhub-note-input');
     saveBtn.addEventListener('click', () => {
       annotation.note = noteInput.value.trim();
       annotation.updatedAt = Date.now();
@@ -321,13 +474,12 @@
     });
 
     // Delete
-    const delBtn = popover.querySelector('#selfhub-del-btn');
     delBtn.addEventListener('click', () => {
       if (confirm('确定删除该条划线和批注吗？')) {
-        chrome.runtime.sendMessage({
-          action: 'DELETE_ANNOTATION',
-          id: annotation.id
-        }, () => {
+        sendCommand('DELETE_ANNOTATION', {
+          id: annotation.id,
+          operationId: operationId('ann-del')
+        }).then(() => {
           // Unwrap mark
           const parent = markEl.parentNode;
           while (markEl.firstChild) {
@@ -336,11 +488,13 @@
           parent.removeChild(markEl);
           showToast('已删除划线');
           removePopover();
+        }).catch((err) => {
+          showToast(`删除失败：${err.message || '扩展未响应'}`);
         });
       }
     });
 
-    popover.querySelector('#selfhub-cancel-btn').addEventListener('click', removePopover);
+    cancelBtn.addEventListener('click', removePopover);
 
     // Position
     const top = window.scrollY + rect.bottom + 8;
@@ -351,10 +505,10 @@
   }
 
   function saveUpdatedAnnotation(annotation) {
-    chrome.runtime.sendMessage({
-      action: 'SAVE_ANNOTATION',
-      annotation
-    });
+    sendCommand('SAVE_ANNOTATION', {
+      annotation,
+      operationId: operationId('ann-update')
+    }).catch((err) => showToast(`保存失败：${err.message || '扩展未响应'}`));
   }
 
   function scrollToAnnotation(id) {
@@ -384,17 +538,17 @@
 
   // Restore saved highlights for this page on load
   function restoreSavedHighlights() {
-    chrome.runtime.sendMessage({
-      action: 'GET_PAGE_ANNOTATIONS',
-      url: window.location.href
-    }, (res) => {
-      if (!res || !res.annotations || res.annotations.length === 0) return;
-
-      res.annotations.forEach(item => {
-        if (!item.text) return;
-        highlightTextInDocument(item);
-      });
-    });
+    // The background derives the page URL from the sender, so a mismatch between
+    // the claimed URL and the real tab is rejected instead of trusted.
+    sendCommand('GET_PAGE_ANNOTATIONS', { url: window.location.href })
+      .then((data) => {
+        if (!data || !Array.isArray(data.annotations) || data.annotations.length === 0) return;
+        data.annotations.forEach((item) => {
+          if (!item.text) return;
+          highlightTextInDocument(item);
+        });
+      })
+      .catch((err) => console.warn('[Self-Hub] restoring highlights failed', err));
   }
 
   function highlightTextInDocument(annotation) {
@@ -445,24 +599,19 @@
     }
   }
 
-  // Bridge for Self-Hub Web App (localhost, 127.0.0.1, or any page identified by Self-Hub meta tag/title)
-  const isSelfHubApp = window.location.hostname === 'localhost' || 
-                       window.location.hostname === '127.0.0.1' || 
-                       Boolean(document.querySelector('meta[name="application-name"][content*="Self-Hub"]')) ||
-                       document.title.includes('Self-Hub');
-
-  if (isSelfHubApp) {
-    window.addEventListener('message', (event) => {
-      if (event.data && event.data.type === 'SELFHUB_REQUEST_EXTENSION_DATA') {
-        chrome.runtime.sendMessage({ action: 'GET_ALL_ANNOTATIONS' }, (res) => {
-          window.postMessage({
-            type: 'SELFHUB_RECEIVE_EXTENSION_DATA',
-            annotations: res?.annotations || []
-          }, '*');
-        });
-      }
-    });
-  }
+  /*
+   * The old `window.postMessage` bridge into the Self-Hub page is gone.
+   *
+   * It let any page that merely *looked* like the app (localhost, or a page whose
+   * title contained "Self-Hub") ask this content script for the whole annotation
+   * library. Dev doc §9.2 forbids exactly that: "不依赖万能 postMessage 桥", and a
+   * content script must not be able to read the library on behalf of the page it
+   * runs in. A content script may only submit captures for its own page.
+   *
+   * The packed app is itself an extension page, so it talks to the background
+   * directly (`GET_ALL_ANNOTATIONS` is allowed for page senders) — no bridge
+   * through an untrusted document is needed.
+   */
 
   // Auto restore on load
   if (document.readyState === 'loading') {

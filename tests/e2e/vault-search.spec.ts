@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { seedState, baseState } from './helpers';
+import { seedState, baseState, gotoTab } from './helpers';
 
 /**
  * Full-vault search and backlinks.
@@ -10,7 +10,7 @@ import { seedState, baseState } from './helpers';
  */
 
 const ENDPOINT = 'oss-cn-beijing.aliyuncs.com';
-const BUCKET = 'uiuecho-obsidian';
+const BUCKET = 'example-obsidian-vault';
 
 const DOCS: Record<string, string> = {
   'vault/alpha.md': '# Alpha\n\n这里记录了 Redis 缓存的使用方式。\n',
@@ -74,7 +74,7 @@ function state() {
       bucket: BUCKET,
       endpoint: ENDPOINT,
       region: 'oss-cn-beijing',
-      accessKeyId: 'LTAI5t8JAm7fyYaDsK5ECJer',
+      accessKeyId: 'LTAI5tEXAMPLE000000000',
       accessKeySecret: 'test-secret',
       prefix: 'vault/'
     }
@@ -83,7 +83,7 @@ function state() {
 
 async function boot(page: any) {
   await page.goto('/');
-  await page.locator('nav button', { hasText: '多平台数据互通' }).click();
+  await gotoTab(page, '多平台数据互通');
   await expect(page.locator('main')).toContainText('对象 3');
 }
 

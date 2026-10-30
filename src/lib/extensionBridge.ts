@@ -15,11 +15,13 @@
  * due reminders notify even when no app tab is open.
  */
 import { HubState, ReminderItem } from '../types';
+import { checkWritable } from './schemaGeneration';
 
 interface ChromeStorageLike {
   storage?: {
     local?: {
       set: (items: Record<string, unknown>, cb?: () => void) => void;
+      get?: (keys: string[] | string, cb: (items: Record<string, unknown>) => void) => void;
     };
   };
   runtime?: {
@@ -39,57 +41,188 @@ export function isExtensionContext(): boolean {
   return Boolean(getChrome());
 }
 
-/** Shape expected by extension/newtab.js and extension/background.js. */
-export function mirrorStateToExtension(state: HubState): void {
-  const chromeApi = getChrome();
-  if (!chromeApi?.storage?.local) return;
+/** Envelope for the extension's command API (P2-04). */
+export const EXTENSION_PROTOCOL_VERSION = 1;
 
-  try {
-    const wucaiAsAnnotations = (state.wucaiHighlights || []).map((h) => ({
-      id: h.id,
-      pageUrl: h.pageUrl,
-      pageTitle: h.pageTitle,
-      text: h.text,
-      note: h.note || '',
-      color: h.color,
-      tags: h.tags || [],
-      createdAt: h.createdAt,
-      updatedAt: h.updatedAt || h.createdAt
-    }));
+interface CommandEnvelope {
+  protocolVersion: number;
+  requestId: string;
+  command: string;
+  payload: Record<string, unknown>;
+}
 
-    const pageAnnotations = (state.annotations || []).map((a) => ({
-      id: a.id,
-      pageUrl: a.pageUrl,
-      pageTitle: a.pageTitle,
-      text: a.text,
-      note: a.note || '',
-      color: a.color,
-      tags: a.tags || [],
-      anchor: a.anchor,
-      createdAt: a.createdAt,
-      updatedAt: a.updatedAt
-    }));
+interface CommandResponse<T> {
+  requestId: string;
+  ok: boolean;
+  protocolVersion?: number;
+  data?: T;
+  error?: { code: string; message: string };
+}
 
-    const byId = new Map<string, unknown>();
-    for (const item of [...pageAnnotations, ...wucaiAsAnnotations]) {
-      byId.set((item as { id: string }).id, item);
+function newRequestId(): string {
+  return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Send one command to the extension background.
+ *
+ * P2-04: this is the only way the app writes extension data. The previous
+ * implementation mirrored whole collections into `chrome.storage.local` on every
+ * persisted change, from a different origin, without waiting for an answer — so a
+ * capture made in the new-tab page while the app was open could be overwritten by
+ * whichever writer ran last, and the app never learned that it happened.
+ */
+export function sendExtensionCommand<T = unknown>(
+  command: string,
+  payload: Record<string, unknown> = {}
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const chromeApi = getChrome();
+    const send = chromeApi?.runtime?.sendMessage?.bind(chromeApi.runtime);
+    if (!send) {
+      reject(new Error('当前环境没有扩展消息通道'));
+      return;
     }
+    const message: CommandEnvelope = {
+      protocolVersion: EXTENSION_PROTOCOL_VERSION,
+      requestId: newRequestId(),
+      command,
+      payload
+    };
+    try {
+      send(message, (raw) => {
+        const lastError = chromeApi?.runtime?.lastError;
+        if (lastError) {
+          reject(new Error(String((lastError as { message?: string })?.message ?? '扩展未响应')));
+          return;
+        }
+        const response = raw as CommandResponse<T> | undefined;
+        if (!response || typeof response !== 'object') {
+          reject(new Error('扩展返回了空响应'));
+          return;
+        }
+        if (!response.ok) {
+          const error = new Error(response.error?.message || '命令失败');
+          (error as Error & { code?: string }).code = response.error?.code ?? 'INTERNAL';
+          reject(error);
+          return;
+        }
+        resolve(response.data as T);
+      });
+    } catch (err) {
+      reject(err as Error);
+    }
+  });
+}
 
-    chromeApi.storage.local.set({
-      selfhub_sites: (state.sites || []).map((s) => ({
-        id: s.id,
-        title: s.title,
-        url: s.url,
-        desc: s.description || '',
-        category: s.category,
-        pinned: Boolean(s.pinned),
-        visitCount: s.visitCount || 0
-      })),
-      selfhub_annotations: Array.from(byId.values())
-    });
-  } catch (err) {
-    console.warn('[Self-Hub] extension mirror failed', err);
+/** Stable operation id for one logical write, so a retry cannot duplicate it. */
+export function newOperationId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Push the bookmark list to the extension so the new-tab grid stays accurate.
+ *
+ * Only the bookmarks are sent, and only as an ordered list; the background owns
+ * the write. Annotations are *not* mirrored any more: they now flow
+ * content-script → background → store, and the app imports them explicitly
+ * instead of overwriting them.
+ */
+export function syncBookmarksToExtension(state: HubState): void {
+  if (!isExtensionContext()) return;
+  if (checkWritable().mode === 'read-only-newer-schema') {
+    console.warn('[Self-Hub] bookmark sync skipped: newer schema generation owns this origin');
+    return;
   }
+  const bookmarks = (state.sites || []).map((s) => ({
+    id: s.id,
+    title: s.title,
+    url: s.url,
+    description: s.description || '',
+    category: s.category,
+    pinned: Boolean(s.pinned),
+    visitCount: s.visitCount || 0,
+    order: s.order
+  }));
+  void sendExtensionCommand('REPLACE_BOOKMARKS', { bookmarks }).catch((err) => {
+    console.warn('[Self-Hub] pushing bookmarks to the extension failed', err);
+  });
+}
+
+/**
+ * Import annotations the extension collected, without overwriting anything.
+ *
+ * Returns only the records the app does not already have (`rows`), plus how many
+ * annotations the extension holds in total (`totalCount`). `totalCount === -1`
+ * means the extension did not answer — the caller can tell "nothing saved yet"
+ * apart from "the extension is an old build or not reloaded", which a bare
+ * empty-array return conflated. The caller decides what to store; nothing is
+ * deleted on either side, which is the difference between an import and the old
+ * whole-collection mirror.
+ */
+export interface ExtensionAnnotationImport {
+  rows: Array<{ id: string; pageUrl: string; pageTitle?: string; text: string; note?: string; color?: string; anchor?: unknown; createdAt?: number; updatedAt?: number }>;
+  totalCount: number;
+  /**
+   * Rows the extension returned but the shape check rejected (missing id/text).
+   *
+   * Zero in every healthy path; a positive value means the extension holds
+   * annotations this build cannot read — data written by an older/other shape.
+   * Surfaced so "the pane is empty" can distinguish "extension is empty" from
+   * "extension has rows we silently dropped".
+   */
+  dropped: number;
+}
+
+export async function importExtensionAnnotations(knownIds: Set<string>): Promise<ExtensionAnnotationImport> {
+  try {
+    const data = await sendExtensionCommand<{ annotations?: Array<Record<string, unknown>> }>('GET_ALL_ANNOTATIONS');
+    const rows = Array.isArray(data?.annotations) ? data.annotations : [];
+    const usable = rows.filter(
+      (row): row is Record<string, unknown> & { id: string; text: string } =>
+        typeof row?.id === 'string' && typeof row?.text === 'string'
+    );
+    return {
+      rows: usable
+        .filter((row) => !knownIds.has(row.id))
+        .map((row) => ({
+          id: row.id,
+          pageUrl: String(row.pageUrl ?? ''),
+          pageTitle: typeof row.pageTitle === 'string' ? row.pageTitle : undefined,
+          text: row.text,
+          note: typeof row.note === 'string' ? row.note : undefined,
+          color: typeof row.color === 'string' ? row.color : undefined,
+          anchor: row.anchor,
+          createdAt: typeof row.createdAt === 'number' ? row.createdAt : undefined,
+          updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : undefined
+        })),
+      totalCount: rows.length,
+      dropped: rows.length - usable.length
+    };
+  } catch (err) {
+    console.warn('[Self-Hub] importing extension annotations failed', err);
+    return { rows: [], totalCount: -1, dropped: 0 };
+  }
+}
+
+/** What a manual 「从扩展同步」 pass reports back to the pane. */
+export interface AnnotationSyncResult {
+  ok: boolean;
+  /** How many annotations the extension holds (-1 = extension unreachable). */
+  extensionCount?: number;
+  /** How many were newly brought into the app. */
+  imported?: number;
+  /** A one-line, user-facing explanation. */
+  message: string;
+}
+
+/**
+ * Kept as a thin alias so existing callers keep compiling.
+ *
+ * It no longer mirrors annotations; see {@link syncBookmarksToExtension}.
+ */
+export function mirrorStateToExtension(state: HubState): void {
+  syncBookmarksToExtension(state);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -130,9 +263,89 @@ export function publishRemindersToExtension(reminders: ReminderItem[]): boolean 
   return sendToWorker({ action: 'PUBLISH_REMINDERS', reminders: reminderPayload(reminders) });
 }
 
-/** Ask the worker to re-check now (e.g. right after a due date is edited). */
-export function requestReminderCheck(): boolean {
-  return sendToWorker({ action: 'CHECK_REMINDERS_NOW' });
+/* -------------------------------------------------------------------------- */
+/* Captures made inside the extension                                          */
+/* -------------------------------------------------------------------------- */
+
+export interface ExtensionCapture {
+  /** Stable key used to dedupe repeated imports. */
+  operationId: string;
+  text: string;
+  url?: string;
+  createdAt: number;
+  origin: 'newtab-quicknote' | 'extension-inbox';
+}
+
+interface ExtensionCapturePayload {
+  quickNote?: string;
+  quickNoteUpdatedAt?: number;
+  inbox?: Array<{ id?: string; content?: string; title?: string; url?: string; createdAt?: number }>;
+}
+
+/**
+ * Read what the extension captured on its own.
+ *
+ * The new-tab page writes `selfhub_quicknote` and the content script / side panel
+ * append to `selfhub_inbox`, but the bundled app never read either key — so a
+ * note typed on the new tab was invisible in the inbox, and the app's sites
+ * mirror went the other way. They are still two different local stores, but the
+ * captures can at least be brought across explicitly.
+ */
+export async function readExtensionCaptures(): Promise<ExtensionCapture[]> {
+  const api = chromeSyncApi();
+  if (!api?.storage?.local?.get) return [];
+  const get = api.storage!.local!.get!.bind(api.storage!.local);
+
+  return new Promise<ExtensionCapture[]>((resolve) => {
+    try {
+      get(['selfhub_quicknote', 'selfhub_quicknote_updatedAt', 'selfhub_inbox'], (res) => {
+        const payload = (res || {}) as ExtensionCapturePayload;
+        const out: ExtensionCapture[] = [];
+        const quick = (payload.quickNote || '').trim();
+        if (quick) {
+          const at = Number(payload.quickNoteUpdatedAt) || 0;
+          out.push({
+            operationId: `ext-quicknote-${at || quick.length}`,
+            text: quick,
+            createdAt: at || Date.now(),
+            origin: 'newtab-quicknote'
+          });
+        }
+        for (const item of payload.inbox || []) {
+          const text = (item?.content || item?.title || '').trim();
+          if (!text) continue;
+          const id = item?.id || `${text.length}-${item?.createdAt || 0}`;
+          out.push({
+            operationId: `ext-inbox-${id}`,
+            text,
+            url: item?.url,
+            createdAt: Number(item?.createdAt) || Date.now(),
+            origin: 'extension-inbox'
+          });
+        }
+        resolve(out);
+      });
+    } catch {
+      resolve([]);
+    }
+  });
+}
+
+/**
+ * Clear the new-tab quick note once it has been imported.
+ *
+ * `selfhub_inbox` is left alone: the side panel still reads it, and the import is
+ * idempotent through `operationId`, so removing it would gain nothing and could
+ * lose an entry the user has not opened yet.
+ */
+export async function acknowledgeQuickNoteImported(): Promise<void> {
+  const api = chromeSyncApi();
+  if (!api?.storage?.local?.set) return;
+  try {
+    api.storage.local.set({ selfhub_quicknote: '', selfhub_quicknote_updatedAt: 0 });
+  } catch {
+    /* nothing to clear */
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -252,5 +465,4 @@ export function openExtensionOptions(): boolean {
   }
   return false;
 }
-
 

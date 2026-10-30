@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { PenTool, Eraser, RotateCcw, Download, Save, Check } from 'lucide-react';
+import { PenTool, Eraser, RotateCcw, Download, Save, Check, Square, Circle, Minus } from 'lucide-react';
 import { HandwritingNote } from '../../types';
 
 interface HandwritingCardProps {
@@ -7,6 +7,12 @@ interface HandwritingCardProps {
   savedNotes: HandwritingNote[];
   onDeleteNote: (id: string) => void;
 }
+
+/** Canvas background — must match the eraser and the downscaled save, or holes appear. */
+const CANVAS_BG = '#1b1e24';
+
+/** Shape tools (7.2). 'pen' is freehand; the rest drag from one corner to the other. */
+type DrawTool = 'pen' | 'rect' | 'ellipse' | 'line';
 
 export const HandwritingCard: React.FC<HandwritingCardProps> = ({
   onSaveNote,
@@ -18,7 +24,13 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
   const [color, setColor] = useState('#f4f4f5');
   const [lineWidth, setLineWidth] = useState(3);
   const [isEraser, setIsEraser] = useState(false);
+  const [tool, setTool] = useState<DrawTool>('pen');
+  /** Anchor for a shape drag, plus the canvas as it looked before the preview. */
+  const shapeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const shapeSnapshotRef = useRef<ImageData | null>(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  /** Set when the save callback threw; the canvas is deliberately untouched. */
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [noteTitle, setNoteTitle] = useState('');
   const historyRef = useRef<ImageData[]>([]);
   const hasContentRef = useRef(false);
@@ -30,7 +42,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
     if (!ctx) return;
 
     // Fill dark background
-    ctx.fillStyle = '#121316';
+    ctx.fillStyle = CANVAS_BG;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Save initial state
@@ -62,12 +74,44 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
     setIsDrawing(true);
     const { x, y } = getCoordinates(e);
 
+    // Shape tool: remember the anchor and freeze the canvas, so dragging shows a live preview
+    // and releasing commits exactly one shape.
+    if (!isEraser && tool !== 'pen') {
+      shapeStartRef.current = { x, y };
+      shapeSnapshotRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
     ctx.beginPath();
     ctx.moveTo(x, y);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = isEraser ? '#121316' : color;
+    ctx.strokeStyle = isEraser ? CANVAS_BG : color;
     ctx.lineWidth = isEraser ? lineWidth * 4 : lineWidth;
+  };
+
+  /** Draw the shape preview from the stored anchor to the current point. */
+  const drawShapePreview = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
+    const start = shapeStartRef.current;
+    const snapshot = shapeSnapshotRef.current;
+    if (!start || !snapshot) return;
+    ctx.putImageData(snapshot, 0, 0);
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
+    if (tool === 'rect') {
+      ctx.rect(start.x, start.y, x - start.x, y - start.y);
+    } else if (tool === 'ellipse') {
+      const cx = (start.x + x) / 2;
+      const cy = (start.y + y) / 2;
+      ctx.ellipse(cx, cy, Math.abs(x - start.x) / 2, Math.abs(y - start.y) / 2, 0, 0, Math.PI * 2);
+    } else {
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    hasContentRef.current = true;
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
@@ -81,6 +125,10 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
     if (!ctx) return;
 
     const { x, y } = getCoordinates(e);
+    if (!isEraser && tool !== 'pen') {
+      drawShapePreview(ctx, x, y);
+      return;
+    }
     ctx.lineTo(x, y);
     ctx.stroke();
     hasContentRef.current = true;
@@ -89,6 +137,8 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
   const stopDrawing = () => {
     if (!isDrawing) return;
     setIsDrawing(false);
+    shapeStartRef.current = null;
+    shapeSnapshotRef.current = null;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -117,7 +167,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.fillStyle = '#121316';
+    ctx.fillStyle = CANVAS_BG;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     historyRef.current = [ctx.getImageData(0, 0, canvas.width, canvas.height)];
     hasContentRef.current = false;
@@ -144,7 +194,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
         out.height = Math.round(canvas.height * scale);
         const octx = out.getContext('2d');
         if (octx) {
-          octx.fillStyle = '#121316';
+          octx.fillStyle = CANVAS_BG;
           octx.fillRect(0, 0, out.width, out.height);
           octx.drawImage(canvas, 0, 0, out.width, out.height);
           dataUrl = out.toDataURL('image/png');
@@ -159,16 +209,27 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
       createdAt: Date.now()
     };
 
-    onSaveNote(newNote);
-    setSavedSuccess(true);
-    setNoteTitle('');
-    setTimeout(() => setSavedSuccess(false), 2000);
+    /**
+     * The writer can fail (quota, blocked storage). When it does, the canvas and
+     * the title must survive so the user can retry — clearing them on a failed
+     * save was how a drawing could be lost with a green "已保存入库".
+     */
+    try {
+      onSaveNote(newNote);
+      setSaveError(null);
+      setSavedSuccess(true);
+      setNoteTitle('');
+      setTimeout(() => setSavedSuccess(false), 2000);
+    } catch (err) {
+      setSavedSuccess(false);
+      setSaveError(err instanceof Error ? err.message : '保存失败，画布内容已保留，可重试');
+    }
   };
 
   const colors = ['#f4f4f5', '#38bdf8', '#34d399', '#fbbf24', '#f43f5e'];
 
   return (
-    <div className="p-5 rounded-2xl bg-[#121316] border border-[#22242a] shadow-sm">
+    <div className="p-5 rounded-2xl bg-sh-surface border border-sh-line shadow-sm">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
@@ -182,8 +243,37 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
 
         {/* Toolbar */}
         <div className="flex items-center flex-wrap gap-2">
+          {/* Shape tools (7.2): drag to draw, like a simple paint app. */}
+          <div className="flex items-center gap-1 bg-sh-surface2 p-1 rounded-lg border border-sh-line text-xs">
+            {(
+              [
+                ['pen', '画笔', PenTool],
+                ['rect', '矩形', Square],
+                ['ellipse', '椭圆', Circle],
+                ['line', '直线', Minus]
+              ] as const
+            ).map(([id, label, Icon]) => (
+              <button
+                key={id}
+                onClick={() => {
+                  setTool(id);
+                  setIsEraser(false);
+                }}
+                data-tool={id}
+                aria-pressed={tool === id && !isEraser}
+                title={label}
+                className={`p-1.5 rounded flex items-center gap-1 ${
+                  tool === id && !isEraser ? 'bg-sh-surface text-sh-fg' : 'text-sh-muted hover:text-sh-fg'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{label}</span>
+              </button>
+            ))}
+          </div>
+
           {/* Colors */}
-          <div className="flex items-center gap-1 bg-zinc-900 p-1 rounded-lg border border-zinc-800">
+          <div className="flex items-center gap-1 bg-sh-surface2 p-1 rounded-lg border border-sh-line">
             {colors.map((c) => (
               <button
                 key={c}
@@ -191,6 +281,8 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
                   setColor(c);
                   setIsEraser(false);
                 }}
+                aria-label={`选择颜色 ${c}`}
+                aria-pressed={color === c && !isEraser}
                 className={`w-5 h-5 rounded-full transition-transform ${
                   color === c && !isEraser ? 'scale-110 ring-2 ring-white/50' : 'opacity-70 hover:opacity-100'
                 }`}
@@ -205,6 +297,8 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
               <button
                 key={w}
                 onClick={() => setLineWidth(w)}
+                aria-label={`线宽 ${w} 像素`}
+                aria-pressed={lineWidth === w}
                 className={`px-2 py-0.5 rounded ${lineWidth === w ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}
               >
                 {w}px
@@ -242,12 +336,13 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
         </div>
       </div>
 
-      {/* Canvas Area */}
-      <div className="relative border border-zinc-800/80 rounded-xl overflow-hidden shadow-inner bg-[#121316]">
+      {/* Canvas Area — big on purpose (7.2): the old 800×320 board was too small to draw on. */}
+      <div className="relative border border-sh-line rounded-xl overflow-hidden shadow-inner bg-sh-surface">
         <canvas
           ref={canvasRef}
-          width={800}
-          height={320}
+          width={1600}
+          height={900}
+          data-testid="drawing-canvas"
           onMouseDown={startDrawing}
           onMouseMove={draw}
           onMouseUp={stopDrawing}
@@ -255,7 +350,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
           onTouchStart={startDrawing}
           onTouchMove={draw}
           onTouchEnd={stopDrawing}
-          className="w-full h-[260px] sm:h-[300px] cursor-crosshair touch-none"
+          className="w-full h-[52vh] min-h-[420px] cursor-crosshair touch-none"
         />
       </div>
 
@@ -270,12 +365,23 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
         />
         <button
           onClick={handleSave}
+          data-testid="handwriting-save"
           className="px-3 py-1.5 rounded-lg bg-zinc-100 text-zinc-900 hover:bg-white text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
         >
           {savedSuccess ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Save className="w-3.5 h-3.5" />}
-          <span>{savedSuccess ? '已保存入库' : '保存为卡片'}</span>
+          <span>{savedSuccess ? '已保存入库' : saveError ? '重试保存' : '保存为卡片'}</span>
         </button>
       </div>
+
+      {saveError && (
+        <p
+          className="mt-2 text-[11px] text-rose-400 leading-relaxed"
+          data-testid="handwriting-save-error"
+          role="alert"
+        >
+          {saveError} — 画布内容仍在，可修好存储问题后再次点击保存。
+        </p>
+      )}
 
       {/* Saved Notes Gallery */}
       {savedNotes.length > 0 && (
@@ -290,7 +396,13 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
                 <div className="p-2 flex items-center justify-between text-[11px] text-zinc-400">
                   <span className="truncate">{note.title}</span>
                   <button
-                    onClick={() => onDeleteNote(note.id)}
+                    onClick={() => {
+                      // A hand-drawn canvas is unrecoverable local data; one
+                      // mis-tap must not erase it without asking.
+                      if (!window.confirm(`确认删除手绘「${note.title}」？删除后不可恢复。`)) return;
+                      onDeleteNote(note.id);
+                    }}
+                    aria-label={`删除手绘 ${note.title}`}
                     className="opacity-100 sm:opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 text-[10px]"
                   >
                     删除

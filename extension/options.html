@@ -1,313 +1,74 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>设置中心 · Self-Hub 多设备云同步</title>
-  <link rel="icon" type="image/png" href="icon48.png">
-  <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-    body {
-      background: #090a0c;
-      color: #e4e4e7;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-      min-height: 100vh;
-      padding: 36px 20px;
-      display: flex;
-      justify-content: center;
-    }
-    .wrapper {
-      max-width: 680px;
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      gap: 24px;
-    }
-    .header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      border-bottom: 1px solid #1f2127;
-      padding-bottom: 16px;
-    }
-    .logo {
-      width: 36px;
-      height: 36px;
-      border-radius: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    .title-group h1 {
-      font-size: 18px;
-      font-weight: 700;
-      color: #f4f4f5;
-    }
-    .title-group p {
-      font-size: 12px;
-      color: #71717a;
-      margin-top: 2px;
-    }
-    .card {
-      background: #121316;
-      border: 1px solid #22242a;
-      border-radius: 12px;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-    .card-title {
-      font-size: 14px;
-      font-weight: 600;
-      color: #f4f4f5;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .provider-tabs {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
-    }
-    .tab-btn {
-      background: #18191e;
-      border: 1px solid #27272a;
-      color: #a1a1aa;
-      padding: 10px;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 500;
-      text-align: center;
-      transition: all 0.15s;
-    }
-    .tab-btn:hover {
-      background: #202228;
-      color: #fff;
-    }
-    .tab-btn.active {
-      background: rgba(16, 185, 129, 0.12);
-      border-color: #10b981;
-      color: #10b981;
-      font-weight: 600;
-    }
-    .form-group {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .form-group label {
-      font-size: 12px;
-      color: #a1a1aa;
-      font-weight: 500;
-    }
-    .form-input {
-      background: #090a0c;
-      border: 1px solid #27272a;
-      border-radius: 8px;
-      padding: 9px 12px;
-      color: #f4f4f5;
-      font-size: 13px;
-      outline: none;
-      transition: border-color 0.15s;
-    }
-    .form-input:focus {
-      border-color: #10b981;
-    }
-    .form-hint {
-      font-size: 11px;
-      color: #52525b;
-      line-height: 1.4;
-    }
-    .btn-row {
-      display: flex;
-      gap: 10px;
-      margin-top: 8px;
-    }
-    .btn {
-      padding: 9px 16px;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      border: none;
-      transition: all 0.15s;
-    }
-    .btn-primary {
-      background: #10b981;
-      color: #000;
-    }
-    .btn-primary:hover {
-      background: #059669;
-    }
-    .btn-secondary {
-      background: #1c1e24;
-      border: 1px solid #27272a;
-      color: #e4e4e7;
-    }
-    .btn-secondary:hover {
-      background: #272a33;
-      border-color: #3f3f46;
-    }
-    .status-box {
-      background: #090a0c;
-      border: 1px solid #1f2127;
-      border-radius: 8px;
-      padding: 12px;
-      font-size: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: 600;
-      font-family: monospace;
-      width: fit-content;
-    }
-    .badge-idle { background: #27272a; color: #a1a1aa; }
-    .badge-syncing { background: rgba(234, 179, 8, 0.2); color: #eab308; }
-    .badge-success { background: rgba(16, 185, 129, 0.2); color: #10b981; }
-    .badge-error { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-    .tip-box {
-      font-size: 12px;
-      color: #71717a;
-      line-height: 1.6;
-      border-left: 2px solid #27272a;
-      padding-left: 10px;
-    }
-  </style>
-</head>
-<body>
-  <div class="wrapper">
-    <!-- Header -->
-    <div class="header">
-      <img src="icon48.png" class="logo" alt="Self-Hub">
-      <div class="title-group">
-        <h1>Self-Hub 云同步设置</h1>
-        <p>基于 Remotely-Save 架构实现端到端跨设备同步 · 支持 WebDAV 与 S3 协议</p>
-      </div>
-    </div>
-
-    <!-- Sync Status Dashboard -->
-    <div class="card">
-      <div class="card-title">
-        <span>当前同步状态</span>
-        <span id="sync-status-badge" class="badge badge-idle">检测中...</span>
-      </div>
-      <div class="status-box">
-        <div><strong>上次同步：</strong><span id="status-last-time">--</span></div>
-        <div><strong>同步结果：</strong><span id="status-last-msg">未曾同步</span></div>
-      </div>
-      <div class="btn-row">
-        <button id="sync-now-btn" class="btn btn-primary">
-          <span>⚡ 立即执行同步</span>
-        </button>
-        <button id="test-conn-btn" class="btn btn-secondary">
-          <span>🔍 测试云端连接</span>
-        </button>
-      </div>
-      <div id="test-feedback" style="font-size: 12px; min-height: 18px; font-weight: 500;"></div>
-    </div>
-
-    <!-- Provider Selection -->
-    <div class="card">
-      <div class="card-title">存储方式选择</div>
-      <div class="provider-tabs">
-        <button class="tab-btn active" data-provider="none">🚫 仅本机离线</button>
-        <button class="tab-btn" data-provider="webdav">📁 WebDAV 同步</button>
-        <button class="tab-btn" data-provider="s3">☁️ S3 / R2 对象存储</button>
-      </div>
-
-      <!-- 1. Offline Mode -->
-      <div id="section-none" class="tip-box">
-        当前为仅本机运行模式。所有划线批注、便签、书签均保存在当前 Chrome 浏览器本地（<code>chrome.storage.local</code>），不经过任何第三方云服务器。
-      </div>
-
-      <!-- 2. WebDAV Form -->
-      <div id="section-webdav" style="display: none; display: flex; flex-direction: column; gap: 14px;">
-        <div class="tip-box">
-          支持坚果云、Nextcloud、InfiniCLOUD (TeraCloud)、AList、群晖 WebDAV 等。
-        </div>
-        <div class="form-group">
-          <label>WebDAV 服务器地址 (Server URL)</label>
-          <input type="text" id="webdav-url" class="form-input" placeholder="例如：https://dav.jianguoyun.com/dav/" />
-          <div class="form-hint">坚果云填写：https://dav.jianguoyun.com/dav/</div>
-        </div>
-        <div class="form-group">
-          <label>用户名 (Username)</label>
-          <input type="text" id="webdav-user" class="form-input" placeholder="坚果云登录邮箱或 WebDAV 账号" />
-        </div>
-        <div class="form-group">
-          <label>应用密码 / 访问凭证 (Password)</label>
-          <input type="password" id="webdav-pass" class="form-input" placeholder="坚果云在【安全设置】中生成的应用专属授权密码" />
-        </div>
-        <div class="form-group">
-          <label>远端同步子目录 (Path Prefix)</label>
-          <input type="text" id="webdav-path" class="form-input" value="selfhub_sync" />
-        </div>
-      </div>
-
-      <!-- 3. S3 Form -->
-      <div id="section-s3" style="display: none; display: flex; flex-direction: column; gap: 14px;">
-        <div class="tip-box">
-          支持 Cloudflare R2（推荐，免费 10GB 且免流量费）、AWS S3、MinIO、阿里云 OSS、腾讯云 COS 等。
-        </div>
-        <div class="form-group">
-          <label>S3 Endpoint (节点网址)</label>
-          <input type="text" id="s3-endpoint" class="form-input" placeholder="例如：https://<account-id>.r2.cloudflarestorage.com" />
-          <div class="form-hint">Cloudflare R2 用户可直接粘贴 R2 控制台给出的 S3 API 地址</div>
-        </div>
-        <div class="form-group">
-          <label>Bucket (存储桶名称)</label>
-          <input type="text" id="s3-bucket" class="form-input" placeholder="例如：my-selfhub-bucket" />
-        </div>
-        <div class="form-group">
-          <label>Region (区域)</label>
-          <input type="text" id="s3-region" class="form-input" value="auto" />
-          <div class="form-hint">Cloudflare R2 填 auto；AWS 填例如 us-east-1</div>
-        </div>
-        <div class="form-group">
-          <label>Access Key ID (AK)</label>
-          <input type="text" id="s3-ak" class="form-input" placeholder="R2 或 AWS Access Key" />
-        </div>
-        <div class="form-group">
-          <label>Secret Access Key (SK)</label>
-          <input type="password" id="s3-sk" class="form-input" placeholder="R2 或 AWS Secret Access Key" />
-        </div>
-        <div class="form-group">
-          <label>存储子路径 (Path Prefix)</label>
-          <input type="text" id="s3-path" class="form-input" value="selfhub_sync" />
-        </div>
-      </div>
-
-      <!-- General Settings -->
-      <div style="border-top: 1px solid #1f2127; padding-top: 14px; display: flex; flex-direction: column; gap: 12px;">
-        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;">
-          <input type="checkbox" id="auto-sync-toggle" checked style="accent-color: #10b981;" />
-          <span>打开新标签页时自动静默同步 (具备 60 秒防抖保护，避免高频请求)</span>
-        </label>
-      </div>
-
-      <div class="btn-row" style="margin-top: 10px;">
-        <button id="save-btn" class="btn btn-primary" style="flex: 1;">
-          <span>💾 保存配置并应用</span>
-        </button>
-      </div>
-      <div id="save-msg" style="font-size: 12px; color: #10b981; min-height: 18px; text-align: center;"></div>
-    </div>
-  </div>
-
-  <script type="module" src="options.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>设置 · Self-Hub</title>
+    <link rel="icon" type="image/png" href="icon48.png" />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #090a0c;
+        color: #f4f4f5;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      }
+      main {
+        max-width: 560px;
+        padding: 32px 28px;
+        border: 1px solid #22242a;
+        border-radius: 16px;
+        background: #121316;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      p {
+        font-size: 12px;
+        line-height: 1.7;
+        color: #a1a1aa;
+        margin: 0 0 12px;
+      }
+      button {
+        margin-top: 8px;
+        padding: 8px 14px;
+        border-radius: 10px;
+        border: 1px solid #3f3f46;
+        background: #f4f4f5;
+        color: #18181b;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #legacy-note {
+        margin-top: 14px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(251, 191, 36, 0.5);
+        background: rgba(251, 191, 36, 0.1);
+        color: #fbbf24;
+        font-size: 11px;
+        line-height: 1.7;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>设置已移动到工作台</h1>
+      <p>
+        连接、备份、浏览器与设备、隐私与安全现在都在同一个设置页里维护，凭据只保存一份。
+        本页面不再提供服务商密钥表单，也不会在此启用任何同步任务。
+      </p>
+      <button id="open-settings" type="button">打开统一设置</button>
+      <p id="legacy-note" hidden></p>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
 </html>

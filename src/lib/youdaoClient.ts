@@ -1,7 +1,5 @@
 import { YoudaoNote, YoudaoConfig } from '../types';
 
-export const SAMPLE_YOUDAO_NOTES: YoudaoNote[] = [];
-
 /**
  * Format Youdao note to Obsidian Markdown for direct OSS sync
  */
@@ -24,17 +22,4 @@ ${note.content}
 `;
 
   return { path, content };
-}
-
-/**
- * Fetch Youdao notes or return cached state
- */
-export async function fetchYoudaoNotes(
-  config: YoudaoConfig,
-  current: YoudaoNote[]
-): Promise<YoudaoNote[]> {
-  if (current && current.length > 0) {
-    return current;
-  }
-  return current || [];
 }
