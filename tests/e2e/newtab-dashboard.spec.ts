@@ -130,9 +130,120 @@ test.describe('模块面板：可拖拽大小', () => {
     const after = (await left.boundingBox())!;
     expect(after.width).toBeGreaterThan(before.width + 60);
 
+    // 宽度只由 flex-basis 一个属性决定：拖拽时只写它，写一次就够。
+    // 再写一遍 width 等于每帧多做一次样式失效，是"拖动发卡"的老病根。
+    const inline = await page
+      .locator('.dash-col[data-col="0"]')
+      .evaluate((el) => ({ basis: (el as HTMLElement).style.flexBasis, width: (el as HTMLElement).style.width }));
+    expect(inline.basis).toMatch(/px$/);
+    expect(inline.width).toBe('');
+
     await page.reload();
     const reloaded = (await page.locator('.dash-col[data-col="0"]').boundingBox())!;
     expect(Math.abs(reloaded.width - after.width)).toBeLessThan(6);
+    await page.close();
+  });
+});
+
+test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () => {
+  /** 用合成 DragEvent 精确控制"拖到一半"的状态，鼠标 API 没法停在拖动中间断言。 */
+  async function startDrag(page: Page, moduleId: string) {
+    await page.evaluate((id) => {
+      const head = document.querySelector(`[data-module-id="${id}"] .module-head`) as HTMLElement;
+      const rect = head.getBoundingClientRect();
+      const dt = new DataTransfer();
+      (window as unknown as { __dragDt: DataTransfer }).__dragDt = dt;
+      head.dispatchEvent(
+        new DragEvent('dragstart', {
+          bubbles: true,
+          dataTransfer: dt,
+          clientX: rect.left + 20,
+          clientY: rect.top + 10
+        })
+      );
+    }, moduleId);
+  }
+
+  async function hoverAt(page: Page, x: number, y: number) {
+    await page.evaluate(
+      ({ x: px, y: py }) => {
+        const dt = (window as unknown as { __dragDt: DataTransfer }).__dragDt;
+        document
+          .querySelector('#dash')!
+          .dispatchEvent(new DragEvent('dragover', { bubbles: true, dataTransfer: dt, clientX: px, clientY: py }));
+      },
+      { x, y }
+    );
+    // dragover 被合并到 rAF 里，等一帧再断言。
+    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+  }
+
+  test('拖动中出现幽灵卡片和虚线槽，松手前数据不动', async () => {
+    const page = await openNewTab();
+    const capture = (await page.locator('[data-module-id="m-capture"]').boundingBox())!;
+
+    await startDrag(page, 'm-notes');
+    await hoverAt(page, capture.x + 60, capture.y + 8);
+
+    // 跟手的幽灵卡片：固定定位、只靠 transform 移动，不占布局。
+    const ghost = page.locator('.drag-ghost');
+    await expect(ghost).toHaveCount(1);
+    const ghostStyle = await ghost.evaluate((el) => {
+      const cs = getComputedStyle(el as HTMLElement);
+      return { position: cs.position, transform: cs.transform, pointerEvents: cs.pointerEvents };
+    });
+    expect(ghostStyle.position).toBe('fixed');
+    expect(ghostStyle.pointerEvents).toBe('none');
+    expect(ghostStyle.transform).not.toBe('none');
+
+    // 虚线槽落在中间栏，原卡片变淡但还在左栏 —— 松手之前布局数据不动。
+    await expect(page.locator('.dash-col[data-col="1"] .drop-gap')).toHaveCount(1);
+    await expect(page.locator('.dash-col[data-col="0"] [data-module-id="m-notes"]')).toHaveCount(1);
+
+    const gapHeight = await page.locator('.drop-gap').evaluate((el) => el.getBoundingClientRect().height);
+    expect(gapHeight).toBeGreaterThan(40);
+
+    // 松手：真卡片落到槽位，不需要整页重绘。
+    await page.evaluate(
+      ({ x, y }) => {
+        const dt = (window as unknown as { __dragDt: DataTransfer }).__dragDt;
+        document
+          .querySelector('#dash')!
+          .dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt, clientX: x, clientY: y }));
+      },
+      { x: capture.x + 60, y: capture.y + 8 }
+    );
+    await expect(page.locator('.dash-col[data-col="1"] [data-module-id="m-notes"]')).toHaveCount(1);
+    await expect(page.locator('.drag-ghost')).toHaveCount(0);
+    await expect(page.locator('.drop-gap')).toHaveCount(0);
+
+    // 真的落盘了，刷新还在。
+    await page.reload();
+    await expect(page.locator('.dash-col[data-col="1"] [data-module-id="m-notes"]')).toHaveCount(1);
+    await page.close();
+  });
+
+  test('拖到一半放弃（dragend 没有 drop）布局回到原位', async () => {
+    const page = await openNewTab();
+    const capture = (await page.locator('[data-module-id="m-capture"]').boundingBox())!;
+
+    await startDrag(page, 'm-notes');
+    await hoverAt(page, capture.x + 60, capture.y + 8);
+    await expect(page.locator('.drop-gap')).toHaveCount(1);
+
+    await page.evaluate(() => {
+      const dt = (window as unknown as { __dragDt: DataTransfer }).__dragDt;
+      document
+        .querySelector('[data-module-id="m-notes"] .module-head')!
+        .dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+    });
+
+    await expect(page.locator('.drag-ghost')).toHaveCount(0);
+    await expect(page.locator('.drop-gap')).toHaveCount(0);
+    await expect(page.locator('.dash-col[data-col="0"] [data-module-id="m-notes"]')).toHaveCount(1);
+
+    await page.reload();
+    await expect(page.locator('.dash-col[data-col="0"] [data-module-id="m-notes"]')).toHaveCount(1);
     await page.close();
   });
 });

@@ -48,6 +48,37 @@ id 从队列里删掉（重新读队列再过滤，避免把导入期间新写�
 - 工作台没开着也不会丢：下次打开工作台时导入。
 - 导入后队列清空，不会重复导入同一条。
 
+## 拖动为什么能跟手（Grafana 那套）
+
+![拖动中的幽灵卡片与虚线槽](newtab-drag.png)
+
+拖动卡顿在浏览器里只有一个根因：**读布局和写样式交替**。`el.style.height = ...` 只是
+把元素标记成脏，真正回流发生在你下一次读 `clientWidth` / `getBoundingClientRect()` 的
+时候。所以「写→读→写→读」的循环等于每一轮都强制同步回流一次。旧版正是这样：列宽拖动
+每个 `pointermove` 都调一次 `applyWidths()`，而它第一行就读 `root.clientWidth`。
+
+现在的三条规则：
+
+1. **拖拽开始时量一次，过程中只写不读。** 列宽拖拽把容器宽度、两栏实际宽度都存成局部
+   变量，之后每帧只写 `flexBasis` 两个值（不再同时写 `width`，少一半样式失效）。
+   实测：60 次 `pointermove` 里读布局 **0 次**（旧版 60 次）。
+2. **指针事件合并到 rAF。** 120Hz 鼠标一秒能发 200+ 个事件，一帧只处理一次。
+3. **拖拽换位只做 transform，不改布局。**
+   - 幽灵卡片 `.drag-ghost`：`position: fixed` + `transform: translate3d()` 跟指针，
+     走合成层，不触发回流。浏览器自带的拖影用 `setDragImage` 换成 1×1 透明图。
+   - 落点用 `.drop-gap` 虚线槽预览，只在目标位置**真的变了**时才动 DOM
+     （旧版每个 `dragover` 都无条件 `insertBefore` 一次）。
+   - 被挤开的卡片用 **FLIP** 滑过去：先量旧位置，改完 DOM 再量新位置，用反向
+     `translateY` 起手动画回 0。不这么做卡片是瞬间跳一格，看着就是"卡"。
+   - 同一栏内连续划过时复用上次量好的卡片中线，不再每个事件读一遍布局
+     （实测：光标停在同一格时 0.28 次读/事件，旧版是每事件 N 次）。
+4. 松手时把真卡片直接插进槽位、**不整页重绘**，所以落点没有闪一下。
+5. 拖动/缩放时显示当前尺寸气泡（`.drag-badge`），和 Grafana 的 resize 提示一致。
+
+拖拽换位仍然用 HTML5 拖放（`draggable` + `dragover`/`drop`），没有改成 pointer 事件：
+触屏本来就靠 `⋯` 菜单里的「移到左栏 / 右栏」，而 HTML5 拖放能白拿"拖到窗口外取消"
+这类系统行为。
+
 ## 代码结构
 
 - `extension/newtab-dashboard.js` — 布局引擎：列宽 / 高度拖拽、HTML5 拖拽换位、
@@ -55,7 +86,7 @@ id 从队列里删掉（重新读队列再过滤，避免把导入期间新写�
   这一层不碰业务数据，模块内容由外部 `renderBody(module, bodyEl)` 画。
 - `extension/newtab.js` — 数据读取（v2 负载 + v3 IndexedDB）、每个模块类型画什么、
   搜索、主题、待导入笔记队列。
-- `extension/newtab.css` — 面板、拖拽条、模块卡、嵌套网站卡、文本框。
+- `extension/newtab.css` — 面板、拖拽条、模块卡、幽灵卡片 / 虚线槽 / 尺寸气泡、嵌套网站卡。
 - `src/lib/extensionBridge.ts` — `readPendingNotes` / `acknowledgePendingNotes`。
 - `src/App.tsx` — 启动 + `storage.onChanged` 时把队列收进 `notes`。
 
@@ -67,6 +98,10 @@ id 从队列里删掉（重新读队列再过滤，避免把导入期间新写�
 3. 模块 `hidden` 必须显式写 `.module[hidden] { display: none }`：`.module` 是 flex 容器，
    会盖掉 `hidden` 的默认样式（签到模块没有站点时靠这条隐藏）。
 4. 窄屏（≤1180px）单列堆叠，拖拽条隐藏、固定高度失效，避免手机上一屏一张卡。
+5. **拖拽循环里不许读布局。** 要在拖动中用到尺寸，就在 `pointerdown` / `dragstart` 里
+   量好存起来。新增拖拽交互时先过一遍这条，否则又会退回"一卡一卡"。
+6. 列宽只写 `flex-basis`（`.dash-col` 的 `flex: 0 0 auto` 提供 grow/shrink），
+   不要再写 `width`——两个属性 = 两次样式失效。
 
 ## 验证
 
@@ -74,6 +109,10 @@ id 从队列里删掉（重新读队列再过滤，避免把导入期间新写�
 npx playwright test --config=playwright.extension.config.ts
 ```
 
-`tests/e2e/newtab-dashboard.spec.ts`（8 条）覆盖：拖高 / 拖列宽（刷新后仍在）、
-拖标题换栏、加文本框并把内容变成笔记、按文件夹换来源、网站卡片套卡片与分类 chip、
+`tests/e2e/newtab-dashboard.spec.ts`（11 条）覆盖：拖高 / 拖列宽（刷新后仍在，且列宽只写
+`flex-basis`）、拖标题换栏、拖动中出现幽灵卡片 + 虚线槽且松手前数据不动、拖到一半放弃
+布局回到原位、加文本框并把内容变成笔记、按文件夹换来源、网站卡片套卡片与分类 chip、
 文本框 → 打开工作台能看到这条笔记且队列清空、删模块持久化与重置布局。
+
+拖动性能的量化手段（临时脚本，不进仓库）：包一层 `Element.prototype.getBoundingClientRect`
+和 `clientWidth` 的 getter 数读次数，再用合成 `PointerEvent` / `DragEvent` 跑 60 帧。

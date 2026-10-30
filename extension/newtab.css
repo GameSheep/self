@@ -250,6 +250,8 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 
 .dash-col {
+  /* 宽度只由 flex-basis 决定（JS 拖拽时只写这一个属性，写一次就够）。 */
+  flex: 0 0 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -258,6 +260,8 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   overflow-x: hidden;
   padding: 1px 2px 4px 1px;
   scrollbar-width: thin;
+  /* 栏内布局自成一体，改一栏的宽度不会把外面的东西拖下水。 */
+  contain: layout;
 }
 
 .dash-col::-webkit-scrollbar { width: 8px; }
@@ -389,14 +393,65 @@ html[data-theme='light'] .module { box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 .module-resize:focus-visible::after { opacity: 1; }
 .module-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-.module.is-dragging { opacity: 0.4; }
+.module.is-dragging { opacity: 0.28; }
+.module.is-dragging .module-head { cursor: grabbing; }
 
-.drop-line {
-  height: 2px;
-  border-radius: 2px;
-  background: var(--accent);
-  flex-shrink: 0;
+/* 拖动时跟着指针走的幽灵卡片：只做 transform，走合成层，不触发回流。 */
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 90;
+  pointer-events: none;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 0.85rem;
+  box-shadow: 0 18px 40px rgba(16, 24, 40, 0.28);
+  opacity: 0.96;
+  overflow: hidden;
+  will-change: transform;
+  transform: translate3d(-9999px, -9999px, 0);
 }
+.drag-ghost .module-head { border-bottom: 0; cursor: grabbing; }
+.drag-ghost .module-grip { opacity: 0.7; }
+
+/* 目标位置的虚线槽：告诉用户"松手就落这儿"。 */
+.drop-gap {
+  flex-shrink: 0;
+  border: 2px dashed var(--accent);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  opacity: 0.75;
+}
+
+/* 拖动/缩放时显示当前尺寸，像 Grafana 那样。 */
+.drag-badge {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 95;
+  pointer-events: none;
+  padding: 0.15rem 0.45rem;
+  border-radius: 0.4rem;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  will-change: transform;
+  transform: translate3d(-9999px, -9999px, 0);
+}
+
+/* 拖动期间把指针事件从内容上摘掉：浏览器不用每帧对上百个节点做命中测试。 */
+body.is-module-dragging,
+body.is-module-dragging * { cursor: grabbing !important; }
+body.is-module-dragging .module-body,
+body.is-col-resizing .module-body,
+body.is-module-resizing .module-body { pointer-events: none; }
+
+/* 正在改高度的卡片：别让里面的滚动条/悬停过渡跟着每一帧重算。 */
+.module.is-live-resizing,
+.module.is-live-resizing .module-body { transition: none; }
 
 .dash-add {
   flex-shrink: 0;

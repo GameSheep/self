@@ -132,28 +132,76 @@
       return types[type] || { label: type, icon: '▫', desc: '' };
     }
 
+    /* — 帧调度 — */
+
+    /**
+     * 拖拽的性能铁律：**一帧只写一次，写之前不读。**
+     *
+     * 浏览器里 `style.x = ...` 只是标记脏，真正回流发生在你下一次「读布局」的时候
+     * （clientWidth / getBoundingClientRect 都算）。所以「写→读→写→读」的循环等于
+     * 每一轮都强制同步回流一次，这就是之前拖动像卡住的原因。这里的做法是：
+     * 拖动开始时把尺寸量好存起来，过程中只写不读，指针事件合并到 rAF 里。
+     */
+    function nextFrame(fn) {
+      var id = 0;
+      return function () {
+        if (id) return;
+        id = requestAnimationFrame(function () {
+          id = 0;
+          fn();
+        });
+      };
+    }
+
+    function reducedMotion() {
+      try {
+        return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      } catch (err) {
+        return false;
+      }
+    }
+
+    /* — 尺寸气泡：拖动时跟着指针显示 px，Grafana 那种手感 — */
+
+    var badgeEl = null;
+
+    function showBadge(text, x, y) {
+      if (!badgeEl) {
+        badgeEl = el('div', 'drag-badge');
+        document.body.appendChild(badgeEl);
+      }
+      badgeEl.textContent = text;
+      badgeEl.hidden = false;
+      badgeEl.style.transform = 'translate3d(' + (x + 16) + 'px,' + (y + 18) + 'px,0)';
+    }
+
+    function hideBadge() {
+      if (badgeEl) badgeEl.hidden = true;
+    }
+
     /* — 列宽 — */
 
-    function applyWidths() {
+    /**
+     * @param avail 可选的容器宽度。拖动过程中必须传进来，否则这里会读
+     *   `root.clientWidth`，而上一帧刚写过列宽 —— 又是强制回流。
+     */
+    function applyWidths(avail) {
       if (!cols.length) return;
-      var narrow = window.innerWidth <= 1180;
-      if (narrow) {
+      if (window.innerWidth <= 1180) {
         cols.forEach(function (col) {
-          col.style.flex = '1 1 auto';
-          col.style.width = 'auto';
+          col.style.flexBasis = '';
         });
         return;
       }
       var gaps = RESIZER_PX * (cols.length - 1);
-      var avail = Math.max(320, root.clientWidth - gaps);
+      var width = avail == null ? Math.max(320, root.clientWidth - gaps) : avail;
       var sum = layout.columns.reduce(function (acc, column) {
         return acc + column.fr;
       }, 0) || 1;
-      layout.columns.forEach(function (column, index) {
-        var width = Math.max(120, Math.round((avail * column.fr) / sum));
-        cols[index].style.flex = '0 0 ' + width + 'px';
-        cols[index].style.width = width + 'px';
-      });
+      for (var i = 0; i < layout.columns.length; i += 1) {
+        var px = Math.max(120, Math.round((width * layout.columns[i].fr) / sum));
+        cols[i].style.flexBasis = px + 'px';
+      }
     }
 
     function beginColumnDrag(index, event) {
@@ -161,28 +209,49 @@
       var left = cols[index];
       var right = cols[index + 1];
       if (!left || !right) return;
+
+      // 量一次，之后全程不读。
+      var gaps = RESIZER_PX * (cols.length - 1);
+      var avail = Math.max(320, root.clientWidth - gaps);
       var startX = event.clientX;
       var a = left.getBoundingClientRect().width;
       var b = right.getBoundingClientRect().width;
       var sumPx = a + b;
       var sumFr = layout.columns[index].fr + layout.columns[index + 1].fr;
       var minPx = Math.min(MIN_COL_PX, sumPx / 2);
+      var maxPx = sumPx - minPx;
+      var nextA = a;
+      var point = { x: event.clientX, y: event.clientY };
+
       document.body.classList.add('is-col-resizing');
+      showBadge(Math.round(a) + ' px', point.x, point.y);
+
+      var apply = nextFrame(function () {
+        var w = Math.round(clamp(nextA, minPx, maxPx));
+        left.style.flexBasis = w + 'px';
+        right.style.flexBasis = sumPx - w + 'px';
+        layout.columns[index].fr = (sumFr * w) / sumPx;
+        layout.columns[index + 1].fr = (sumFr * (sumPx - w)) / sumPx;
+        showBadge(w + ' px', point.x, point.y);
+      });
 
       function onMove(moveEvent) {
-        var nextA = clamp(a + (moveEvent.clientX - startX), minPx, sumPx - minPx);
-        layout.columns[index].fr = (sumFr * nextA) / sumPx;
-        layout.columns[index + 1].fr = (sumFr * (sumPx - nextA)) / sumPx;
-        applyWidths();
+        point = { x: moveEvent.clientX, y: moveEvent.clientY };
+        nextA = a + (moveEvent.clientX - startX);
+        apply();
       }
       function onUp() {
         document.body.classList.remove('is-col-resizing');
+        hideBadge();
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        applyWidths(avail);
         saveLayout(layout);
       }
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
     }
 
     /* — 模块高度 — */
@@ -201,47 +270,275 @@
       event.preventDefault();
       var startY = event.clientY;
       var startH = moduleEl.getBoundingClientRect().height;
+      var nextH = startH;
       var moved = false;
+      var point = { x: event.clientX, y: event.clientY };
+
       document.body.classList.add('is-module-resizing');
+      moduleEl.classList.add('is-live-resizing');
+      showBadge(Math.round(startH) + ' px', point.x, point.y);
+
+      var apply = nextFrame(function () {
+        mod.height = Math.max(MIN_MODULE_PX, Math.round(nextH));
+        applyHeight(moduleEl, mod);
+        showBadge(mod.height + ' px', point.x, point.y);
+      });
 
       function onMove(moveEvent) {
         var dy = moveEvent.clientY - startY;
+        point = { x: moveEvent.clientX, y: moveEvent.clientY };
         if (!moved && Math.abs(dy) < 3) return;
         moved = true;
-        mod.height = Math.max(MIN_MODULE_PX, Math.round(startH + dy));
-        applyHeight(moduleEl, mod);
+        nextH = startH + dy;
+        apply();
       }
       function onUp() {
         document.body.classList.remove('is-module-resizing');
+        moduleEl.classList.remove('is-live-resizing');
+        hideBadge();
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
         if (moved) saveLayout(layout);
       }
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
     }
 
     /* — 拖拽排序 — */
 
-    var dragId = null;
-    var dropLine = el('div', 'drop-line');
+    /**
+     * Grafana 那种手感由三件事凑成，缺一件就像"网页在硬撑"：
+     *
+     * 1. **跟手的幽灵卡片**：克隆一个只有标题的轻卡片，`position: fixed` +
+     *    `transform` 跟着指针走。transform 走合成层，不触发回流，所以是 60/120fps。
+     * 2. **目标位置的虚线槽**：鼠标划过的地方插一个和卡片差不多高的空槽，其它卡片
+     *    被挤开 —— 这就是"我要放这里"的预览。
+     * 3. **被挤开的卡片用 FLIP 滑过去**：先量旧位置，改完 DOM 再量新位置，用反向
+     *    transform 起手再动画到 0。不这样做，卡片是瞬间跳一格，看着就是"卡"。
+     *
+     * 原来那版用的是 `dropLine` 一条 2px 线：每个 dragover（每秒上百次）都无条件
+     * `insertBefore` 一次，等于每帧都在改 DOM + 强制回流。现在只在目标位置真的变了
+     * 的时候才动，而且指针事件合并到 rAF。
+     */
+    var drag = null;
+    var ghostPoint = null;
+    var ghostFrame = 0;
+    var hoverPoint = null;
+    var hoverFrame = 0;
 
-    function clearDropLine() {
-      if (dropLine.parentNode) dropLine.parentNode.removeChild(dropLine);
+    function withFlip(nodes, mutate) {
+      if (reducedMotion() || !nodes.length) {
+        mutate();
+        return;
+      }
+      var before = nodes.map(function (node) {
+        return node.getBoundingClientRect().top;
+      });
+      mutate();
+      for (var i = 0; i < nodes.length; i += 1) {
+        var dy = before[i] - nodes[i].getBoundingClientRect().top;
+        if (!dy) continue;
+        nodes[i].animate(
+          [{ transform: 'translateY(' + dy + 'px)' }, { transform: 'translateY(0px)' }],
+          { duration: 170, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
+        );
+      }
     }
 
-    function positionDropLine(columnEl, clientY) {
-      var modules = Array.prototype.slice.call(columnEl.querySelectorAll('.module'));
-      var before = null;
-      for (var i = 0; i < modules.length; i += 1) {
-        var rect = modules[i].getBoundingClientRect();
-        if (clientY < rect.top + rect.height / 2) {
-          before = modules[i];
-          break;
+    function makeGhost(mod, rect) {
+      var spec = specOf(mod.type);
+      var ghost = el('div', 'drag-ghost');
+      ghost.style.width = Math.round(rect.width) + 'px';
+      var head = el('div', 'module-head');
+      head.appendChild(el('span', 'module-grip', '⠿'));
+      head.appendChild(el('span', 'module-icon', spec.icon || '▫'));
+      head.appendChild(el('span', 'module-title', spec.label));
+      ghost.appendChild(head);
+      document.body.appendChild(ghost);
+      return ghost;
+    }
+
+    function followGhost(x, y) {
+      ghostPoint = { x: x, y: y };
+      if (ghostFrame) return;
+      ghostFrame = requestAnimationFrame(function () {
+        ghostFrame = 0;
+        if (!drag || !drag.ghost || !ghostPoint) return;
+        drag.ghost.style.transform =
+          'translate3d(' + (ghostPoint.x + 14) + 'px,' + (ghostPoint.y + 12) + 'px,0)';
+      });
+    }
+
+    function measureColumn(colEl) {
+      return Array.prototype.slice.call(colEl.querySelectorAll('.module')).map(function (node) {
+        var rect = node.getBoundingClientRect();
+        return { el: node, mid: rect.top + rect.height / 2 };
+      });
+    }
+
+    function computeTarget(x, y, fallback) {
+      // 优先用 dragover 的 target（浏览器已经做过命中测试，不用重复算）；
+      // 只有当它不是栏的后代时才按坐标补一次 —— 比如拖到两栏之间的分隔条、
+      // 栏的 padding 上。幽灵卡片是 pointer-events:none，不会被命中。
+      var colEl = fallback && fallback.closest ? fallback.closest('.dash-col') : null;
+      if (!colEl) {
+        var node = null;
+        try {
+          node = document.elementFromPoint(x, y);
+        } catch (err) {
+          node = null;
+        }
+        colEl = node && node.closest ? node.closest('.dash-col') : null;
+      }
+      if (!colEl) return null;
+      var column = Number(colEl.getAttribute('data-col'));
+      if (!isFinite(column)) return null;
+      // 同一栏连续划过时复用上次量好的中线，避免每个事件都读一遍布局。
+      if (!drag.rects || drag.rects.col !== colEl) {
+        drag.rects = { col: colEl, list: measureColumn(colEl) };
+      }
+      var list = drag.rects.list;
+      for (var i = 0; i < list.length; i += 1) {
+        if (y < list[i].mid) {
+          return { colEl: colEl, column: column, before: list[i].el, position: i };
         }
       }
-      if (before) columnEl.insertBefore(dropLine, before);
-      else columnEl.insertBefore(dropLine, columnEl.querySelector('.dash-add'));
+      return { colEl: colEl, column: column, before: null, position: list.length };
+    }
+
+    function updateGap(target) {
+      if (!target || !drag) return;
+      if (
+        drag.target &&
+        drag.target.colEl === target.colEl &&
+        drag.target.position === target.position
+      ) {
+        return;
+      }
+      if (!drag.gap) {
+        drag.gap = el('div', 'drop-gap');
+        var h = drag.el.getBoundingClientRect().height;
+        drag.gap.style.height = Math.round(Math.min(Math.max(h, 56), 220)) + 'px';
+      }
+      // FLIP 只量受影响的栏：同栏换位只量一栏，跨栏才量两栏。
+      var scope = [];
+      if (drag.target && drag.target.colEl) scope.push(drag.target.colEl);
+      if (scope.indexOf(target.colEl) < 0) scope.push(target.colEl);
+      var nodes = [];
+      scope.forEach(function (colEl) {
+        nodes = nodes.concat(
+          Array.prototype.slice.call(colEl.querySelectorAll('.module, .drop-gap'))
+        );
+      });
+      withFlip(nodes, function () {
+        var addBtn = target.colEl.querySelector('.dash-add');
+        if (target.before) target.colEl.insertBefore(drag.gap, target.before);
+        else if (addBtn) target.colEl.insertBefore(drag.gap, addBtn);
+        else target.colEl.appendChild(drag.gap);
+      });
+      drag.target = target;
+      // 槽位进了布局，各卡片中线全变了，下次划过要重量。
+      drag.rects = null;
+    }
+
+    function beginModuleDrag(mod, moduleEl, event) {
+      var rect = moduleEl.getBoundingClientRect();
+      drag = {
+        id: mod.id,
+        el: moduleEl,
+        gap: null,
+        ghost: makeGhost(mod, rect),
+        target: null,
+        rects: null
+      };
+      moduleEl.classList.add('is-dragging');
+      document.body.classList.add('is-module-dragging');
+      followGhost(event.clientX, event.clientY);
+      try {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', mod.id);
+        // 把浏览器自带的拖影换成 1×1 透明图，只留我们自己的幽灵卡片。
+        var blank = document.createElement('canvas');
+        blank.width = 1;
+        blank.height = 1;
+        event.dataTransfer.setDragImage(blank, 0, 0);
+      } catch (err) {
+        /* 某些上下文不给 dataTransfer，忽略即可 */
+      }
+    }
+
+    function endDrag(commit) {
+      if (!drag) return;
+      var state = drag;
+      drag = null;
+      ghostPoint = null;
+      hoverPoint = null;
+      document.body.classList.remove('is-module-dragging');
+      if (ghostFrame) {
+        cancelAnimationFrame(ghostFrame);
+        ghostFrame = 0;
+      }
+      if (hoverFrame) {
+        cancelAnimationFrame(hoverFrame);
+        hoverFrame = 0;
+      }
+      if (state.ghost && state.ghost.parentNode) state.ghost.parentNode.removeChild(state.ghost);
+      state.el.classList.remove('is-dragging');
+
+      if (commit && state.gap && state.gap.parentNode) {
+        var colEl = state.gap.parentNode;
+        colEl.insertBefore(state.el, state.gap);
+        colEl.removeChild(state.gap);
+        var column = Number(colEl.getAttribute('data-col'));
+        var position = Array.prototype.indexOf.call(colEl.querySelectorAll('.module'), state.el);
+        if (isFinite(column) && position >= 0) {
+          moveModule(state.id, column, position);
+          saveLayout(layout);
+        }
+      } else if (state.gap && state.gap.parentNode) {
+        state.gap.parentNode.removeChild(state.gap);
+      }
+    }
+
+    function wireDragSurface() {
+      // 幽灵卡片在整页范围内跟手（拖到顶栏上也照样跟着），但只有落在 #dash
+      // 上才算合法落点 —— 所以这里只更新位置，不 preventDefault。
+      document.addEventListener(
+        'dragover',
+        function (event) {
+          if (drag) followGhost(event.clientX, event.clientY);
+        },
+        true
+      );
+
+      root.addEventListener('dragover', function (event) {
+        if (!drag) return;
+        event.preventDefault();
+        try {
+          event.dataTransfer.dropEffect = 'move';
+        } catch (err) {
+          /* ignore */
+        }
+        followGhost(event.clientX, event.clientY);
+        hoverPoint = { x: event.clientX, y: event.clientY, target: event.target };
+        if (hoverFrame) return;
+        hoverFrame = requestAnimationFrame(function () {
+          hoverFrame = 0;
+          if (!drag || !hoverPoint) return;
+          updateGap(computeTarget(hoverPoint.x, hoverPoint.y, hoverPoint.target));
+        });
+      });
+
+      root.addEventListener('drop', function (event) {
+        if (!drag) return;
+        event.preventDefault();
+        // 最后一段鼠标位移可能还没被 rAF 消化，落点以松手那一刻为准。
+        drag.rects = null;
+        updateGap(computeTarget(event.clientX, event.clientY, event.target));
+        endDrag(true);
+      });
     }
 
     function moveModule(id, column, position) {
@@ -530,19 +827,10 @@
       head.appendChild(menuBtn);
 
       head.addEventListener('dragstart', function (event) {
-        dragId = mod.id;
-        moduleEl.classList.add('is-dragging');
-        try {
-          event.dataTransfer.setData('text/plain', mod.id);
-          event.dataTransfer.effectAllowed = 'move';
-        } catch (err) {
-          /* some contexts do not expose dataTransfer */
-        }
+        beginModuleDrag(mod, moduleEl, event);
       });
       head.addEventListener('dragend', function () {
-        dragId = null;
-        moduleEl.classList.remove('is-dragging');
-        clearDropLine();
+        endDrag(false);
       });
 
       var body = el('div', 'module-body');
@@ -582,6 +870,7 @@
     }
 
     function render() {
+      if (drag) endDrag(false);
       closePop();
       root.textContent = '';
       cols = [];
@@ -607,34 +896,8 @@
         }(i));
         columnEl.appendChild(add);
 
-        // 注意：这里必须用 `event.currentTarget`，不能用闭包里的 `columnEl`。
-        // `var` 是函数作用域，三个栏共用同一个变量，闭包拿到的永远是最后一栏。
-        columnEl.addEventListener('dragover', function (index) {
-          return function (event) {
-            if (!dragId) return;
-            event.preventDefault();
-            positionDropLine(event.currentTarget, event.clientY);
-          };
-        }(i));
-        columnEl.addEventListener('drop', function (index) {
-          return function (event) {
-            if (!dragId) return;
-            event.preventDefault();
-            var column = event.currentTarget;
-            var before = dropLine.parentNode === column ? dropLine.nextElementSibling : null;
-            var targetModules = Array.prototype.slice.call(column.querySelectorAll('.module'));
-            var position = targetModules.length;
-            if (before && before.classList && before.classList.contains('module')) {
-              position = targetModules.indexOf(before);
-            }
-            moveModule(dragId, index, position);
-            dragId = null;
-            clearDropLine();
-            saveLayout(layout);
-            render();
-          };
-        }(i));
-
+        // dragover / drop 挂在 #dash 上（见 wireDragSurface），不挂在栏上：
+        // 三个栏共用一套逻辑，也少三次监听器注册。
         root.appendChild(columnEl);
         cols.push(columnEl);
 
@@ -686,7 +949,10 @@
       });
     }
 
-    window.addEventListener('resize', applyWidths);
+    window.addEventListener('resize', function () {
+      applyWidths();
+    });
+    wireDragSurface();
     render();
 
     return {
