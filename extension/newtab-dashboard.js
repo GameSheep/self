@@ -408,7 +408,7 @@
       return { colEl: colEl, column: column, before: null, position: list.length };
     }
 
-    function updateGap(target) {
+    function updateGap(target, immediate) {
       if (!target || !drag) return;
       if (
         drag.target &&
@@ -422,25 +422,153 @@
         var h = drag.el.getBoundingClientRect().height;
         drag.gap.style.height = Math.round(Math.min(Math.max(h, 56), 220)) + 'px';
       }
-      // FLIP 只量受影响的栏：同栏换位只量一栏，跨栏才量两栏。
-      var scope = [];
-      if (drag.target && drag.target.colEl) scope.push(drag.target.colEl);
-      if (scope.indexOf(target.colEl) < 0) scope.push(target.colEl);
-      var nodes = [];
-      scope.forEach(function (colEl) {
-        nodes = nodes.concat(
-          Array.prototype.slice.call(colEl.querySelectorAll('.module, .drop-gap'))
-        );
-      });
-      withFlip(nodes, function () {
+      var move = function () {
         var addBtn = target.colEl.querySelector('.dash-add');
         if (target.before) target.colEl.insertBefore(drag.gap, target.before);
         else if (addBtn) target.colEl.insertBefore(drag.gap, addBtn);
         else target.colEl.appendChild(drag.gap);
-      });
+      };
+      if (immediate || reducedMotion()) {
+        // 自动滚动时不要 FLIP：内容本身在滚，再叠一层位移动画会看着发抖。
+        move();
+      } else {
+        // FLIP 只量受影响的栏：同栏换位只量一栏，跨栏才量两栏。
+        var scope = [];
+        if (drag.target && drag.target.colEl) scope.push(drag.target.colEl);
+        if (scope.indexOf(target.colEl) < 0) scope.push(target.colEl);
+        var nodes = [];
+        scope.forEach(function (colEl) {
+          nodes = nodes.concat(
+            Array.prototype.slice.call(colEl.querySelectorAll('.module, .drop-gap'))
+          );
+        });
+        withFlip(nodes, move);
+      }
       drag.target = target;
       // 槽位进了布局，各卡片中线全变了，下次划过要重量。
       drag.rects = null;
+    }
+
+    /* — 拖到边缘自动滚动 — */
+
+    /**
+     * HTML5 拖放的 `dragover` **只在指针移动时**触发。指针停在栏底部不动，事件流就断了，
+     * 所以"拖着东西往下放不进去"——滚动条当然不动。必须自己开一个 rAF 循环持续滚。
+     *
+     * 两个细节：
+     * - 滚完不去重量卡片，而是把缓存的视口中线 `mid -= delta` 平移一下就够了。
+     *   滚动不改卡片尺寸，只改它们在视口里的位置，这样滚动过程仍然零布局读取。
+     * - 窄屏（≤1180px）每栏 `overflow: visible`，真正滚的是 window，那条路单独处理。
+     */
+    var EDGE_ZONE_MIN = 40;
+    var EDGE_ZONE_MAX = 72;
+    var EDGE_SPEED_MIN = 2;
+    var EDGE_SPEED_MAX = 14;
+
+    var edgeScroll = null;
+
+    function stopEdgeScroll() {
+      if (edgeScroll && edgeScroll.frame) cancelAnimationFrame(edgeScroll.frame);
+      edgeScroll = null;
+    }
+
+    function shiftCachedMids(colEl, delta) {
+      if (!drag.rects || drag.rects.col !== colEl) return;
+      for (var i = 0; i < drag.rects.list.length; i += 1) {
+        drag.rects.list[i].mid -= delta;
+      }
+    }
+
+    function stepEdgeScroll() {
+      if (!drag || !edgeScroll) return;
+      var state = edgeScroll;
+      if (!state.dir) {
+        state.frame = 0;
+        return;
+      }
+      var amount =
+        state.dir * (EDGE_SPEED_MIN + (EDGE_SPEED_MAX - EDGE_SPEED_MIN) * state.speed);
+      var delta = 0;
+
+      if (state.scrollable) {
+        var before = state.col.scrollTop;
+        state.col.scrollTop = before + amount;
+        delta = state.col.scrollTop - before;
+        shiftCachedMids(state.col, delta);
+      } else {
+        var beforeY = window.scrollY;
+        window.scrollBy(0, amount);
+        delta = window.scrollY - beforeY;
+        if (delta) {
+          // 页面整体滚了，这一栏的视口位置也跟着上移。
+          state.rect = {
+            left: state.rect.left,
+            right: state.rect.right,
+            width: state.rect.width,
+            height: state.rect.height,
+            top: state.rect.top - delta,
+            bottom: state.rect.bottom - delta
+          };
+          shiftCachedMids(state.col, delta);
+        }
+      }
+
+      if (!delta) {
+        // 已经到顶 / 到底（或这一栏根本不用滚）。指针一动会重新起循环。
+        state.frame = 0;
+        return;
+      }
+
+      var rect = state.rect;
+      var target = computeTarget(rect.left + rect.width / 2, state.y, state.col);
+      if (target) updateGap(target, true);
+      state.frame = requestAnimationFrame(stepEdgeScroll);
+    }
+
+    function updateEdgeScroll(colEl, x, y) {
+      if (!drag || !colEl) {
+        stopEdgeScroll();
+        return;
+      }
+      if (!edgeScroll || edgeScroll.col !== colEl) {
+        stopEdgeScroll();
+        edgeScroll = {
+          col: colEl,
+          rect: colEl.getBoundingClientRect(),
+          scrollable: colEl.scrollHeight > colEl.clientHeight + 1,
+          dir: 0,
+          speed: 0,
+          x: x,
+          y: y,
+          frame: 0
+        };
+      }
+      var state = edgeScroll;
+      var rect = state.rect;
+      var zone = clamp(rect.height * 0.12, EDGE_ZONE_MIN, EDGE_ZONE_MAX);
+      state.x = x;
+      state.y = y;
+
+      if (y < rect.top + zone) {
+        state.dir = -1;
+        // 越靠近边缘越快，sqrt 让起步别太磨叽。
+        state.speed = Math.sqrt(clamp((rect.top + zone - y) / zone, 0, 1));
+      } else if (y > rect.bottom - zone) {
+        state.dir = 1;
+        state.speed = Math.sqrt(clamp((y - (rect.bottom - zone)) / zone, 0, 1));
+      } else {
+        state.dir = 0;
+        state.speed = 0;
+      }
+
+      if (!state.dir) {
+        if (state.frame) {
+          cancelAnimationFrame(state.frame);
+          state.frame = 0;
+        }
+        return;
+      }
+      if (!state.frame) state.frame = requestAnimationFrame(stepEdgeScroll);
     }
 
     function beginModuleDrag(mod, moduleEl, event) {
@@ -475,6 +603,7 @@
       drag = null;
       ghostPoint = null;
       hoverPoint = null;
+      stopEdgeScroll();
       document.body.classList.remove('is-module-dragging');
       if (ghostFrame) {
         cancelAnimationFrame(ghostFrame);
@@ -508,7 +637,10 @@
       document.addEventListener(
         'dragover',
         function (event) {
-          if (drag) followGhost(event.clientX, event.clientY);
+          if (!drag) return;
+          followGhost(event.clientX, event.clientY);
+          // 指针离开面板就别再自动滚了，否则拖到顶栏上这一栏会自己一路滚到底。
+          if (!root.contains(event.target)) stopEdgeScroll();
         },
         true
       );
@@ -527,7 +659,9 @@
         hoverFrame = requestAnimationFrame(function () {
           hoverFrame = 0;
           if (!drag || !hoverPoint) return;
-          updateGap(computeTarget(hoverPoint.x, hoverPoint.y, hoverPoint.target));
+          var target = computeTarget(hoverPoint.x, hoverPoint.y, hoverPoint.target);
+          updateGap(target);
+          updateEdgeScroll(target && target.colEl, hoverPoint.x, hoverPoint.y);
         });
       });
 

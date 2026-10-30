@@ -246,6 +246,61 @@ test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () 
     await expect(page.locator('.dash-col[data-col="0"] [data-module-id="m-notes"]')).toHaveCount(1);
     await page.close();
   });
+
+  /**
+   * 用户报的 bug：拖着一路往下，想放到看不见的位置，滚动条不动。
+   * 原因是 HTML5 的 dragover 只在指针移动时触发，指针停在栏底部就没有事件了，
+   * 所以必须自己开 rAF 循环持续滚 —— 这里断言的正是"指针不动也会滚"。
+   */
+  test('拖到栏底部会自己往下滚，指针不动也照样滚', async () => {
+    const page = await openNewTab();
+    // 压低视口，保证中间栏真的溢出、有得滚。
+    await page.setViewportSize({ width: 1440, height: 600 });
+    await page.waitForTimeout(200);
+
+    const column = page.locator('.dash-col[data-col="1"]');
+    const room = await column.evaluate((el) => el.scrollHeight - el.clientHeight);
+    expect(room, '这一栏得先溢出，否则测不到滚动').toBeGreaterThan(120);
+
+    const box = (await column.boundingBox())!;
+    await startDrag(page, 'm-notes');
+    // 停在底部边缘往里 8px：不移动指针，只等时间。
+    await hoverAt(page, box.x + box.width / 2, box.y + box.height - 8);
+
+    await page.waitForTimeout(500);
+    const scrolled = await column.evaluate((el) => el.scrollTop);
+    expect(scrolled, '指针停在底部边缘时应该自己往下滚').toBeGreaterThan(40);
+
+    // 离开边缘就停：把指针挪回中间，再等一会儿，滚动量不该继续涨。
+    await hoverAt(page, box.x + box.width / 2, box.y + box.height / 2);
+    const paused = await column.evaluate((el) => el.scrollTop);
+    await page.waitForTimeout(300);
+    const stillPaused = await column.evaluate((el) => el.scrollTop);
+    expect(Math.abs(stillPaused - paused), '离开边缘后不该继续滚').toBeLessThan(6);
+
+    // 滚到底之后再松手，落点要落在滚到的位置，而不是原来那一屏的末尾。
+    await hoverAt(page, box.x + box.width / 2, box.y + box.height - 8);
+    await page.waitForTimeout(200);
+    await page.evaluate(
+      ({ x, y }) => {
+        const dt = (window as unknown as { __dragDt: DataTransfer }).__dragDt;
+        document
+          .querySelector('#dash')!
+          .dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt, clientX: x, clientY: y }));
+      },
+      { x: box.x + box.width / 2, y: box.y + box.height - 8 }
+    );
+
+    await expect(page.locator('.dash-col[data-col="1"] [data-module-id="m-notes"]')).toHaveCount(1);
+    // 不是插到这一栏最前面 —— 说明落点跟着滚动走，没有回退到起点。
+    const index = await column.evaluate((el) => {
+      const mods = Array.from(el.querySelectorAll('.module'));
+      return mods.findIndex((m) => m.getAttribute('data-module-id') === 'm-notes');
+    });
+    expect(index).toBeGreaterThan(0);
+    await expect(page.locator('.drag-ghost')).toHaveCount(0);
+    await page.close();
+  });
 });
 
 test.describe('模块面板：自定义与数据来源', () => {
