@@ -1,25 +1,16 @@
 import React, { useRef, useState } from 'react';
-import { 
-  Inbox, 
-  Plus, 
-  ExternalLink, 
-  FileText, 
-  Globe, 
-  FolderPlus, 
-  Check, 
-  Trash2, 
-  Archive, 
-  Sparkles, 
-  Clock, 
-  Tag, 
-  ArrowRight,
+import {
+  Inbox,
+  Plus,
+  FileText,
+  Globe,
+  Check,
+  Trash2,
   Code2,
   CheckCircle2,
   Search,
   Edit3,
-  Filter,
-  X,
-  Layers
+  X
 } from 'lucide-react';
 import { InboxItem, QuickNote, NavSite, ProjectItem } from '../../types';
 import { ConfirmDialog } from '../../shared/ui';
@@ -88,6 +79,14 @@ export const InboxView: React.FC<InboxViewProps> = ({
   };
 
   const isUrl = (text: string) => /^https?:\/\//i.test(text.trim());
+
+  /** Dense list: same-day rows show only the time, older ones just the date. */
+  const timeLabel = (ts: number) => {
+    const d = new Date(ts);
+    return d.toDateString() === new Date().toDateString()
+      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : `${d.getMonth() + 1}/${d.getDate()}`;
+  };
 
   const handleQuickAdd = () => {
     if (!quickInput.trim()) return;
@@ -251,7 +250,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
               待整理: {pendingCount}
             </span>
           </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
+          {/* Hidden on phones: the subtitle is four lines of chrome above a list
+              that is the only thing worth screen space there. */}
+          <p className="hidden sm:block text-xs text-zinc-400 mt-0.5">
             快速倾倒临时灵感、网页链接、代码片段，后续无缝分流至「知识文档」、「常用书签」或「项目空间」
           </p>
         </div>
@@ -263,14 +264,14 @@ export const InboxView: React.FC<InboxViewProps> = ({
               <button
                 onClick={() => setBatchTarget('note')}
                 data-testid="inbox-batch-note"
-                className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-[11px] text-zinc-300 hover:text-white transition-colors"
+                className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-[11px] text-zinc-300 hover:text-white transition-colors whitespace-nowrap"
               >
                 批量转为笔记 ({pendingCount})
               </button>
               <button
                 onClick={() => setBatchTarget('site')}
                 data-testid="inbox-batch-site"
-                className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-[11px] text-zinc-300 hover:text-white transition-colors"
+                className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-[11px] text-zinc-300 hover:text-white transition-colors whitespace-nowrap"
               >
                 批量存为书签
               </button>
@@ -279,7 +280,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
           {pendingCount > 0 && (
             <button
               onClick={handleBatchMarkAllProcessed}
-              className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-[11px] text-zinc-300 hover:text-white transition-colors"
+              className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-[11px] text-zinc-300 hover:text-white transition-colors whitespace-nowrap"
             >
               全部标记已处理
             </button>
@@ -287,7 +288,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
           {processedCount > 0 && (
             <button
               onClick={handleBatchClearProcessed}
-              className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-rose-900/60 text-[11px] text-zinc-400 hover:text-rose-400 transition-colors"
+              className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-rose-900/60 text-[11px] text-zinc-400 hover:text-rose-400 transition-colors whitespace-nowrap"
             >
               清空已处理 ({processedCount})
             </button>
@@ -400,257 +401,271 @@ export const InboxView: React.FC<InboxViewProps> = ({
         </div>
       </div>
 
-      {/* Quick Capture Dock */}
-      <div className="p-4 rounded-2xl bg-sh-surface border border-sh-line space-y-3">
-        <div className="flex items-center gap-2">
+      {/* Quick Capture Dock — one compact strip, not a three-row form. */}
+      <div className="p-3 rounded-2xl bg-sh-surface border border-sh-line">
+        <textarea
+          value={quickInput}
+          onChange={(e) => setQuickInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="粘贴文字、网址 (https://…) 或代码片段，Ctrl+Enter 存入；https:// 开头自动识别为链接"
+          aria-label="快速存入收件箱"
+          rows={2}
+          className="w-full bg-sh-bg border border-zinc-800/80 rounded-xl p-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-mono resize-none"
+        />
+        <div className="flex items-center gap-2 mt-2">
           <input
             type="text"
             value={quickTitle}
             onChange={(e) => setQuickTitle(e.target.value)}
-            placeholder="摘要标题 (可选，留空将自动推断)..."
-            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+            placeholder="摘要标题 (可选，留空自动取内容开头)"
+            aria-label="摘要标题"
+            className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
           />
-        </div>
-
-        <div className="relative">
-          <textarea
-            value={quickInput}
-            onChange={(e) => setQuickInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="粘贴任意文字、网址 (如 https://...) 或代码片段... 按 Ctrl+Enter 极速存入"
-            rows={3}
-            className="w-full bg-sh-bg border border-zinc-800/80 rounded-xl p-3 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-mono resize-none"
-          />
-          <div className="flex items-center justify-between mt-2 pt-1">
-            <span className="text-[11px] text-zinc-500 font-mono">
-              提示: 输入 https:// 开头将自动识别为链接并支持一键转为书签
-            </span>
-            <button
-              onClick={handleQuickAdd}
-              disabled={!quickInput.trim()}
-              className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>快速存入 (Ctrl+Enter)</span>
-            </button>
-          </div>
+          <button
+            onClick={handleQuickAdd}
+            disabled={!quickInput.trim()}
+            className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition-colors shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>快速存入</span>
+          </button>
         </div>
       </div>
 
-      {/* Inbox Items Feed */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+      {/* Items feed: one dense row per item, not one card per item.
+          The card grid spent 200–350px on every entry — three of them filled the
+          screen, so a backlog that grows daily became unreadable long before it
+          got long. A row carries the summary plus at most one detail line; the
+          actions reveal on hover (always visible on narrow/touch screens). */}
+      <div className="bg-sh-surface rounded-2xl border border-sh-line divide-y divide-zinc-800/60 overflow-hidden">
         {filteredItems.length === 0 ? (
-          <div className="col-span-full py-16 text-center text-zinc-500 font-mono text-xs bg-sh-surface/50 rounded-2xl border border-zinc-800/50">
-            <Inbox className="w-8 h-8 mx-auto mb-2 opacity-40 text-indigo-400" />
+          <div className="py-14 text-center text-zinc-500 font-mono text-xs">
+            <Inbox className="w-7 h-7 mx-auto mb-2 opacity-40 text-indigo-400" />
             <p>收件箱空空如也，所有碎片资料已整理完毕！</p>
           </div>
         ) : (
           filteredItems.map((item) => {
-            const isProcessed = item.status === 'processed';
+            // First line: title if the capture has one, otherwise the content.
+            const summary = (item.title || item.content || item.url || '').trim() || '未命名碎片';
+            // Second line: whichever of url / content the summary did not show.
+            const detail =
+              item.url && item.url !== summary
+                ? item.url
+                : (item.content || '').trim() !== summary
+                  ? (item.content || '').trim()
+                  : '';
+            const done = item.status !== 'inbox';
 
             return (
               <div
                 key={item.id}
-                className={`p-4 rounded-2xl border transition-all flex flex-col justify-between space-y-3 ${
-                  isProcessed
-                    ? 'bg-zinc-900/30 border-zinc-800/50 opacity-70'
-                    : 'bg-sh-surface border-sh-line hover:border-zinc-700 shadow-sm'
+                data-testid="inbox-row"
+                className={`group flex flex-wrap items-center gap-x-3 gap-y-1 px-3 sm:px-4 py-2 transition-colors ${
+                  done ? 'bg-zinc-900/20' : 'hover:bg-zinc-900/40'
                 }`}
               >
-                <div>
-                  {/* Top Item Type Bar */}
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 ${
-                        item.type === 'url' ? 'bg-sky-950/60 text-sky-400 border border-sky-800/50' :
-                        item.type === 'snippet' ? 'bg-amber-950/60 text-amber-400 border border-amber-800/50' :
-                        'bg-purple-950/60 text-purple-400 border border-purple-800/50'
-                      }`}>
-                        {item.type === 'url' && <Globe className="w-3 h-3" />}
-                        {item.type === 'snippet' && <Code2 className="w-3 h-3" />}
-                        {item.type === 'text' && <FileText className="w-3 h-3" />}
-                        <span>{item.type === 'url' ? 'URL链接' : item.type === 'snippet' ? '代码' : '速记'}</span>
-                      </span>
-
-                      <h3 className="text-xs font-semibold text-zinc-200 line-clamp-1">
-                        {item.title}
-                      </h3>
-                    </div>
-
-                    <span className="text-[10px] font-mono text-zinc-500 shrink-0">
-                      {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-
-                  {/* Body Content */}
-                  {item.url ? (
-                    <>
-                      <a
-                        href={item.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs font-mono text-sky-400 hover:underline flex items-center gap-1.5 break-all p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800/80 mb-2"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                        <span>{item.url}</span>
-                      </a>
-                      {/*
-                        A capture can be both: text the user typed *and* a link it came
-                        from. Rendering only the link hid the text entirely — which is
-                        how 「记一笔」 ended up looking like it saved nothing.
-                      */}
-                      {item.content && item.content.trim() && item.content.trim() !== item.url.trim() ? (
-                        <div className="p-3 rounded-xl bg-sh-bg border border-zinc-800/60 font-mono text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap select-text max-h-36 overflow-y-auto">
-                          {item.content}
-                        </div>
-                      ) : null}
-                    </>
+                {/* Type chip: colour carries the kind, the icon confirms it. */}
+                <span
+                  className={`shrink-0 w-6 h-6 rounded-lg flex items-center justify-center border ${
+                    item.type === 'url'
+                      ? 'bg-sky-950/60 text-sky-400 border-sky-800/50'
+                      : item.type === 'snippet'
+                        ? 'bg-amber-950/60 text-amber-400 border-amber-800/50'
+                        : 'bg-purple-950/60 text-purple-400 border-purple-800/50'
+                  }`}
+                  title={item.type === 'url' ? '链接' : item.type === 'snippet' ? '代码' : '速记'}
+                >
+                  {item.type === 'url' ? (
+                    <Globe className="w-3.5 h-3.5" aria-hidden />
+                  ) : item.type === 'snippet' ? (
+                    <Code2 className="w-3.5 h-3.5" aria-hidden />
                   ) : (
-                    <div className="p-3 rounded-xl bg-sh-bg border border-zinc-800/60 font-mono text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap select-text max-h-36 overflow-y-auto">
-                      {item.content}
-                    </div>
+                    <FileText className="w-3.5 h-3.5" aria-hidden />
+                  )}
+                </span>
+
+                {/* Summary + one detail line, both clamped: a row stays a row.
+                    `basis-40` is what stops a narrow screen from crushing the
+                    text to "第 2 …" — the action cluster is what wraps instead. */}
+                <div className="min-w-0 flex-1 basis-40" data-testid="inbox-row-text">
+                  {item.url && item.url === summary ? (
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block truncate text-xs leading-5 text-sky-400/90 hover:text-sky-400 hover:underline"
+                      title={item.url}
+                    >
+                      {summary}
+                    </a>
+                  ) : (
+                    <p className={`truncate text-xs leading-5 ${done ? 'text-zinc-400' : 'text-zinc-200'}`}>{summary}</p>
+                  )}
+                  {detail && (
+                    <p className="truncate text-[11px] leading-4 text-zinc-500 mt-0.5 font-mono">
+                      {item.url && item.url === detail ? (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sky-400/80 hover:text-sky-400 hover:underline"
+                        >
+                          {detail}
+                        </a>
+                      ) : (
+                        detail
+                      )}
+                    </p>
                   )}
                 </div>
 
-                {/* Triage Action Toolbar */}
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-zinc-800/60 text-xs">
-                  <div className="flex items-center gap-1.5">
-                    {/* Convert to Note — or open the note it already produced. */}
-                    {item.status !== 'inbox' && item.targetType === 'note' && item.targetId && onOpenTarget ? (
-                      <button
-                        onClick={() => onOpenTarget('note', item.targetId!)}
-                        data-testid={`inbox-open-target-${item.id}`}
-                        className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-purple-300 text-[11px] flex items-center gap-1"
-                        title="打开此前生成的笔记，不会重复创建"
-                      >
-                        <FileText className="w-3 h-3 text-purple-400" />
-                        <span>打开原笔记</span>
-                      </button>
-                    ) : (
+                {done && item.targetType && (
+                  <span className="shrink-0 hidden md:inline px-1.5 py-0.5 rounded text-[10px] font-mono text-emerald-400/90 bg-emerald-950/40 border border-emerald-900/50">
+                    {item.targetType === 'site' ? '已存书签' : '已转笔记'}
+                  </span>
+                )}
+
+                <span
+                  className="shrink-0 text-[10px] font-mono text-zinc-500 tabular-nums"
+                  title={new Date(item.createdAt).toLocaleString()}
+                >
+                  {timeLabel(item.createdAt)}
+                </span>
+
+                {/* Actions: hidden until hover on wide pointer screens, always on
+                    otherwise; focus-within keeps them up once you tab in. Below
+                    `lg` they wrap onto their own line rather than eating the
+                    summary's width. */}
+                <div data-testid="inbox-row-actions" className="shrink-0 flex items-center gap-1 w-full justify-end lg:w-auto max-lg:opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 transition-opacity">
+                  {/* Convert to Note — or open the note it already produced. */}
+                  {done && item.targetType === 'note' && item.targetId && onOpenTarget ? (
+                    <button
+                      onClick={() => onOpenTarget('note', item.targetId!)}
+                      data-testid={`inbox-open-target-${item.id}`}
+                      className="px-2 py-1 rounded-lg border border-zinc-800 text-[11px] text-purple-300 hover:border-purple-800/60 transition-colors"
+                      title="打开此前生成的笔记，不会重复创建"
+                    >
+                      打开原笔记
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        const result = onConvertToNote(item);
+                        if (!result.ok) {
+                          showToast(result.error || '转换失败，内容仍保留在收件箱');
+                          return;
+                        }
+                        setJustProcessed((prev) => new Set(prev).add(item.id));
+                        showToast(result.reused ? '该条目此前已转换，已打开原笔记' : '已转为笔记');
+                        if (result.reused && result.targetId && onOpenTarget) onOpenTarget('note', result.targetId);
+                      }}
+                      data-testid={`inbox-convert-note-${item.id}`}
+                      className="px-2 py-1 rounded-lg border border-zinc-800 text-[11px] text-purple-300 hover:border-purple-800/60 transition-colors"
+                      title="转为长期知识笔记并记录目标引用"
+                    >
+                      转为笔记
+                    </button>
+                  )}
+
+                  {/* Convert to Site (if URL) — or open the saved bookmark. */}
+                  {done && item.targetType === 'site' && item.targetId && onOpenTarget ? (
+                    <button
+                      onClick={() => onOpenTarget('site', item.targetId!)}
+                      className="px-2 py-1 rounded-lg border border-zinc-800 text-[11px] text-sky-300 hover:border-sky-800/60 transition-colors"
+                      title="打开此前的收藏，不会重复创建"
+                    >
+                      打开原收藏
+                    </button>
+                  ) : (
+                    item.url && (
                       <button
                         onClick={() => {
-                          const result = onConvertToNote(item);
+                          const result = onConvertToSite(item);
                           if (!result.ok) {
                             showToast(result.error || '转换失败，内容仍保留在收件箱');
                             return;
                           }
                           setJustProcessed((prev) => new Set(prev).add(item.id));
-                          showToast(result.reused ? '该条目此前已转换，已打开原笔记' : '已转为笔记');
-                          if (result.reused && result.targetId && onOpenTarget) onOpenTarget('note', result.targetId);
+                          showToast(result.reused ? '该条目此前已存为书签，已打开原收藏' : '已存为书签');
+                          if (result.reused && result.targetId && onOpenTarget) onOpenTarget('site', result.targetId);
                         }}
-                        data-testid={`inbox-convert-note-${item.id}`}
-                        className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-purple-300 text-[11px] flex items-center gap-1"
-                        title="转为长期知识笔记并记录目标引用"
+                        data-testid={`inbox-convert-site-${item.id}`}
+                        className="px-2 py-1 rounded-lg border border-zinc-800 text-[11px] text-sky-300 hover:border-sky-800/60 transition-colors"
+                        title="添加到快捷导航收藏"
                       >
-                        <FileText className="w-3 h-3 text-purple-400" />
-                        <span>转为笔记</span>
+                        存为书签
                       </button>
-                    )}
+                    )
+                  )}
 
-                    {/* Convert to Site (if URL) — or open the saved bookmark. */}
-                    {item.status !== 'inbox' && item.targetType === 'site' && item.targetId && onOpenTarget ? (
-                      <button
-                        onClick={() => onOpenTarget('site', item.targetId!)}
-                        className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-sky-300 text-[11px] flex items-center gap-1"
-                        title="打开此前的收藏，不会重复创建"
-                      >
-                        <Globe className="w-3 h-3 text-sky-400" />
-                        <span>打开原收藏</span>
-                      </button>
-                    ) : (
-                      item.url && (
-                        <button
-                          onClick={() => {
-                            const result = onConvertToSite(item);
-                            if (!result.ok) {
-                              showToast(result.error || '转换失败，内容仍保留在收件箱');
-                              return;
-                            }
-                            setJustProcessed((prev) => new Set(prev).add(item.id));
-                            showToast(result.reused ? '该条目此前已存为书签，已打开原收藏' : '已存为书签');
-                            if (result.reused && result.targetId && onOpenTarget) onOpenTarget('site', result.targetId);
-                          }}
-                          data-testid={`inbox-convert-site-${item.id}`}
-                          className="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-sky-300 text-[11px] flex items-center gap-1"
-                          title="添加到快捷导航收藏"
-                        >
-                          <Globe className="w-3 h-3 text-sky-400" />
-                          <span>存为书签</span>
-                        </button>
-                      )
-                    )}
-
-                    {/* Assign to Project */}
-                    {projects.length > 0 && onAssignToProject && (
-                      <select
-                        onChange={(e) => {
-                          if (!e.target.value) return;
-                          const result = onAssignToProject(item.id, e.target.value);
-                          showToast(result.ok ? '已关联到项目' : result.error || '关联失败');
-                        }}
-                        defaultValue=""
-                        className="px-2 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 text-[11px] focus:outline-none"
-                      >
-                        <option value="" disabled>关联项目...</option>
-                        {projects.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    {/* Inline Edit Button */}
-                    <button
-                      onClick={() => handleOpenEdit(item)}
-                      className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-200 transition-colors"
-                      title="编辑碎片内容与类型"
-                      aria-label="编辑碎片内容与类型"
+                  {/* Assign to Project */}
+                  {projects.length > 0 && onAssignToProject && (
+                    <select
+                      onChange={(e) => {
+                        if (!e.target.value) return;
+                        const result = onAssignToProject(item.id, e.target.value);
+                        showToast(result.ok ? '已关联到项目' : result.error || '关联失败');
+                      }}
+                      defaultValue=""
+                      aria-label="关联到项目"
+                      className="max-w-28 truncate px-1.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 text-[11px] focus:outline-none"
                     >
-                      <Edit3 className="w-3.5 h-3.5" aria-hidden />
-                    </button>
+                      <option value="" disabled>关联项目...</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  )}
 
-                    {item.status === 'inbox' ? (
-                      <button
-                        onClick={() => {
-                          onUpdateInboxItem({ ...item, status: 'processed' });
-                          showToast('已标记为已处理');
-                        }}
-                        className="p-1.5 rounded-lg text-zinc-500 hover:text-emerald-400"
-                        title="标为已处理"
-                        aria-label="标为已处理"
-                      >
-                        <Check className="w-3.5 h-3.5" aria-hidden />
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          onUpdateInboxItem({ ...item, status: 'inbox' });
-                          showToast('已重新移回待整理');
-                        }}
-                        className="p-1.5 rounded-lg text-zinc-500 hover:text-indigo-400"
-                        title="重新放回收件箱"
-                        aria-label="重新放回收件箱"
-                      >
-                        <Inbox className="w-3.5 h-3.5" aria-hidden />
-                      </button>
-                    )}
+                  <button
+                    onClick={() => handleOpenEdit(item)}
+                    className="p-1 rounded-lg text-zinc-500 hover:text-zinc-200 transition-colors"
+                    title="编辑碎片内容与类型"
+                    aria-label="编辑碎片内容与类型"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" aria-hidden />
+                  </button>
 
+                  {item.status === 'inbox' ? (
                     <button
                       onClick={() => {
-                        const preview = (item.title || item.content).slice(0, 40);
-                        if (confirm(`确定彻底删除该碎片吗？此操作不可撤销。\n\n${preview}`)) {
-                          onDeleteInboxItem(item.id);
-                          showToast('🗑️ 已删除');
-                        }
+                        onUpdateInboxItem({ ...item, status: 'processed' });
+                        showToast('已标记为已处理');
                       }}
-                      className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-400"
-                      title="删除此碎片"
-                      aria-label="删除此碎片"
+                      className="p-1 rounded-lg text-zinc-500 hover:text-emerald-400"
+                      title="标为已处理"
+                      aria-label="标为已处理"
                     >
-                      <Trash2 className="w-3.5 h-3.5" aria-hidden />
+                      <Check className="w-3.5 h-3.5" aria-hidden />
                     </button>
-                  </div>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        onUpdateInboxItem({ ...item, status: 'inbox' });
+                        showToast('已重新移回待整理');
+                      }}
+                      className="p-1 rounded-lg text-zinc-500 hover:text-indigo-400"
+                      title="重新放回收件箱"
+                      aria-label="重新放回收件箱"
+                    >
+                      <Inbox className="w-3.5 h-3.5" aria-hidden />
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => {
+                      const preview = (item.title || item.content).slice(0, 40);
+                      if (confirm(`确定彻底删除该碎片吗？此操作不可撤销。\n\n${preview}`)) {
+                        onDeleteInboxItem(item.id);
+                        showToast('🗑️ 已删除');
+                      }
+                    }}
+                    className="p-1 rounded-lg text-zinc-500 hover:text-rose-400"
+                    title="删除此碎片"
+                    aria-label="删除此碎片"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" aria-hidden />
+                  </button>
                 </div>
               </div>
             );

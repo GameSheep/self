@@ -509,6 +509,10 @@ test.describe('模块面板：自定义与数据来源', () => {
     const text = `记一笔-${Date.now()}`;
     const page = await openNewTab();
     await page.locator('[data-module-id="m-capture"] #capture-input').fill(text);
+    // 同步点：确认输入框真的拿到了这段文字再点提交。少了这一句，万一输入被
+    // 重绘清空，`send()` 会静默 return，症状是"状态一直空着"——排查时看不出
+    // 根因是输入没了还是后台没响应。
+    await expect(page.locator('[data-module-id="m-capture"] #capture-input')).toHaveValue(text);
     await page.locator('[data-module-id="m-capture"] #capture-submit').click();
     await expect(page.locator('[data-module-id="m-capture"] #capture-status')).toHaveText('已进收件箱');
 
