@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "measure:first-load": "node scripts/measure-entry-graph.mjs dist",
     "test:e2e": "playwright test",
+    "test:e2e:ext": "playwright test --config=playwright.extension.config.ts",
     "test:e2e:ui": "playwright test --ui",
     "gen:icons": "node scripts/create-brand-icons.js",
     "package:extension": "node scripts/package-extension.js"

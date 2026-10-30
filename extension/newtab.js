@@ -7,6 +7,9 @@
  *   `self_hub_idb`。所以「搜索所有内容」不用先打开工作台。
  * - 「常用网站」由**用户自己点 ☆ 决定**，存在 `chrome.storage.local.selfhub_newtab_pins`
  *   （只存网站 id；工作台里删掉这个网站时，这里自动不再显示它）。
+ *
+ * 面板本身（列宽、模块顺序、高度、数据来源）由 `newtab-dashboard.js` 管；这个文件只
+ * 负责「每个模块里画什么」和页面级的搜索 / 主题。
  */
 (function () {
   'use strict';
@@ -15,12 +18,17 @@
   var THEME_KEY = 'selfhub_newtab_theme';
   var MODE_KEY = 'selfhub_storage_mode';
   var PINS_KEY = 'selfhub_newtab_pins';
+  var PENDING_NOTES_KEY = 'selfhub_pending_notes';
+  var HINT_KEY = 'selfhub_newtab_hint_seen';
   var IDB_NAME = 'self_hub_idb';
   var DAY = 86400000;
 
   var state = null;
   var pins = [];
-/**
+  var dashboard = null;
+  var pendingNotes = [];
+
+  /**
    * 分类归并：只影响"怎么显示"，不改用户数据里的 category。
    *
    * 用户的旧分类名很长（"AI 工具、API 与编程平台"、"导航、个人项目与用途待确认"），
@@ -50,9 +58,6 @@
     });
     return groups;
   }
-
-  var activeBucket = '全部';
-
 
   /* ── 数据读取 ───────────────────────────────────────────── */
 
@@ -234,50 +239,14 @@
     }
   }
 
-  /* ── 渲染 ───────────────────────────────────────────────── */
-
-  function renderNotes() {
-    var host = document.getElementById('notes-list');
-    host.textContent = '';
-    var notes = asArray(state.notes)
-      .slice()
-      .sort(function (a, b) {
-        return (b.updatedAt || 0) - (a.updatedAt || 0);
-      })
-      .slice(0, 10);
-    if (!notes.length) {
-      host.appendChild(el('div', 'empty', '还没有笔记。进工作台写第一条，这里就会出现。'));
-      return;
-    }
-    notes.forEach(function (note) {
-      var row = el('button', 'list-item');
-      row.type = 'button';
-      row.setAttribute('data-note-id', note.id);
-      var main = el('span', 'list-main');
-      main.appendChild(el('span', 'list-title', note.title || '未命名笔记'));
-      main.appendChild(el('span', 'list-sub', (note.folder ? note.folder + ' · ' : '') + relTime(note.updatedAt)));
-      row.appendChild(main);
-      row.addEventListener('click', function () {
-        window.location.href = workspaceUrl('#/library/item/note:' + note.id);
-      });
-      host.appendChild(row);
-    });
+  function goWorkspace(hash) {
+    window.location.href = workspaceUrl(hash);
   }
 
-  function pinButton(site) {
-    var pinned = pins.indexOf(site.id) >= 0;
-    var button = el('button', 'pin', pinned ? '★' : '☆');
-    button.type = 'button';
-    button.setAttribute('aria-pressed', pinned ? 'true' : 'false');
-    button.setAttribute('aria-label', (pinned ? '从常用移除 ' : '加入常用 ') + (site.title || hostOf(site.url)));
-    button.setAttribute('data-pin', site.id);
-    button.title = pinned ? '从常用移除' : '加入常用';
-    button.addEventListener('click', function (event) {
-      event.preventDefault();
-      event.stopPropagation();
-      togglePin(site.id);
-    });
-    return button;
+  function moreLink(text, hash) {
+    var link = el('a', 'module-more', text);
+    link.href = workspaceUrl(hash);
+    return link;
   }
 
   // ── 站点图标：真 favicon 优先，加载失败原地换成按主机名着色的首字母块。 ──
@@ -322,17 +291,40 @@
     return img;
   }
 
-  function siteCard(site) {
+  function pinButton(site) {
+    var pinned = pins.indexOf(site.id) >= 0;
+    var button = el('button', 'pin', pinned ? '★' : '☆');
+    button.type = 'button';
+    button.setAttribute('aria-pressed', pinned ? 'true' : 'false');
+    button.setAttribute('aria-label', (pinned ? '从常用移除 ' : '加入常用 ') + (site.title || hostOf(site.url)));
+    button.setAttribute('data-pin', site.id);
+    button.title = pinned ? '从常用移除' : '加入常用';
+    button.addEventListener('click', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      togglePin(site.id);
+    });
+    return button;
+  }
+
+  /**
+   * 一个网站 = 一张小卡片。
+   *
+   * 用户要的「card 中的 card」：外面的网站模块是一张卡，里面每个网站还是卡，
+   * 而不是一排扁平的 chip。卡片之间靠间距和描边分层，不靠背景色差。
+   */
+  function siteCard(site, options) {
     var hostname = hostOf(site.url).replace(/^www\./, '');
-    var card = el('div', 'site-tile');
+    var card = el('div', 'site-card');
     card.setAttribute('data-site-id', site.id);
-    var link = el('a', 'tile-link');
+    var link = el('a', 'site-card-link');
     link.href = site.url;
     link.target = '_blank';
     link.rel = 'noreferrer';
     link.title = (site.title || '') + '\n' + site.url;
     link.appendChild(tileIcon(site));
-    link.appendChild(el('span', 'tile-name', site.title || hostname));
+    link.appendChild(el('span', 'site-card-name', site.title || hostname));
+    if (options && options.showHost) link.appendChild(el('span', 'site-card-host', hostname));
     card.appendChild(link);
     card.appendChild(pinButton(site));
     return card;
@@ -343,131 +335,392 @@
     if (index >= 0) pins.splice(index, 1);
     else pins.push(id);
     savePins();
-    renderPinned();
-    renderAllSites();
+    if (dashboard) dashboard.refreshBodies(['pinned', 'sites']);
   }
 
-  function renderPinned() {
-    var host = document.getElementById('pinned-sites');
-    host.textContent = '';
-    var sites = asArray(state.sites);
+  /* ── 模块：笔记 ─────────────────────────────────────────── */
+
+  function noteFolders() {
+    var seen = {};
+    var out = [];
+    asArray(state.notes).forEach(function (note) {
+      var folder = String(note.folder || '').trim();
+      if (!folder || seen[folder]) return;
+      seen[folder] = true;
+      out.push(folder);
+    });
+    return out.sort();
+  }
+
+  /** 待同步的笔记先混进来显示，用户不用等打开工作台才看得到自己刚写的东西。 */
+  function allNotes() {
+    var merged = asArray(state.notes).slice();
+    var ids = {};
+    merged.forEach(function (note) {
+      ids[note.id] = true;
+    });
+    pendingNotes.forEach(function (note) {
+      if (!ids[note.id]) merged.push(note);
+    });
+    return merged;
+  }
+
+  function renderNotesBody(mod, body) {
+    var folder = mod.source && mod.source.mode === 'folder' ? mod.source.value : '';
+    var notes = allNotes()
+      .filter(function (note) {
+        return !folder || String(note.folder || '') === folder;
+      })
+      .sort(function (a, b) {
+        return (b.updatedAt || 0) - (a.updatedAt || 0);
+      })
+      .slice(0, 30);
+
+    var list = el('div', 'list');
+    if (!notes.length) {
+      list.appendChild(
+        el('div', 'empty', folder ? '「' + folder + '」里还没有笔记。' : '还没有笔记。左边「文本框」写一条，或进工作台写。')
+      );
+    } else {
+      notes.forEach(function (note) {
+        var row = el('button', 'list-item');
+        row.type = 'button';
+        row.setAttribute('data-note-id', note.id);
+        var main = el('span', 'list-main');
+        main.appendChild(el('span', 'list-title', note.title || '未命名笔记'));
+        main.appendChild(el('span', 'list-sub', (note.folder ? note.folder + ' · ' : '') + relTime(note.updatedAt)));
+        row.appendChild(main);
+        row.addEventListener('click', function () {
+          goWorkspace('#/library/item/note:' + note.id);
+        });
+        list.appendChild(row);
+      });
+    }
+    body.appendChild(list);
+    body.appendChild(moreLink('全部笔记 →', '#/library?view=notes'));
+  }
+
+  /* ── 模块：文本框（直接存进笔记）─────────────────────────── */
+
+  function queuePendingNote(note) {
+    return new Promise(function (resolve, reject) {
+      try {
+        chrome.storage.local.get([PENDING_NOTES_KEY], function (res) {
+          var queue = Array.isArray(res && res[PENDING_NOTES_KEY]) ? res[PENDING_NOTES_KEY] : [];
+          var exists = queue.some(function (item) {
+            return item && item.id === note.id;
+          });
+          if (!exists) queue.push(note);
+          chrome.storage.local.set({ selfhub_pending_notes: queue }, function () {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve(queue);
+          });
+        });
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  function titleOf(text) {
+    var firstLine = String(text || '')
+      .split('\n')
+      .map(function (line) {
+        return line.trim();
+      })
+      .filter(Boolean)[0];
+    if (!firstLine) return '新标签页笔记';
+    return firstLine.length > 40 ? firstLine.slice(0, 39) + '…' : firstLine;
+  }
+
+  function renderQuickNoteBody(mod, body, moduleEl) {
+    var folder = (mod.source && mod.source.mode === 'folder' && mod.source.value) || '';
+    var form = el('div', 'quicknote');
+
+    var textarea = document.createElement('textarea');
+    textarea.className = 'quicknote-input';
+    textarea.id = 'quicknote-input';
+    textarea.rows = 4;
+    textarea.placeholder = '想到什么写下来，直接存成一条笔记…';
+    textarea.setAttribute('aria-label', '快速笔记');
+    form.appendChild(textarea);
+
+    var bar = el('div', 'quicknote-bar');
+    var select = document.createElement('select');
+    select.className = 'quicknote-folder';
+    select.id = 'quicknote-folder';
+    select.setAttribute('aria-label', '存到哪个文件夹');
+    var rootOption = document.createElement('option');
+    rootOption.value = '';
+    rootOption.textContent = '根目录';
+    select.appendChild(rootOption);
+    noteFolders().forEach(function (name) {
+      var option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      select.appendChild(option);
+    });
+    select.value = folder;
+    select.addEventListener('change', function () {
+      mod.source = { mode: 'folder', value: select.value };
+      if (dashboard) dashboard.save();
+      var label = moduleEl && moduleEl.querySelector('.module-source');
+      if (label) {
+        label.textContent = select.value || '根目录';
+        label.hidden = false;
+      }
+    });
+    bar.appendChild(select);
+
+    var status = el('span', 'quicknote-status');
+    status.id = 'quicknote-status';
+    bar.appendChild(status);
+
+    var save = el('button', 'quicknote-save', '存进笔记');
+    save.type = 'button';
+    save.id = 'quicknote-save';
+    bar.appendChild(save);
+    form.appendChild(bar);
+    body.appendChild(form);
+
+    function submit() {
+      var text = (textarea.value || '').trim();
+      if (!text) {
+        status.textContent = '写点什么再存';
+        status.className = 'quicknote-status is-warn';
+        return;
+      }
+      var note = {
+        id: 'note-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+        title: titleOf(text),
+        content: text,
+        folder: select.value || undefined,
+        tags: [],
+        updatedAt: Date.now()
+      };
+      status.className = 'quicknote-status';
+      status.textContent = '保存中…';
+      save.disabled = true;
+      queuePendingNote(note)
+        .then(function () {
+          pendingNotes.push(note);
+          textarea.value = '';
+          status.className = 'quicknote-status is-ok';
+          status.textContent = '已存进笔记';
+          save.disabled = false;
+          if (dashboard) dashboard.refreshBodies(['notes']);
+          setTimeout(function () {
+            if (status.textContent === '已存进笔记') status.textContent = '';
+          }, 2600);
+        })
+        .catch(function (err) {
+          save.disabled = false;
+          status.className = 'quicknote-status is-danger';
+          status.textContent = '保存失败：' + ((err && err.message) || '扩展未响应');
+        });
+    }
+
+    save.addEventListener('click', submit);
+    textarea.addEventListener('keydown', function (event) {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault();
+        submit();
+      }
+    });
+  }
+
+  /* ── 模块：记一笔（进收件箱）─────────────────────────────── */
+
+  function renderCaptureBody(mod, body) {
+    var form = el('div', 'capture');
+    var input = document.createElement('input');
+    input.id = 'capture-input';
+    input.type = 'text';
+    input.placeholder = '记一笔：先进收件箱，回工作台再整理';
+    input.setAttribute('aria-label', '快速记录');
+    form.appendChild(input);
+
+    var submit = el('button', null, '记录');
+    submit.id = 'capture-submit';
+    submit.type = 'button';
+    form.appendChild(submit);
+    body.appendChild(form);
+
+    var status = el('div', 'capture-status');
+    status.id = 'capture-status';
+    body.appendChild(status);
+
+    function send() {
+      var text = (input.value || '').trim();
+      if (!text) return;
+      status.className = 'capture-status subtle';
+      status.style.color = '';
+      status.textContent = '保存中…';
+      var isUrl = /^https?:\/\//i.test(text);
+      var payload = {
+        text: text,
+        operationId: 'newtab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
+      };
+      if (isUrl) payload.url = text;
+      window.SelfHubClient.send('CAPTURE_ENTRY', payload)
+        .then(function () {
+          status.className = 'capture-status';
+          status.style.color = 'var(--ok)';
+          status.textContent = '已进收件箱';
+          input.value = '';
+          setTimeout(function () {
+            status.textContent = '';
+          }, 2600);
+        })
+        .catch(function (err) {
+          status.className = 'capture-status';
+          status.style.color = 'var(--danger)';
+          status.textContent = '保存失败：' + ((err && err.message) || '扩展未响应');
+        });
+    }
+
+    submit.addEventListener('click', send);
+    input.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        send();
+      }
+    });
+  }
+
+  /* ── 模块：常用网站 / 全部网站 ───────────────────────────── */
+
+  function livePins() {
     var byId = {};
-    sites.forEach(function (site) {
+    asArray(state.sites).forEach(function (site) {
       byId[site.id] = site;
     });
-    // Drop ids whose site no longer exists: the workbench is the source of truth for sites.
     var live = pins.filter(function (id) {
       return Boolean(byId[id]);
     });
-    if (live.length !== pins.length) {
+    // 只有**确实读到了网站数据**才裁剪失效的 id。
+    // 数据还没加载完（v3 库读得慢、或这一页先于工作台打开）时站点是空的，
+    // 这时按「找不到就删」会把用户收藏的常用网站全清掉。
+    if (state.sites.length && live.length !== pins.length) {
       pins = live.slice();
       savePins();
     }
-    if (!live.length) {
-      host.appendChild(el('div', 'empty', '还没有常用网站。在下面「全部网站」里点 ☆ 就会出现在这里。'));
-      return;
-    }
-    live.forEach(function (id) {
-      host.appendChild(siteCard(byId[id]));
+    return live.map(function (id) {
+      return byId[id];
     });
   }
 
-  function renderAllSites() {
-    var host = document.getElementById('all-sites');
-    host.textContent = '';
+  function renderPinnedBody(mod, body) {
+    var sites = livePins();
+    if (!sites.length) {
+      body.appendChild(el('div', 'empty', '还没有常用网站。在下面「全部网站」里点 ☆ 就会出现在这里。'));
+      return;
+    }
+    var grid = el('div', 'site-cards');
+    sites.forEach(function (site) {
+      grid.appendChild(siteCard(site));
+    });
+    body.appendChild(grid);
+  }
+
+  function renderSitesBody(mod, body) {
     var sites = asArray(state.sites);
     if (!sites.length) {
-      host.appendChild(el('div', 'empty', '还没有网站。进工作台「快捷导航」添加，或先把浏览器书签导进去。'));
+      body.appendChild(el('div', 'empty', '还没有网站。进工作台「快捷导航」添加，或先把浏览器书签导进去。'));
+      body.appendChild(moreLink('去添网站 →', '#/navigation'));
       return;
     }
     var groups = groupByBucket(sites);
+    var mode = (mod.source && mod.source.mode) || 'all';
+    var activeBucket = mode === 'bucket' ? mod.source.value : '全部';
 
-    // 分类 = 全部 + 每个非空分组（带计数）。桌面是左栏，窄屏折成横向条。
-    var tabDefs = [{ key: '全部', count: sites.length }].concat(
+    // 分类筛选做成模块顶部的一排小 chip：点一下就是「换个数据来源」。
+    var chips = el('div', 'bucket-chips');
+    var defs = [{ key: '全部', count: sites.length }].concat(
       BUCKETS.filter(function (bucket) {
         return groups[bucket].length > 0;
       }).map(function (bucket) {
         return { key: bucket, count: groups[bucket].length };
       })
     );
-
-    // A site can move out of the selected bucket; fall back to 全部 instead of
-    // rendering an empty panel with no selected tab.
-    var activeIndex = 0;
-    tabDefs.forEach(function (def, index) {
-      if (def.key === activeBucket) activeIndex = index;
-    });
-    activeBucket = tabDefs[activeIndex].key;
-
-    var browser = el('div', 'site-browser');
-
-    var categories = el('aside', 'site-categories');
-    categories.setAttribute('aria-label', '网站分类');
-    var head = el('div', 'site-categories-head');
-    head.appendChild(el('span', null, '分类'));
-    head.appendChild(el('span', 'site-categories-count', String(tabDefs.length - 1) + ' 组'));
-    categories.appendChild(head);
-
-    var tabs = el('div', 'site-tabs');
-    tabs.setAttribute('role', 'tablist');
-    tabs.setAttribute('aria-orientation', 'vertical');
-    tabDefs.forEach(function (def, index) {
-      var tab = el('button', 'tab');
-      tab.type = 'button';
-      tab.id = 'site-bucket-tab-' + index;
-      tab.setAttribute('role', 'tab');
-      tab.setAttribute('aria-selected', activeBucket === def.key ? 'true' : 'false');
-      tab.setAttribute('aria-controls', 'site-bucket-panel');
-      tab.setAttribute('data-bucket', def.key);
-      tab.appendChild(el('span', 'tab-label', def.key));
-      tab.appendChild(el('span', 'tab-count', String(def.count)));
-      tab.addEventListener('click', function () {
-        activeBucket = def.key;
-        renderAllSites();
-        var current = document.querySelector('#all-sites .tab[aria-selected="true"]');
-        if (current) current.focus();
+    defs.forEach(function (def) {
+      var chip = el('button', 'bucket-chip' + (def.key === activeBucket ? ' is-active' : ''), def.key);
+      chip.type = 'button';
+      chip.setAttribute('data-bucket', def.key);
+      chip.appendChild(el('span', 'bucket-chip-count', String(def.count)));
+      chip.addEventListener('click', function () {
+        mod.source = def.key === '全部' ? { mode: 'all' } : { mode: 'bucket', value: def.key };
+        if (dashboard) dashboard.render();
+        dashboard.save();
       });
-      tabs.appendChild(tab);
+      chips.appendChild(chip);
     });
-    categories.appendChild(tabs);
-    browser.appendChild(categories);
+    body.appendChild(chips);
 
-    var panel = el('div', 'site-panel');
-    panel.id = 'site-bucket-panel';
-    panel.setAttribute('role', 'tabpanel');
-    panel.setAttribute('aria-labelledby', 'site-bucket-tab-' + activeIndex);
-
-    var list = activeBucket === '全部' ? sites : groups[activeBucket] || [];
-    if (!list.length) {
-      panel.appendChild(el('div', 'empty', '这个分类下还没有网站。'));
-    } else {
-      var grid = el('div', 'chips');
-      list.forEach(function (site) {
-        var pinned = pins.indexOf(site.id) >= 0;
-        var chip = el('span', 'chip' + (pinned ? ' pinned' : ''));
-        // 原始分类名保留在 title 里，方便核对归并到了哪一组。
-        chip.title = (site.category ? site.category + ' · 归入「' + bucketOf(site) + '」' : '未分类');
-        chip.appendChild(tileIcon(site));
-        var link = el('a', null, site.title || hostOf(site.url));
-        link.href = site.url;
-        link.target = '_blank';
-        link.rel = 'noreferrer';
-        chip.appendChild(link);
-        chip.appendChild(pinButton(site));
-        grid.appendChild(chip);
+    var wrap = el('div', 'site-groups');
+    defs
+      .filter(function (def) {
+        return def.key !== '全部' && (activeBucket === '全部' || def.key === activeBucket);
+      })
+      .forEach(function (def) {
+        var list = groups[def.key];
+        if (!list.length) return;
+        var sub = el('div', 'subcard');
+        sub.setAttribute('data-bucket-card', def.key);
+        var head = el('div', 'subcard-head');
+        head.appendChild(el('span', 'subcard-title', def.key));
+        head.appendChild(el('span', 'subcard-count', String(list.length)));
+        sub.appendChild(head);
+        var grid = el('div', 'site-cards');
+        list.forEach(function (site) {
+          grid.appendChild(siteCard(site));
+        });
+        sub.appendChild(grid);
+        wrap.appendChild(sub);
       });
-      panel.appendChild(grid);
-    }
-    browser.appendChild(panel);
-    host.appendChild(browser);
+    body.appendChild(wrap);
+    body.appendChild(moreLink('管理网站 →', '#/navigation'));
   }
 
-  function renderReminders() {
-    var host = document.getElementById('reminders-list');
-    host.textContent = '';
+  /* ── 模块：签到网站 ─────────────────────────────────────── */
+
+  function renderCheckInsBody(mod, body, moduleEl) {
+    var tasks = asArray(state.checkIns).slice(0, 24);
+    if (!tasks.length) {
+      // 没有配置任何签到站点时整块隐藏，不占地方（和管理页的语义一致）。
+      if (moduleEl) moduleEl.hidden = true;
+      return;
+    }
+    var strip = el('div', 'checkin-strip');
+    strip.id = 'checkins-items';
+    var items = el('div', 'strip-items');
+    tasks.forEach(function (task) {
+      var chip = el('button', 'chip');
+      chip.type = 'button';
+      chip.title = '打开 ' + (task.name || task.url || '签到站点') + ' 的签到页';
+      chip.textContent = task.name || '未命名站点';
+      chip.addEventListener('click', function () {
+        if (task.url) window.open(task.url, '_blank', 'noopener,noreferrer');
+      });
+      items.appendChild(chip);
+    });
+    strip.appendChild(items);
+    var link = el('a', 'strip-link', '管理 →');
+    link.href = workspaceUrl('#/tools/checkins');
+    strip.appendChild(link);
+    body.appendChild(strip);
+  }
+
+  /* ── 模块：提醒 ─────────────────────────────────────────── */
+
+  function renderRemindersBody(mod, body) {
+    var category = mod.source && mod.source.mode === 'category' ? mod.source.value : '';
     var reminders = asArray(state.reminders)
       .filter(function (item) {
         return !item.completed;
+      })
+      .filter(function (item) {
+        return !category || String(item.category || '') === category;
       })
       .map(function (item) {
         return { item: item, days: daysUntil(item.targetDate) };
@@ -478,32 +731,38 @@
       .sort(function (a, b) {
         return a.days - b.days;
       })
-      .slice(0, 10);
+      .slice(0, 30);
+
+    var list = el('div', 'list');
     if (!reminders.length) {
-      host.appendChild(el('div', 'empty', '没有待办提醒。'));
-      return;
-    }
-    reminders.forEach(function (entry) {
-      var row = el('button', 'list-item');
-      row.type = 'button';
-      var main = el('span', 'list-main');
-      main.appendChild(el('span', 'list-title', entry.item.title || '未命名提醒'));
-      main.appendChild(el('span', 'list-sub', entry.item.category || ''));
-      row.appendChild(main);
-      var days = entry.days;
-      row.appendChild(
-        el(
-          'span',
-          'badge ' + (days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok'),
-          days < 0 ? '过期 ' + Math.abs(days) + ' 天' : days === 0 ? '今天' : days + ' 天后'
-        )
-      );
-      row.addEventListener('click', function () {
-        window.location.href = workspaceUrl('#/reminders');
+      list.appendChild(el('div', 'empty', category ? '「' + category + '」下没有待办。' : '没有待办提醒。'));
+    } else {
+      reminders.forEach(function (entry) {
+        var row = el('button', 'list-item');
+        row.type = 'button';
+        var main = el('span', 'list-main');
+        main.appendChild(el('span', 'list-title', entry.item.title || '未命名提醒'));
+        main.appendChild(el('span', 'list-sub', entry.item.category || ''));
+        row.appendChild(main);
+        var days = entry.days;
+        row.appendChild(
+          el(
+            'span',
+            'badge ' + (days < 0 ? 'overdue' : days <= 7 ? 'soon' : 'ok'),
+            days < 0 ? '过期 ' + Math.abs(days) + ' 天' : days === 0 ? '今天' : days + ' 天后'
+          )
+        );
+        row.addEventListener('click', function () {
+          goWorkspace('#/reminders');
+        });
+        list.appendChild(row);
       });
-      host.appendChild(row);
-    });
+    }
+    body.appendChild(list);
+    body.appendChild(moreLink('全部提醒 →', '#/reminders'));
   }
+
+  /* ── 模块：网页批注 ─────────────────────────────────────── */
 
   /** 划线颜色 → 色点（与侧边栏 COLOR_MAP 保持一致）。 */
   var HL_COLORS = {
@@ -519,83 +778,210 @@
     return value.length > max ? value.slice(0, max - 1) + '…' : value;
   }
 
-  /**
-   * 网页批注：右栏卡片，最近的划词在前。
-   * 点击进工作台该批注的条目页（原文 + 批注一起看），不直接跳原网页——
-   * 原网页入口在条目页里有，这里更要紧的是"我存了什么"。
-   */
-  function renderAnnotations() {
-    var host = document.getElementById('annotations-list');
-    if (!host) return;
-    host.textContent = '';
+  function annotationDomains() {
+    var seen = {};
+    var out = [];
+    asArray(state.annotations).forEach(function (item) {
+      var host = hostOf(item.pageUrl).replace(/^www\./, '');
+      if (!host || seen[host]) return;
+      seen[host] = true;
+      out.push(host);
+    });
+    return out.sort();
+  }
+
+  function renderAnnotationsBody(mod, body) {
+    var domain = mod.source && mod.source.mode === 'domain' ? mod.source.value : '';
     var rows = asArray(state.annotations)
       .filter(function (item) {
         return item && item.isDeleted !== true;
+      })
+      .filter(function (item) {
+        return !domain || hostOf(item.pageUrl).replace(/^www\./, '') === domain;
       })
       .slice()
       .sort(function (a, b) {
         return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
       })
-      .slice(0, 8);
+      .slice(0, 30);
+
+    var list = el('div', 'list');
     if (!rows.length) {
-      host.appendChild(el('div', 'empty', '还没有网页批注。在网页里划词保存后，这里就会出现。'));
-      return;
-    }
-    rows.forEach(function (item) {
-      var row = el('button', 'list-item');
-      row.type = 'button';
-      row.setAttribute('data-annotation-id', item.id);
-      var title = snippetOf(item.pageTitle, 40) || snippetOf(item.text, 40) || '未命名批注';
-      var subParts = [snippetOf(item.text, 60), snippetOf(item.note, 60)].filter(Boolean);
-      var when = relTime(item.updatedAt || item.createdAt);
-      if (when) subParts.push(when);
+      list.appendChild(el('div', 'empty', '还没有网页批注。在网页里划词保存后，这里就会出现。'));
+    } else {
+      rows.forEach(function (item) {
+        var row = el('button', 'list-item');
+        row.type = 'button';
+        row.setAttribute('data-annotation-id', item.id);
+        var title = snippetOf(item.pageTitle, 40) || snippetOf(item.text, 40) || '未命名批注';
+        var subParts = [snippetOf(item.text, 60), snippetOf(item.note, 60)].filter(Boolean);
+        var when = relTime(item.updatedAt || item.createdAt);
+        if (when) subParts.push(when);
 
-      var dotWrap = el('span', 'list-dot');
-      var dot = el('span', 'hl-dot');
-      dot.style.backgroundColor = HL_COLORS[item.color] || HL_COLORS.yellow;
-      dotWrap.appendChild(dot);
-      row.appendChild(dotWrap);
+        var dotWrap = el('span', 'list-dot');
+        var dot = el('span', 'hl-dot');
+        dot.style.backgroundColor = HL_COLORS[item.color] || HL_COLORS.yellow;
+        dotWrap.appendChild(dot);
+        row.appendChild(dotWrap);
 
-      var main = el('span', 'list-main');
-      main.appendChild(el('span', 'list-title', title));
-      var sub = subParts.join(' · ');
-      if (sub) main.appendChild(el('span', 'list-sub', sub));
-      row.appendChild(main);
+        var main = el('span', 'list-main');
+        main.appendChild(el('span', 'list-title', title));
+        var sub = subParts.join(' · ');
+        if (sub) main.appendChild(el('span', 'list-sub', sub));
+        row.appendChild(main);
 
-      row.addEventListener('click', function () {
-        window.location.href = workspaceUrl('#/library/item/webpage:' + encodeURIComponent(item.id));
+        row.addEventListener('click', function () {
+          goWorkspace('#/library/item/webpage:' + encodeURIComponent(item.id));
+        });
+        list.appendChild(row);
       });
-      host.appendChild(row);
+    }
+    body.appendChild(list);
+    body.appendChild(moreLink('全部批注 →', '#/library?type=webpage'));
+  }
+
+  /* ── 模块类型表：谁能在「＋ 添加模块」里出现 ─────────────── */
+
+  function folderOptions() {
+    return noteFolders().map(function (name) {
+      return { value: name, label: name };
     });
   }
 
-  /**
-   * 签到 = 中间列的一条横排站点清单（右栏的签到卡片已删）。
-   *
-   * 每个 chip 直接打开该站的签到页——"签到网站清单"的语义就是打开由人来签；
-   * 没有配置任何站点时整条隐藏，不占地方。
-   */
-  function renderCheckIns() {
-    var strip = document.getElementById('checkins-strip');
-    var host = document.getElementById('checkins-items');
-    if (!strip || !host) return;
-    host.textContent = '';
-    var tasks = asArray(state.checkIns).slice(0, 12);
-    if (!tasks.length) {
-      strip.hidden = true;
-      return;
-    }
-    strip.hidden = false;
-    tasks.forEach(function (task) {
-      var chip = el('button', 'chip');
-      chip.type = 'button';
-      chip.title = '打开 ' + (task.name || task.url || '签到站点') + ' 的签到页';
-      chip.textContent = task.name || '未命名站点';
-      chip.addEventListener('click', function () {
-        if (task.url) window.open(task.url, '_blank', 'noopener,noreferrer');
-      });
-      host.appendChild(chip);
+  function categoryOptions() {
+    var seen = {};
+    var out = [];
+    asArray(state.reminders).forEach(function (item) {
+      var name = String(item.category || '').trim();
+      if (!name || seen[name]) return;
+      seen[name] = true;
+      out.push({ value: name, label: name });
     });
+    return out.sort(function (a, b) {
+      return a.label.localeCompare(b.label);
+    });
+  }
+
+  function MODULE_TYPES() {
+    return {
+      notes: {
+        label: '笔记',
+        icon: '📝',
+        desc: '最近编辑的笔记，可按文件夹筛选',
+        legacyId: 'notes-list',
+        sources: function () {
+          return [
+            { mode: 'recent', label: '最近更新' },
+            { mode: 'folder', label: '指定文件夹', needsValue: true, valueLabel: '文件夹', options: folderOptions() }
+          ];
+        }
+      },
+      quicknote: {
+        label: '文本框',
+        icon: '✍️',
+        desc: '随手写，直接存成一条笔记',
+        defaultHeight: 232,
+        defaultSource: { mode: 'folder', value: '' },
+        sources: function () {
+          return [
+            { mode: 'folder', label: '存到根目录', value: '' },
+            { mode: 'folder', label: '存到指定文件夹', needsValue: true, valueLabel: '文件夹', options: folderOptions() }
+          ];
+        }
+      },
+      capture: {
+        label: '记一笔',
+        icon: '📥',
+        desc: '先进收件箱，回工作台再整理',
+        sources: []
+      },
+      pinned: {
+        label: '常用网站',
+        icon: '⭐',
+        desc: '点过 ☆ 的网站',
+        legacyId: 'pinned-sites',
+        sources: []
+      },
+      sites: {
+        label: '全部网站',
+        icon: '🌐',
+        desc: '按分类成组，卡片套卡片',
+        legacyId: 'all-sites',
+        defaultHeight: null,
+        defaultSource: { mode: 'all' },
+        sources: function () {
+          return [{ mode: 'all', label: '全部分类' }].concat(
+            BUCKETS.map(function (bucket) {
+              return { mode: 'bucket', label: '只看「' + bucket + '」', value: bucket };
+            })
+          );
+        }
+      },
+      checkins: {
+        label: '签到网站',
+        icon: '✅',
+        desc: '每天要打开的签到页，一点就开',
+        legacyId: 'checkins-strip',
+        sources: []
+      },
+      reminders: {
+        label: '提醒',
+        icon: '🔔',
+        desc: '按到期时间排的待办',
+        legacyId: 'reminders-list',
+        sources: function () {
+          return [
+            { mode: 'all', label: '全部提醒' },
+            { mode: 'category', label: '指定分类', needsValue: true, valueLabel: '分类', options: categoryOptions() }
+          ];
+        }
+      },
+      annotations: {
+        label: '网页批注',
+        icon: '🖍️',
+        desc: '最近划的词和我的批注',
+        legacyId: 'annotations-list',
+        sources: function () {
+          return [
+            { mode: 'all', label: '全部批注' },
+            { mode: 'domain', label: '指定网站', needsValue: true, valueLabel: '网站', options: annotationDomains().map(function (host) {
+              return { value: host, label: host };
+            }) }
+          ];
+        }
+      }
+    };
+  }
+
+  function renderBody(mod, body, moduleEl) {
+    switch (mod.type) {
+      case 'notes':
+        renderNotesBody(mod, body);
+        break;
+      case 'quicknote':
+        renderQuickNoteBody(mod, body, moduleEl);
+        break;
+      case 'capture':
+        renderCaptureBody(mod, body);
+        break;
+      case 'pinned':
+        renderPinnedBody(mod, body);
+        break;
+      case 'sites':
+        renderSitesBody(mod, body);
+        break;
+      case 'checkins':
+        renderCheckInsBody(mod, body, moduleEl);
+        break;
+      case 'reminders':
+        renderRemindersBody(mod, body);
+        break;
+      case 'annotations':
+        renderAnnotationsBody(mod, body);
+        break;
+      default:
+        body.appendChild(el('div', 'empty', '未知模块：' + mod.type));
+    }
   }
 
   /* ── 搜索：跨所有集合 ───────────────────────────────────── */
@@ -607,7 +993,7 @@
     };
     asArray(state.notes).forEach(function (note) {
       push('笔记', note.title, [note.folder, note.content].filter(Boolean).join(' · '), function () {
-        window.location.href = workspaceUrl('#/library/item/note:' + note.id);
+        goWorkspace('#/library/item/note:' + note.id);
       });
     });
     asArray(state.sites).forEach(function (site) {
@@ -622,34 +1008,34 @@
     });
     asArray(state.reminders).forEach(function (item) {
       push('提醒', item.title, item.category, function () {
-        window.location.href = workspaceUrl('#/reminders');
+        goWorkspace('#/reminders');
       });
     });
     asArray(state.servers).forEach(function (item) {
       push('服务器', item.name, item.publicIp || item.host, function () {
-        window.location.href = workspaceUrl('#/resources/servers');
+        goWorkspace('#/resources/servers');
       });
     });
     asArray(state.domains).forEach(function (item) {
       push('域名', item.name, item.registrar, function () {
-        window.location.href = workspaceUrl('#/resources/assets');
+        goWorkspace('#/resources/assets');
       });
     });
     // Secrets: title only. The new tab must never surface a credential value.
     asArray(state.secrets).forEach(function (item) {
       push('凭证', item.title || item.name, '按标题匹配（内容不显示）', function () {
-        window.location.href = workspaceUrl('#/resources/vault');
+        goWorkspace('#/resources/vault');
       });
     });
     asArray(state.projects).forEach(function (item) {
       push('项目', item.name, item.description, function () {
-        window.location.href = workspaceUrl('#/projects');
+        goWorkspace('#/projects');
       });
     });
     asArray(state.inbox).forEach(function (item) {
       if (item.status && item.status !== 'inbox') return;
       push('收件箱', item.content, item.url, function () {
-        window.location.href = workspaceUrl('#/inbox');
+        goWorkspace('#/inbox');
       });
     });
     return items;
@@ -687,66 +1073,12 @@
     });
   }
 
-  /* ── 记一笔 ─────────────────────────────────────────────── */
-
-  function submitCapture() {
-    var input = document.getElementById('capture-input');
-    var status = document.getElementById('capture-status');
-    if (!input || !status) return;
-    var text = (input.value || '').trim();
-    if (!text) return;
-    status.className = 'capture-status subtle';
-    status.style.color = '';
-    status.textContent = '保存中…';
-    var isUrl = /^https?:\/\//i.test(text);
-    var payload = {
-      text: text,
-      operationId: 'newtab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
-    };
-    if (isUrl) payload.url = text;
-    window.SelfHubClient.send('CAPTURE_ENTRY', payload)
-      .then(function () {
-        status.className = 'capture-status';
-        status.style.color = 'var(--ok)';
-        status.textContent = '已进收件箱';
-        input.value = '';
-        setTimeout(function () {
-          status.textContent = '';
-        }, 2600);
-      })
-      .catch(function (err) {
-        status.className = 'capture-status';
-        status.style.color = 'var(--danger)';
-        status.textContent = '保存失败：' + ((err && err.message) || '扩展未响应');
-      });
-  }
-
   /* ── 启动 ───────────────────────────────────────────────── */
 
   function wireStaticLinks() {
-    var map = {
-      'open-workspace': '#/home',
-      'open-notes': '#/library?view=notes',
-      'open-annotations': '#/library?type=webpage',
-      'open-navigation': '#/navigation',
-      'open-reminders': '#/reminders',
-      'open-checkins': '#/tools/checkins'
-    };
-    Object.keys(map).forEach(function (id) {
-      var node = document.getElementById(id);
-      if (node) node.setAttribute('href', workspaceUrl(map[id]));
-    });
-    var input = document.getElementById('capture-input');
-    var submit = document.getElementById('capture-submit');
-    if (submit) submit.addEventListener('click', submitCapture);
-    if (input) {
-      input.addEventListener('keydown', function (event) {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          submitCapture();
-        }
-      });
-    }
+    var workspace = document.getElementById('open-workspace');
+    if (workspace) workspace.setAttribute('href', workspaceUrl('#/home'));
+
     var search = document.getElementById('search-input');
     if (search) {
       search.addEventListener('input', function () {
@@ -797,8 +1129,44 @@
     });
   }
 
+  function readPendingNotes() {
+    return new Promise(function (resolve) {
+      try {
+        chrome.storage.local.get([PENDING_NOTES_KEY], function (res) {
+          resolve(Array.isArray(res && res[PENDING_NOTES_KEY]) ? res[PENDING_NOTES_KEY] : []);
+        });
+      } catch (err) {
+        resolve([]);
+      }
+    });
+  }
+
+  /** 一次性提示条：讲清楚这一版新增的拖拽交互，点「知道了」之后不再出现。 */
+  function wireHint() {
+    var hint = document.getElementById('dash-hint');
+    var close = document.getElementById('dash-hint-close');
+    if (!hint || !close) return;
+    try {
+      chrome.storage.local.get([HINT_KEY], function (res) {
+        if (res && res[HINT_KEY]) return;
+        hint.hidden = false;
+      });
+    } catch (err) {
+      hint.hidden = false;
+    }
+    close.addEventListener('click', function () {
+      hint.hidden = true;
+      try {
+        chrome.storage.local.set({ selfhub_newtab_hint_seen: true });
+      } catch (err) {
+        /* it will come back next time; harmless */
+      }
+    });
+  }
+
   function boot() {
     wireStaticLinks();
+    wireHint();
     var v2 = readV2();
     var mode = 'local';
     try {
@@ -808,13 +1176,12 @@
     }
     var start = function (idb) {
       state = buildState(v2, idb);
-      resolveTheme(v2).then(function (mode) {
-        applyTheme(mode);
+      resolveTheme(v2).then(function (theme) {
+        applyTheme(theme);
         var toggle = document.getElementById('theme-toggle');
         if (toggle) {
           toggle.addEventListener('click', function () {
-            var next =
-              document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
             applyTheme(next);
             try {
               chrome.storage.local.set({ selfhub_newtab_theme: next });
@@ -824,19 +1191,30 @@
           });
         }
       });
-      loadPins().then(function (loaded) {
-        pins = loaded;
+
+      Promise.all([loadPins(), readPendingNotes(), window.SelfHubDashboard.loadLayout()]).then(function (loaded) {
+        pins = loaded[0];
+        pendingNotes = loaded[1];
         var saveState = document.getElementById('save-state');
         if (saveState) {
           var count = state.notes.length + state.sites.length + state.reminders.length + state.annotations.length;
           saveState.textContent = count ? '本机 · ' + (mode === 'v3' ? 'v3 库' : 'v2 负载') : '还没有数据 · 进工作台开始';
         }
-        renderNotes();
-        renderPinned();
-        renderAllSites();
-        renderReminders();
-        renderAnnotations();
-        renderCheckIns();
+
+        dashboard = window.SelfHubDashboard.mount({
+          root: document.getElementById('dash'),
+          layout: loaded[2],
+          types: MODULE_TYPES(),
+          renderBody: renderBody
+        });
+
+        var reset = document.getElementById('reset-layout');
+        if (reset) {
+          reset.addEventListener('click', function () {
+            if (!window.confirm('把模块布局恢复成默认的三栏？数据不会动。')) return;
+            dashboard.reset();
+          });
+        }
       });
     };
     if (mode === 'v3' || !v2) {

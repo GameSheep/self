@@ -349,6 +349,70 @@ export async function acknowledgeQuickNoteImported(): Promise<void> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Notes typed on the new tab                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A note written in the new tab's 「文本框」 module.
+ *
+ * The new tab cannot write the library itself: the app is the only writer of the
+ * v2 payload / v3 library, and a second writer is exactly what produced lost
+ * updates before. So the new tab appends to a queue in `chrome.storage.local`
+ * (idempotent by id) and the app drains it here.
+ */
+export interface PendingNote {
+  id: string;
+  title: string;
+  content: string;
+  folder?: string;
+  updatedAt: number;
+}
+
+const PENDING_NOTES_KEY = 'selfhub_pending_notes';
+
+function isPendingNote(value: unknown): value is PendingNote {
+  const row = value as PendingNote | null;
+  return Boolean(row && typeof row.id === 'string' && row.id && typeof row.content === 'string');
+}
+
+export async function readPendingNotes(): Promise<PendingNote[]> {
+  const api = chromeSyncApi();
+  if (!api?.storage?.local?.get) return [];
+  const get = api.storage.local.get.bind(api.storage.local);
+  return new Promise<PendingNote[]>((resolve) => {
+    try {
+      get([PENDING_NOTES_KEY], (res) => {
+        const queue = (res || {})[PENDING_NOTES_KEY];
+        resolve(Array.isArray(queue) ? queue.filter(isPendingNote) : []);
+      });
+    } catch {
+      resolve([]);
+    }
+  });
+}
+
+/**
+ * Drop the notes that made it into the library.
+ *
+ * Re-reads the queue instead of writing an empty array: a note typed while the
+ * import was running must not be thrown away with the ones already imported.
+ */
+export async function acknowledgePendingNotes(ids: string[]): Promise<void> {
+  const api = chromeSyncApi();
+  if (!api?.storage?.local?.set) return;
+  if (!ids.length) return;
+  const done = new Set(ids);
+  const queue = await readPendingNotes();
+  const remaining = queue.filter((note) => !done.has(note.id));
+  if (remaining.length === queue.length) return;
+  try {
+    api.storage.local.set({ [PENDING_NOTES_KEY]: remaining });
+  } catch {
+    /* the queue is retried on the next import; nothing is lost */
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Extension's own sync (SyncManager) — made visible to the app settings       */
 /* -------------------------------------------------------------------------- */
 

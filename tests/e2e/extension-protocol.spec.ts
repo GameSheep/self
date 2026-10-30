@@ -198,13 +198,13 @@ test.describe('新标签页：分类归并 + tab', () => {
     await page.reload();
 
     const tabs = await page
-      .locator('#all-sites .tab')
+      .locator('#all-sites .bucket-chip')
       .evaluateAll((els) => els.map((el) => el.getAttribute('data-bucket')));
     // 固定顺序 + 空分类不出现：「技术社区与编程学习」必须归到社区而不是开发。
     expect(tabs).toEqual(['全部', '开发', '运维', 'AI', '社区', '其他']);
 
-    await page.locator('#all-sites .tab[data-bucket="AI"]').click();
-    await expect(page.locator('#all-sites .chip')).toHaveCount(2);
+    await page.locator('#all-sites .bucket-chip[data-bucket="AI"]').click();
+    await expect(page.locator('#all-sites .site-card')).toHaveCount(2);
     await expect(page.locator('#all-sites')).toContainText('Claude');
     await expect(page.locator('#all-sites')).not.toContainText('阿里云');
     await page.close();

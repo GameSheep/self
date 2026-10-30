@@ -19,95 +19,37 @@
         </span>
       </div>
       <div class="top-actions">
+        <button class="ghost-btn" id="reset-layout" type="button" title="把模块布局恢复成默认三栏">重置布局</button>
         <button class="theme-toggle" id="theme-toggle" type="button" aria-label="切换深浅色">☀️</button>
         <a class="btn-primary" id="open-workspace" href="app/index.html#/home">进入工作台 →</a>
       </div>
     </header>
 
-    <main class="grid">
-      <!-- 左：笔记 -->
-      <section class="card" aria-label="笔记">
-        <div class="card-head">
-          <span class="card-title">📝 笔记</span>
-          <a class="card-link" id="open-notes" href="app/index.html#/library?view=notes">全部 →</a>
-        </div>
-        <div class="card-body tight">
-          <div class="list" id="notes-list"></div>
-        </div>
-      </section>
+    <!-- 搜索固定在最上面：它是这一页的主操作，不参与模块自定义。 -->
+    <div class="search-row">
+      <div class="search-box">
+        <span class="subtle">🔍</span>
+        <input
+          id="search-input"
+          type="search"
+          autocomplete="off"
+          placeholder="搜索所有内容：笔记、批注、网站、服务器、域名、凭证、项目、提醒…"
+          aria-label="搜索所有内容"
+        />
+      </div>
+      <div class="results" id="results" hidden></div>
+    </div>
 
-      <!-- 中：搜索 → 常用网站 → 全部网站按分类 -->
-      <section>
-        <div class="search-box">
-          <span class="subtle">🔍</span>
-          <input
-            id="search-input"
-            type="search"
-            autocomplete="off"
-            placeholder="搜索所有内容：笔记、批注、网站、服务器、域名、凭证、项目、提醒…"
-            aria-label="搜索所有内容"
-          />
-        </div>
-        <div class="results" id="results" hidden></div>
-
-        <div class="capture">
-          <input id="capture-input" type="text" placeholder="记一笔：先进收件箱，回工作台再整理" aria-label="快速记录" />
-          <button id="capture-submit" type="button">记录</button>
-        </div>
-        <div class="capture-status" id="capture-status"></div>
-
-        <!-- 签到：一条横排的站点清单，点一个直接打开签到页。 -->
-        <div class="checkin-strip" id="checkins-strip" hidden>
-          <span class="strip-label">✅ 今日签到</span>
-          <div class="strip-items" id="checkins-items"></div>
-          <a class="strip-link" id="open-checkins" href="app/index.html#/tools/checkins">管理 →</a>
-        </div>
-
-        <div class="card" style="margin-top: 10px">
-          <div class="card-head">
-            <span class="card-title">⭐ 常用网站</span>
-            <span class="card-link" id="pin-hint">点 ☆ 把网站放进常用</span>
-          </div>
-          <div class="card-body">
-            <div class="sites" id="pinned-sites"></div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-head">
-            <span class="card-title">🌐 全部网站</span>
-            <a class="card-link" id="open-navigation" href="app/index.html#/navigation">管理 →</a>
-          </div>
-          <div class="card-body" id="all-sites"></div>
-        </div>
-      </section>
-
-      <!-- 右：提醒 + 网页批注 -->
-      <section>
-        <div class="card" aria-label="提醒">
-          <div class="card-head">
-            <span class="card-title">🔔 提醒</span>
-            <a class="card-link" id="open-reminders" href="app/index.html#/reminders">全部 →</a>
-          </div>
-          <div class="card-body tight">
-            <div class="list" id="reminders-list"></div>
-          </div>
-        </div>
-
-        <div class="card" aria-label="网页批注" style="margin-top: 10px">
-          <div class="card-head">
-            <span class="card-title">🖍️ 网页批注</span>
-            <a class="card-link" id="open-annotations" href="app/index.html#/library?type=webpage">全部 →</a>
-          </div>
-          <div class="card-body tight">
-            <div class="list" id="annotations-list"></div>
-          </div>
-        </div>
-      </section>
-    </main>
+    <!-- 模块面板：每个卡片都能拖拽调大小、换数据来源、增删。 -->
+    <div class="dash-hint" id="dash-hint" hidden>
+      <span>拖动模块标题换位置 · 拖底边改高度 · 拖两栏之间的细线改列宽 · 点 ⋯ 换数据来源</span>
+      <button type="button" id="dash-hint-close">知道了</button>
+    </div>
+    <main class="dash" id="dash" aria-label="模块面板"></main>
   </div>
 
   <script src="client.js"></script>
+  <script src="newtab-dashboard.js"></script>
   <script src="newtab.js"></script>
 </body>
 </html>

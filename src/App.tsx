@@ -8,7 +8,7 @@ import { clearTrustedSession, restoreTrustedSession } from './lib/crypto';
 import { decryptText } from './lib/crypto';
 import { getMasterAuth } from './lib/storage';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { isExtensionContext, mirrorStateToExtension, readExtensionCaptures, acknowledgeQuickNoteImported, importExtensionAnnotations, type AnnotationSyncResult } from './lib/extensionBridge';
+import { isExtensionContext, mirrorStateToExtension, readExtensionCaptures, acknowledgeQuickNoteImported, importExtensionAnnotations, readPendingNotes, acknowledgePendingNotes, type AnnotationSyncResult } from './lib/extensionBridge';
 import { isFeatureEnabled } from './lib/features';
 import { fetchWucaiHighlights } from './lib/wucaiClient';
 import { Sidebar } from './components/Sidebar';
@@ -813,6 +813,67 @@ export function App() {
       if (quickNoteImported) await acknowledgeQuickNoteImported();
     })();
   }, [storageMode, v3Status]);
+
+  /**
+   * Notes typed in the new tab's 「文本框」 module.
+   *
+   * The new tab must not write the library itself (the app is its only writer),
+   * so it appends to a queue in `chrome.storage.local`. Draining it here keeps
+   * one writer, and `storage.onChanged` makes it live — the workbench is usually
+   * open in another tab while the user writes on the new tab.
+   */
+  const pendingNotesImportedRef = useRef(false);
+  const runPendingNoteImport = useCallback(async () => {
+    if (!isExtensionContext()) return;
+    if (storageMode === 'v3' && !v3ReadyRef.current) return;
+    const queued = await readPendingNotes();
+    if (!queued.length) return;
+    const current = stateRef.current;
+    const existing = new Set((current.notes ?? []).map((note) => note.id));
+    const fresh = queued
+      .filter((note) => !existing.has(note.id))
+      .map((note) => ({
+        id: note.id,
+        title: note.title || '新标签页笔记',
+        content: note.content,
+        folder: note.folder,
+        tags: [] as string[],
+        updatedAt: note.updatedAt || Date.now()
+      }));
+    if (fresh.length) {
+      const next: HubState = { ...current, notes: [...fresh, ...(current.notes ?? [])] };
+      stateRef.current = next;
+      setState(next);
+    }
+    await acknowledgePendingNotes(queued.map((note) => note.id));
+  }, [storageMode, v3Status]);
+
+  useEffect(() => {
+    if (!isExtensionContext()) return;
+    if (storageMode === 'v3' && !v3ReadyRef.current) return;
+    if (!pendingNotesImportedRef.current) {
+      pendingNotesImportedRef.current = true;
+      void runPendingNoteImport();
+    }
+    const chromeApi = (
+      globalThis as unknown as {
+        chrome?: {
+          storage?: {
+            onChanged?: {
+              addListener?: (cb: (changes: Record<string, unknown>, area: string) => void) => void;
+              removeListener?: (cb: (changes: Record<string, unknown>, area: string) => void) => void;
+            };
+          };
+        };
+      }
+    ).chrome;
+    const onChanged = (changes: Record<string, unknown>, area: string) => {
+      if (area !== 'local' || !changes?.selfhub_pending_notes) return;
+      void runPendingNoteImport();
+    };
+    chromeApi?.storage?.onChanged?.addListener?.(onChanged);
+    return () => chromeApi?.storage?.onChanged?.removeListener?.(onChanged);
+  }, [storageMode, v3Status, runPendingNoteImport]);
 
   /**
    * Import highlights the extension's content script saved (划词 → background →
