@@ -137,5 +137,19 @@ test.describe('收件箱密度：一行就是一行', () => {
       () => document.documentElement.scrollWidth - window.innerWidth
     );
     expect(overflow).toBeLessThanOrEqual(0);
+
+    // 批量按钮带 `whitespace-nowrap`：容器不换行的话，**最后一个**会被卡片裁掉，
+    // 而页面级的 scrollWidth 断言看不出来（卡片自己 clip 了）。所以量卡片里所有
+    // 按钮的最大右边界，而不是只看第一个。
+    const overhang = await page.getByTestId('inbox-batch-note').evaluate((el) => {
+      const card = el.closest('.rounded-2xl') as HTMLElement | null;
+      if (!card) return Number.POSITIVE_INFINITY;
+      const limit = card.getBoundingClientRect().right;
+      return Array.from(card.querySelectorAll('button')).reduce(
+        (max, btn) => Math.max(max, btn.getBoundingClientRect().right - limit),
+        Number.NEGATIVE_INFINITY
+      );
+    });
+    expect(overhang, `有按钮超出卡片右边缘 ${overhang}px`).toBeLessThanOrEqual(1);
   });
 });

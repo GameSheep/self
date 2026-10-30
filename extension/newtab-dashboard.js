@@ -1035,9 +1035,56 @@
       return moduleEl;
     }
 
+    /**
+     * 重绘会重建整个 DOM，输入框里没提交的文字不能跟着没。
+     *
+     * `render()` 不只在自己拖完布局时跑：工作台恢复备份会把布局写回 storage、
+     * 这一页接住后 `adopt()` 整页重画；点分类 chip 换来源、增删模块也一样。
+     * 用户正在写的速记被这类重画清掉，看起来就是"我明明打了字，它自己没了"。
+     * 按 id 把值（和光标位置）存下来，画完填回去。
+     */
+    function snapshotDrafts() {
+      var drafts = [];
+      Array.prototype.forEach.call(root.querySelectorAll('input[id], textarea[id]'), function (field) {
+        if (!field.value) return;
+        var draft = {
+          id: field.id,
+          value: field.value,
+          start: null,
+          end: null,
+          focused: document.activeElement === field
+        };
+        try {
+          draft.start = field.selectionStart;
+          draft.end = field.selectionEnd;
+        } catch (err) {
+          /* number / email 之类的类型没有选区，忽略 */
+        }
+        drafts.push(draft);
+      });
+      return drafts;
+    }
+
+    function restoreDrafts(drafts) {
+      if (!drafts || !drafts.length) return;
+      drafts.forEach(function (draft) {
+        var field = document.getElementById(draft.id);
+        if (!field || !root.contains(field)) return;
+        field.value = draft.value;
+        if (!draft.focused || draft.start == null) return;
+        try {
+          field.focus();
+          field.setSelectionRange(draft.start, draft.end);
+        } catch (err) {
+          /* 同上 */
+        }
+      });
+    }
+
     function render() {
       if (drag) endDrag(false);
       closePop();
+      var drafts = snapshotDrafts();
       root.textContent = '';
       cols = [];
       var columnCount = layout.columns.length;
@@ -1088,11 +1135,15 @@
         root.appendChild(empty);
       }
 
+      // 画完再填回草稿：顺序不能反，反了填进的是马上要被替换掉的旧节点。
+      restoreDrafts(drafts);
       applyWidths();
     }
 
     function refreshBodies(onlyTypes) {
       var wanted = onlyTypes && onlyTypes.length ? onlyTypes : null;
+      // 和 render() 一样：局部重画也不能把没提交的输入清掉。
+      var drafts = snapshotDrafts();
       Array.prototype.forEach.call(root.querySelectorAll('.module'), function (moduleEl) {
         var mod = moduleById(moduleEl.getAttribute('data-module-id'));
         if (!mod) return;
@@ -1113,6 +1164,7 @@
           sourceEl.hidden = !sourceLabel;
         }
       });
+      restoreDrafts(drafts);
     }
 
     window.addEventListener('resize', function () {

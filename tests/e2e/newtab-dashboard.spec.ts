@@ -377,6 +377,18 @@ test.describe('模块面板：自定义与数据来源', () => {
     await page.close();
   });
 
+  test('重画面板不会清掉正在写的速记', async () => {
+    const page = await openNewTab();
+    const input = page.locator('[data-module-id="m-capture"] #capture-input');
+    const draft = `写了一半的速记-${Date.now()}`;
+    await input.fill(draft);
+
+    // 点分类 chip 会走 dashboard.render()，整页 DOM 重建 —— 这是用户会遇到的
+    // "我明明打了字，它自己没了"。工作台恢复备份后 adopt() 也是同一条路。
+    await page.locator('[data-module-id="m-sites"] .bucket-chip').first().click();
+    await expect(input).toHaveValue(draft);
+  });
+
   test('加一个文本框，写的内容直接变成一条笔记', async () => {
     const page = await openNewTab();
 

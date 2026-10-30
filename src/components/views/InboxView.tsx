@@ -257,8 +257,9 @@ export const InboxView: React.FC<InboxViewProps> = ({
           </p>
         </div>
 
-        {/* Batch Operations */}
-        <div className="flex items-center gap-2">
+        {/* Batch Operations — wraps: with `whitespace-nowrap` on the buttons a
+            narrow card would otherwise clip the last one. */}
+        <div className="flex flex-wrap items-center gap-2">
           {pendingCount > 0 && onConvertMany && (
             <>
               <button
@@ -678,7 +679,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
           <div className="w-full max-w-lg bg-sh-surface border border-sh-line rounded-2xl p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Edit3 className="w-4 h-4 text-indigo-400" />
                 <h3 className="text-sm font-semibold text-zinc-100">编辑碎片灵感</h3>
               </div>
