@@ -146,19 +146,36 @@ test.describe('模块面板：可拖拽大小', () => {
 });
 
 test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () => {
-  /** 用合成 DragEvent 精确控制"拖到一半"的状态，鼠标 API 没法停在拖动中间断言。 */
+  /**
+   * 拖拽排序走 pointer events，所以这里合成 `PointerEvent`。
+   * 用合成事件而不是鼠标 API，是因为要能停在"拖到一半"的状态上断言。
+   */
   async function startDrag(page: Page, moduleId: string) {
     await page.evaluate((id) => {
       const head = document.querySelector(`[data-module-id="${id}"] .module-head`) as HTMLElement;
       const rect = head.getBoundingClientRect();
-      const dt = new DataTransfer();
-      (window as unknown as { __dragDt: DataTransfer }).__dragDt = dt;
+      const base = {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true,
+        button: 0,
+        buttons: 1
+      };
       head.dispatchEvent(
-        new DragEvent('dragstart', {
-          bubbles: true,
-          dataTransfer: dt,
+        new PointerEvent('pointerdown', {
+          ...base,
           clientX: rect.left + 20,
           clientY: rect.top + 10
+        })
+      );
+      // 越过 3px 阈值，正式进入拖动。
+      window.dispatchEvent(
+        new PointerEvent('pointermove', {
+          ...base,
+          clientX: rect.left + 26,
+          clientY: rect.top + 16
         })
       );
     }, moduleId);
@@ -167,15 +184,43 @@ test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () 
   async function hoverAt(page: Page, x: number, y: number) {
     await page.evaluate(
       ({ x: px, y: py }) => {
-        const dt = (window as unknown as { __dragDt: DataTransfer }).__dragDt;
-        document
-          .querySelector('#dash')!
-          .dispatchEvent(new DragEvent('dragover', { bubbles: true, dataTransfer: dt, clientX: px, clientY: py }));
+        window.dispatchEvent(
+          new PointerEvent('pointermove', {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true,
+            buttons: 1,
+            clientX: px,
+            clientY: py
+          })
+        );
       },
       { x, y }
     );
-    // dragover 被合并到 rAF 里，等一帧再断言。
+    // 插槽更新被合并到 rAF 里，等一帧再断言。
     await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+  }
+
+  async function releaseDrag(page: Page, x: number, y: number) {
+    await page.evaluate(
+      ({ x: px, y: py }) => {
+        window.dispatchEvent(
+          new PointerEvent('pointerup', {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true,
+            button: 0,
+            clientX: px,
+            clientY: py
+          })
+        );
+      },
+      { x, y }
+    );
   }
 
   test('拖动中出现幽灵卡片和虚线槽，松手前数据不动', async () => {
@@ -204,15 +249,7 @@ test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () 
     expect(gapHeight).toBeGreaterThan(40);
 
     // 松手：真卡片落到槽位，不需要整页重绘。
-    await page.evaluate(
-      ({ x, y }) => {
-        const dt = (window as unknown as { __dragDt: DataTransfer }).__dragDt;
-        document
-          .querySelector('#dash')!
-          .dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt, clientX: x, clientY: y }));
-      },
-      { x: capture.x + 60, y: capture.y + 8 }
-    );
+    await releaseDrag(page, capture.x + 60, capture.y + 8);
     await expect(page.locator('.dash-col[data-col="1"] [data-module-id="m-notes"]')).toHaveCount(1);
     await expect(page.locator('.drag-ghost')).toHaveCount(0);
     await expect(page.locator('.drop-gap')).toHaveCount(0);
@@ -223,7 +260,7 @@ test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () 
     await page.close();
   });
 
-  test('拖到一半放弃（dragend 没有 drop）布局回到原位', async () => {
+  test('拖到一半放弃（pointercancel）布局回到原位', async () => {
     const page = await openNewTab();
     const capture = (await page.locator('[data-module-id="m-capture"]').boundingBox())!;
 
@@ -232,10 +269,15 @@ test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () 
     await expect(page.locator('.drop-gap')).toHaveCount(1);
 
     await page.evaluate(() => {
-      const dt = (window as unknown as { __dragDt: DataTransfer }).__dragDt;
-      document
-        .querySelector('[data-module-id="m-notes"] .module-head')!
-        .dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+      window.dispatchEvent(
+        new PointerEvent('pointercancel', {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 1,
+          pointerType: 'mouse',
+          isPrimary: true
+        })
+      );
     });
 
     await expect(page.locator('.drag-ghost')).toHaveCount(0);
@@ -249,8 +291,8 @@ test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () 
 
   /**
    * 用户报的 bug：拖着一路往下，想放到看不见的位置，滚动条不动。
-   * 原因是 HTML5 的 dragover 只在指针移动时触发，指针停在栏底部就没有事件了，
-   * 所以必须自己开 rAF 循环持续滚 —— 这里断言的正是"指针不动也会滚"。
+   * 指针停在栏底部不动时没有任何指针事件，所以必须自己开 rAF 循环持续滚
+   * —— 这里断言的正是"指针不动也会滚"。
    */
   test('拖到栏底部会自己往下滚，指针不动也照样滚', async () => {
     const page = await openNewTab();
@@ -281,15 +323,7 @@ test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () 
     // 滚到底之后再松手，落点要落在滚到的位置，而不是原来那一屏的末尾。
     await hoverAt(page, box.x + box.width / 2, box.y + box.height - 8);
     await page.waitForTimeout(200);
-    await page.evaluate(
-      ({ x, y }) => {
-        const dt = (window as unknown as { __dragDt: DataTransfer }).__dragDt;
-        document
-          .querySelector('#dash')!
-          .dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt, clientX: x, clientY: y }));
-      },
-      { x: box.x + box.width / 2, y: box.y + box.height - 8 }
-    );
+    await releaseDrag(page, box.x + box.width / 2, box.y + box.height - 8);
 
     await expect(page.locator('.dash-col[data-col="1"] [data-module-id="m-notes"]')).toHaveCount(1);
     // 不是插到这一栏最前面 —— 说明落点跟着滚动走，没有回退到起点。

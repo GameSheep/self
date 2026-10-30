@@ -65,25 +65,42 @@ id 从队列里删掉（重新读队列再过滤，避免把导入期间新写�
 2. **指针事件合并到 rAF。** 120Hz 鼠标一秒能发 200+ 个事件，一帧只处理一次。
 3. **拖拽换位只做 transform，不改布局。**
    - 幽灵卡片 `.drag-ghost`：`position: fixed` + `transform: translate3d()` 跟指针，
-     走合成层，不触发回流。浏览器自带的拖影用 `setDragImage` 换成 1×1 透明图。
+     走合成层，不触发回流。
    - 落点用 `.drop-gap` 虚线槽预览，只在目标位置**真的变了**时才动 DOM
-     （旧版每个 `dragover` 都无条件 `insertBefore` 一次）。
+     （旧版每个事件都无条件 `insertBefore` 一次）。
    - 被挤开的卡片用 **FLIP** 滑过去：先量旧位置，改完 DOM 再量新位置，用反向
      `translateY` 起手动画回 0。不这么做卡片是瞬间跳一格，看着就是"卡"。
+     重定位时先 `getAnimations().cancel()` 掐掉上一段，否则两段 `translateY` 同时跑会抖。
    - 同一栏内连续划过时复用上次量好的卡片中线，不再每个事件读一遍布局
      （实测：光标停在同一格时 0.28 次读/事件，旧版是每事件 N 次）。
 4. 松手时把真卡片直接插进槽位、**不整页重绘**，所以落点没有闪一下。
 5. 拖动/缩放时显示当前尺寸气泡（`.drag-badge`），和 Grafana 的 resize 提示一致。
 
-拖拽换位仍然用 HTML5 拖放（`draggable` + `dragover`/`drop`），没有改成 pointer 事件：
-触屏本来就靠 `⋯` 菜单里的「移到左栏 / 右栏」，而 HTML5 拖放能白拿"拖到窗口外取消"
-这类系统行为。
+### 为什么换位用 pointer events，不用 HTML5 拖放
+
+一开始用的是 `draggable` + `dragover` / `drop`。CPU 侧其实一点都不贵（实测列宽拖拽每帧
+强制布局 1.3ms / 高度 0.5ms，`dragover` 间隔中位数 0.8ms），但手感始终"拖在后面"——
+因为 **`dragover` 的坐标不是指针的真实位置**：它由浏览器的拖放循环喂过来，系统会限频、
+快速移动时还会丢掉中间几个点，幽灵卡片只能一路追。
+
+换成标题栏上的 `pointerdown` + `pointermove` 之后：`pointermove` 由合成器按刷新率派发，
+坐标就是指针位置。实测 60 次移动里幽灵卡片与"指针 + 14px"的偏差 **最大 0px**，
+单次 `pointermove` 的处理耗时中位数 **0.1ms**。顺带甩掉了 HTML5 拖放的三件包袱：
+每个 `dragover` 都要 `preventDefault`、自带一层不可控的半透明拖影、拖到窗口外就断流。
+
+配套细节：
+
+- 3px 位移阈值，没超过就当成点了一下标题栏（不闪幽灵卡片）；`pointerdown` 里
+  `preventDefault()`，免得按住标题栏把标题选蓝。
+- 命中测试和插槽更新仍合并到 rAF：高刷鼠标一秒能发上千个事件，一帧算一次就够。
+- 放弃拖动走 `pointercancel` / `Esc` / 窗口失焦，这条路上**不提交**，卡片回原位。
+- 触屏和键盘仍走 `⋯` 菜单里的「移到左栏 / 右栏 / 上移 / 下移」。
+- 标题栏加 `touch-action: none`，触摸时不会先滚页面再开始拖。
 
 ### 拖到边缘自动滚动
 
-HTML5 的 `dragover` **只在指针移动时**触发。指针停在栏底部不动，事件流就断了 —— 所以
-"拖着一路往下、想放到看不见的地方"以前根本放不进去，滚动条纹丝不动。这不是滚动条的
-问题，是压根没有滚动这件事在发生。
+指针停在栏底部不动时**没有任何事件**，事件流就断了 —— 所以"拖着一路往下、想放到看不见的
+地方"以前根本放不进去，滚动条纹丝不动。这不是滚动条的问题，是压根没有滚动这件事在发生。
 
 现在指针进入栏的上下边缘（`min(72, 12% 栏高)`，最少 40px）就开一个 rAF 循环持续滚：
 
@@ -125,7 +142,7 @@ HTML5 的 `dragover` **只在指针移动时**触发。指针停在栏底部不�
 
 ## 代码结构
 
-- `extension/newtab-dashboard.js` — 布局引擎：列宽 / 高度拖拽、HTML5 拖拽换位、
+- `extension/newtab-dashboard.js` — 布局引擎：列宽 / 高度拖拽、pointer 事件拖拽换位、
   添加 / 删除 / 数据来源弹层、`chrome.storage.local.selfhub_newtab_layout` 持久化。
   这一层不碰业务数据，模块内容由外部 `renderBody(module, bodyEl)` 画。
 - `extension/newtab.js` — 数据读取（v2 负载 + v3 IndexedDB）、每个模块类型画什么、
@@ -144,10 +161,12 @@ HTML5 的 `dragover` **只在指针移动时**触发。指针停在栏底部不�
 3. 模块 `hidden` 必须显式写 `.module[hidden] { display: none }`：`.module` 是 flex 容器，
    会盖掉 `hidden` 的默认样式（签到模块没有站点时靠这条隐藏）。
 4. 窄屏（≤1180px）单列堆叠，拖拽条隐藏、固定高度失效，避免手机上一屏一张卡。
-5. **拖拽循环里不许读布局。** 要在拖动中用到尺寸，就在 `pointerdown` / `dragstart` 里
-   量好存起来。新增拖拽交互时先过一遍这条，否则又会退回"一卡一卡"。
+5. **拖拽循环里不许读布局。** 要在拖动中用到尺寸，就在 `pointerdown` 里量好存起来。
+   新增拖拽交互时先过一遍这条，否则又会退回"一卡一卡"。
 6. 列宽只写 `flex-basis`（`.dash-col` 的 `flex: 0 0 auto` 提供 grow/shrink），
    不要再写 `width`——两个属性 = 两次样式失效。
+7. 换位**不要**回到 HTML5 拖放（`draggable` / `dragover`）：它的坐标被系统限频，
+   幽灵卡片必然拖在后面。要 1:1 跟手只能用 `pointermove`。
 
 ## 验证
 
@@ -157,8 +176,8 @@ npx playwright test --config=playwright.extension.config.ts
 
 `tests/e2e/newtab-dashboard.spec.ts`（12 条）覆盖：拖高 / 拖列宽（刷新后仍在，且列宽只写
 `flex-basis`）、拖标题换栏、拖动中出现幽灵卡片 + 虚线槽且松手前数据不动、拖到一半放弃
-布局回到原位、拖到栏底自动往下滚（指针不动也滚、离开边缘就停、落点跟着滚动走）、
-加文本框并把内容变成笔记、按文件夹换来源、网站卡片套卡片与分类 chip、
+（`pointercancel`）布局回到原位、拖到栏底自动往下滚（指针不动也滚、离开边缘就停、
+落点跟着滚动走）、加文本框并把内容变成笔记、按文件夹换来源、网站卡片套卡片与分类 chip、
 文本框 → 打开工作台能看到这条笔记且队列清空、删模块持久化与重置布局。
 
 `tests/e2e/newtab-backup.spec.ts`（3 条）覆盖布局跟着备份走的两个方向：新标签页改的布局
@@ -166,4 +185,5 @@ npx playwright test --config=playwright.extension.config.ts
 布局和 ☆ 写回 `chrome.storage`，以及**老备份没有这个字段时不会清掉本机布局**。
 
 拖动性能的量化手段（临时脚本，不进仓库）：包一层 `Element.prototype.getBoundingClientRect`
-和 `clientWidth` 的 getter 数读次数，再用合成 `PointerEvent` / `DragEvent` 跑 60 帧。
+和 `clientWidth` 的 getter 数读次数，再用合成 `PointerEvent` 跑 60 帧；跟手精度则是在每个
+`pointermove` 之后同步读 `.drag-ghost` 的位置，和"指针坐标 + 偏移"比对。

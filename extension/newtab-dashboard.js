@@ -323,10 +323,10 @@
      * 的时候才动，而且指针事件合并到 rAF。
      */
     var drag = null;
-    var ghostPoint = null;
-    var ghostFrame = 0;
     var hoverPoint = null;
-    var hoverFrame = 0;
+
+    /** 位移超过这个距离才算"拖"，否则当成点了一下标题栏（px）。 */
+    var DRAG_THRESHOLD = 3;
 
     function withFlip(nodes, mutate) {
       if (reducedMotion() || !nodes.length) {
@@ -340,9 +340,13 @@
       for (var i = 0; i < nodes.length; i += 1) {
         var dy = before[i] - nodes[i].getBoundingClientRect().top;
         if (!dy) continue;
+        // 快速拖动时同一个卡片会在一秒内被重新定位好几次。不掐掉上一段动画，
+        // 两段 translateY 会同时跑，卡片就"抖"起来了 —— 这是"卡"的观感来源之一。
+        var running = nodes[i].getAnimations();
+        for (var j = 0; j < running.length; j += 1) running[j].cancel();
         nodes[i].animate(
           [{ transform: 'translateY(' + dy + 'px)' }, { transform: 'translateY(0px)' }],
-          { duration: 170, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
+          { duration: 150, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
         );
       }
     }
@@ -360,15 +364,17 @@
       return ghost;
     }
 
+    /**
+     * Move the ghost. **No rAF throttle here on purpose.**
+     *
+     * `transform` is a compositor property: writing it never invalidates layout or paint, and
+     * several writes inside one frame collapse to the last value. Throttling it through rAF
+     * therefore buys nothing and costs up to a full frame of lag — which is exactly what makes
+     * a dragged card feel like it is chasing the cursor instead of sitting under it.
+     */
     function followGhost(x, y) {
-      ghostPoint = { x: x, y: y };
-      if (ghostFrame) return;
-      ghostFrame = requestAnimationFrame(function () {
-        ghostFrame = 0;
-        if (!drag || !drag.ghost || !ghostPoint) return;
-        drag.ghost.style.transform =
-          'translate3d(' + (ghostPoint.x + 14) + 'px,' + (ghostPoint.y + 12) + 'px,0)';
-      });
+      if (!drag || !drag.ghost) return;
+      drag.ghost.style.transform = 'translate3d(' + (x + 14) + 'px,' + (y + 12) + 'px,0)';
     }
 
     function measureColumn(colEl) {
@@ -379,7 +385,7 @@
     }
 
     function computeTarget(x, y, fallback) {
-      // 优先用 dragover 的 target（浏览器已经做过命中测试，不用重复算）；
+      // 优先用事件里的 target（浏览器已经做过命中测试，不用重复算）；
       // 只有当它不是栏的后代时才按坐标补一次 —— 比如拖到两栏之间的分隔条、
       // 栏的 padding 上。幽灵卡片是 pointer-events:none，不会被命中。
       var colEl = fallback && fallback.closest ? fallback.closest('.dash-col') : null;
@@ -452,7 +458,7 @@
     /* — 拖到边缘自动滚动 — */
 
     /**
-     * HTML5 拖放的 `dragover` **只在指针移动时**触发。指针停在栏底部不动，事件流就断了，
+     * 指针**停在**栏底部不动时，浏览器一个事件都不会发。事件流一断，就没人去滚了，
      * 所以"拖着东西往下放不进去"——滚动条当然不动。必须自己开一个 rAF 循环持续滚。
      *
      * 两个细节：
@@ -571,7 +577,7 @@
       if (!state.frame) state.frame = requestAnimationFrame(stepEdgeScroll);
     }
 
-    function beginModuleDrag(mod, moduleEl, event) {
+    function beginModuleDrag(mod, moduleEl, x, y) {
       var rect = moduleEl.getBoundingClientRect();
       drag = {
         id: mod.id,
@@ -583,36 +589,16 @@
       };
       moduleEl.classList.add('is-dragging');
       document.body.classList.add('is-module-dragging');
-      followGhost(event.clientX, event.clientY);
-      try {
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('text/plain', mod.id);
-        // 把浏览器自带的拖影换成 1×1 透明图，只留我们自己的幽灵卡片。
-        var blank = document.createElement('canvas');
-        blank.width = 1;
-        blank.height = 1;
-        event.dataTransfer.setDragImage(blank, 0, 0);
-      } catch (err) {
-        /* 某些上下文不给 dataTransfer，忽略即可 */
-      }
+      followGhost(x, y);
     }
 
     function endDrag(commit) {
       if (!drag) return;
       var state = drag;
       drag = null;
-      ghostPoint = null;
       hoverPoint = null;
       stopEdgeScroll();
       document.body.classList.remove('is-module-dragging');
-      if (ghostFrame) {
-        cancelAnimationFrame(ghostFrame);
-        ghostFrame = 0;
-      }
-      if (hoverFrame) {
-        cancelAnimationFrame(hoverFrame);
-        hoverFrame = 0;
-      }
       if (state.ghost && state.ghost.parentNode) state.ghost.parentNode.removeChild(state.ghost);
       state.el.classList.remove('is-dragging');
 
@@ -631,47 +617,99 @@
       }
     }
 
-    function wireDragSurface() {
-      // 幽灵卡片在整页范围内跟手（拖到顶栏上也照样跟着），但只有落在 #dash
-      // 上才算合法落点 —— 所以这里只更新位置，不 preventDefault。
-      document.addEventListener(
-        'dragover',
-        function (event) {
-          if (!drag) return;
-          followGhost(event.clientX, event.clientY);
-          // 指针离开面板就别再自动滚了，否则拖到顶栏上这一栏会自己一路滚到底。
-          if (!root.contains(event.target)) stopEdgeScroll();
-        },
-        true
-      );
-
-      root.addEventListener('dragover', function (event) {
-        if (!drag) return;
+    /**
+     * 拖动排序走 **pointer events**，不用 HTML5 拖放。
+     *
+     * 之前用 `dragstart` / `dragover` / `drop`，幽灵卡片总是慢半拍、跟着指针"追"。
+     * 原因在浏览器那边：`dragover` 的坐标是拖放循环喂过来的，系统会限频（低于屏幕
+     * 刷新率），快速移动时还会丢掉中间几个点。`pointermove` 是合成器按刷新率派发的，
+     * 坐标就是真实指针位置 —— 于是幽灵卡片才真的"贴在指针上"。
+     *
+     * 顺带还甩掉了 HTML5 拖放的一堆包袱：必须给每个 dragover 都 preventDefault、
+     * 自带一层不可控的半透明拖影、拖到窗口外就断流。
+     *
+     * 命中测试和插槽更新仍然合并到一帧一次：指针事件可能比屏幕刷新还密（高刷鼠标
+     * 能到 1000Hz），每个都算一遍纯属浪费。幽灵卡片本身不合并（见 followGhost）。
+     */
+    function wireModuleDrag(mod, moduleEl, head) {
+      head.addEventListener('pointerdown', function (event) {
+        if (event.button !== 0 || event.isPrimary === false) return;
+        // 标题栏里的按钮（⋯ 菜单）自己响应，别顺手把卡片拖起来。
+        if (event.target && event.target.closest && event.target.closest('button')) return;
+        // 挡掉文本选择：不然按住标题栏拖会顺手把标题选蓝。
         event.preventDefault();
-        try {
-          event.dataTransfer.dropEffect = 'move';
-        } catch (err) {
-          /* ignore */
-        }
-        followGhost(event.clientX, event.clientY);
-        hoverPoint = { x: event.clientX, y: event.clientY, target: event.target };
-        if (hoverFrame) return;
-        hoverFrame = requestAnimationFrame(function () {
-          hoverFrame = 0;
+
+        var startX = event.clientX;
+        var startY = event.clientY;
+        var armed = false;
+        var frame = 0;
+
+        function flush() {
+          frame = 0;
           if (!drag || !hoverPoint) return;
           var target = computeTarget(hoverPoint.x, hoverPoint.y, hoverPoint.target);
           updateGap(target);
           updateEdgeScroll(target && target.colEl, hoverPoint.x, hoverPoint.y);
-        });
-      });
+        }
 
-      root.addEventListener('drop', function (event) {
-        if (!drag) return;
-        event.preventDefault();
-        // 最后一段鼠标位移可能还没被 rAF 消化，落点以松手那一刻为准。
-        drag.rects = null;
-        updateGap(computeTarget(event.clientX, event.clientY, event.target));
-        endDrag(true);
+        function onMove(moveEvent) {
+          if (!armed) {
+            var dx = moveEvent.clientX - startX;
+            var dy = moveEvent.clientY - startY;
+            if (dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
+            armed = true;
+            beginModuleDrag(mod, moduleEl, moveEvent.clientX, moveEvent.clientY);
+          }
+          if (!drag) return;
+          followGhost(moveEvent.clientX, moveEvent.clientY);
+          hoverPoint = { x: moveEvent.clientX, y: moveEvent.clientY, target: moveEvent.target };
+          if (!frame) frame = requestAnimationFrame(flush);
+        }
+
+        function detach() {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onCancel);
+          window.removeEventListener('keydown', onKey, true);
+          window.removeEventListener('blur', onCancel);
+          if (frame) {
+            cancelAnimationFrame(frame);
+            frame = 0;
+          }
+        }
+
+        function onUp() {
+          detach();
+          if (!armed) return; // 只是点了一下标题栏，什么都没发生
+          // 最后一段位移可能还没被 rAF 消化，落点以松手那一刻为准。
+          if (hoverPoint) {
+            var point = hoverPoint;
+            drag.rects = null;
+            updateGap(computeTarget(point.x, point.y, point.target));
+          }
+          endDrag(true);
+        }
+
+        // 放弃拖动：`pointercancel`（系统抢走指针）、窗口失焦、按 Esc。
+        // 这条路上不能提交，否则"拖到一半改主意"会把卡片留在半路。
+        function onCancel() {
+          detach();
+          if (armed) endDrag(false);
+        }
+
+        function onKey(keyEvent) {
+          if (keyEvent.key !== 'Escape') return;
+          keyEvent.preventDefault();
+          keyEvent.stopPropagation();
+          onCancel();
+        }
+
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('pointercancel', onCancel);
+        // 指针跑到窗口外松手时可能收不到 pointerup，别让幽灵卡片留在屏幕上。
+        window.addEventListener('blur', onCancel);
+        window.addEventListener('keydown', onKey, true);
       });
     }
 
@@ -939,7 +977,6 @@
       moduleEl.setAttribute('aria-label', spec.label);
 
       var head = el('header', 'module-head');
-      head.draggable = true;
       head.setAttribute('title', '拖动可以换位置');
       head.appendChild(el('span', 'module-grip', '⠿'));
       head.appendChild(el('span', 'module-icon', spec.icon || '▫'));
@@ -960,12 +997,7 @@
       });
       head.appendChild(menuBtn);
 
-      head.addEventListener('dragstart', function (event) {
-        beginModuleDrag(mod, moduleEl, event);
-      });
-      head.addEventListener('dragend', function () {
-        endDrag(false);
-      });
+      wireModuleDrag(mod, moduleEl, head);
 
       var body = el('div', 'module-body');
       if (spec.legacyId && mod.id === 'm-' + mod.type) body.id = spec.legacyId;
@@ -1030,8 +1062,8 @@
         }(i));
         columnEl.appendChild(add);
 
-        // dragover / drop 挂在 #dash 上（见 wireDragSurface），不挂在栏上：
-        // 三个栏共用一套逻辑，也少三次监听器注册。
+        // 拖动 / 命中测试都挂在卡片自己的标题栏上（见 wireModuleDrag）：
+        // 每张卡片一个 pointerdown，比整页监听 dragover 便宜得多。
         root.appendChild(columnEl);
         cols.push(columnEl);
 
@@ -1086,7 +1118,6 @@
     window.addEventListener('resize', function () {
       applyWidths();
     });
-    wireDragSurface();
     render();
 
     return {
