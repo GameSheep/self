@@ -1,6 +1,8 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { PenTool, Eraser, RotateCcw, Download, Save, Check, Square, Circle, Minus } from 'lucide-react';
 import { HandwritingNote } from '../../types';
+import { ConfirmButton } from '../../shared/ui';
+import { showToast as showToastGlobal } from '../../shared/ui/toast';
 
 interface HandwritingCardProps {
   onSaveNote: (note: HandwritingNote) => void;
@@ -178,7 +180,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
     if (!canvas) return;
 
     if (!hasContentRef.current) {
-      alert('画板还是空的，先画点内容再保存吧。');
+      showToastGlobal('画板还是空的，先画点内容再保存', 'warn');
       return;
     }
 
@@ -395,18 +397,14 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
                 <img src={note.dataUrl} alt={note.title} className="w-full h-24 object-cover" />
                 <div className="p-2 flex items-center justify-between text-[11px] text-sh-muted">
                   <span className="truncate">{note.title}</span>
-                  <button
-                    onClick={() => {
-                      // A hand-drawn canvas is unrecoverable local data; one
-                      // mis-tap must not erase it without asking.
-                      if (!window.confirm(`确认删除手绘「${note.title}」？删除后不可恢复。`)) return;
-                      onDeleteNote(note.id);
-                    }}
+                  <ConfirmButton
+                    onConfirm={() => onDeleteNote(note.id)}
+                    confirmLabel="确认删除？"
                     aria-label={`删除手绘 ${note.title}`}
                     className="opacity-100 sm:opacity-0 group-hover:opacity-100 text-sh-subtle hover:text-sh-danger text-[10px]"
                   >
                     删除
-                  </button>
+                  </ConfirmButton>
                 </div>
               </div>
             ))}

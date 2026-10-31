@@ -2,7 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { Activity, FolderOpen, Plus, Server } from 'lucide-react';
 import type { ServerDeployment } from '../../types';
 import { ServerCard } from '../../components/cards/ServerCard';
-import { PageHeader, EmptyState, StatusDot } from '../../shared/ui';
+import { ConfirmButton, PageHeader, EmptyState, StatusDot } from '../../shared/ui';
+import { showToast as showToastGlobal } from '../../shared/ui/toast';
 import { daysUntil } from '../../lib/dates';
 
 export interface ServersViewProps {
@@ -11,7 +12,8 @@ export interface ServersViewProps {
   /** Persist a server row after an inline edit (extras / notes / group). */
   onUpdate?: (server: ServerDeployment) => void;
   onCheck: (id: string) => Promise<void> | void;
-  onCheckAll: () => Promise<void> | void;
+  /** 返回检测汇总（可达/不可达），调用方据此给批量结果反馈。 */
+  onCheckAll: () => Promise<{ total: number; online: number; offline: number } | void> | void;
   onOpenAddModal: (type?: 'site' | 'server' | 'secret' | 'checkin' | 'note') => void;
 }
 
@@ -103,7 +105,15 @@ export const ServersView: React.FC<ServersViewProps> = ({
               onClick={async () => {
                 setCheckingAll(true);
                 try {
-                  await onCheckAll();
+                  const summary = await onCheckAll();
+                  if (summary && summary.total > 0) {
+                    showToastGlobal(
+                      summary.offline > 0
+                        ? `检测完成：${summary.online}/${summary.total} 台可达，${summary.offline} 台不可达`
+                        : `检测完成：${summary.total} 台全部可达`,
+                      summary.offline > 0 ? 'warn' : 'ok'
+                    );
+                  }
                 } finally {
                   setCheckingAll(false);
                 }
@@ -316,16 +326,16 @@ export const ServersView: React.FC<ServersViewProps> = ({
                         {(server.extras ?? []).length > 0 && (
                           <div className="flex flex-wrap gap-1">
                             {server.extras!.map((extra) => (
-                              <button
+                              <ConfirmButton
                                 key={extra.id}
-                                type="button"
-                                onClick={() =>
+                                onConfirm={() =>
                                   onUpdate({ ...server, extras: server.extras!.filter((entry) => entry.id !== extra.id) })
                                 }
+                                confirmLabel="确认删除？"
                                 className="px-1.5 py-0.5 rounded border border-sh-line text-[10px] text-sh-danger"
                               >
                                 删除 {extra.label}
-                              </button>
+                              </ConfirmButton>
                             ))}
                           </div>
                         )}

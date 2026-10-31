@@ -2,7 +2,9 @@ import React from 'react';
 import { CheckCircle2, ExternalLink, Flame, Trash2, Clock } from 'lucide-react';
 import { CheckInTask } from '../../types';
 import { hasRunToday, recentDays, computeStreak, OUTCOME_LABEL } from '../../lib/checkInHistory';
-import { StatusPill } from '../../shared/ui';
+import { StatusPill,
+  ConfirmButton
+} from '../../shared/ui';
 
 interface CheckInCardProps {
   task: CheckInTask;
@@ -52,18 +54,16 @@ export const CheckInCard: React.FC<CheckInCardProps> = ({ task, onRun, onDelete 
             </a>
           </div>
 
-          <button
-            onClick={() => {
-              if (confirm(`确定从清单移除 ${task.name} 吗？`)) {
-                onDelete(task.id);
-              }
-            }}
+          <ConfirmButton
+            onConfirm={() => onDelete(task.id)}
+            confirmLabel="确认移除？"
+            confirmDetail={task.name}
             className="opacity-100 sm:opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-sh-surface2 text-sh-subtle hover:text-sh-danger transition-opacity shrink-0"
             title="移除"
             aria-label={`移除签到任务 ${task.name}`}
           >
             <Trash2 className="w-3.5 h-3.5" aria-hidden />
-          </button>
+          </ConfirmButton>
         </div>
 
         {/* Last note: what the app actually observed, one line */}

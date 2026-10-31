@@ -1629,6 +1629,7 @@ export function App() {
                 <div data-testid="notes-workspace">
                   <LibraryTabs active="notes" onNavigate={go} />
                   <NotesPane
+                    focusNoteId={focusNoteId}
                     notes={state.notes || []}
                     folders={state.noteFolders ?? []}
                     onAddNote={addNote}
@@ -1687,6 +1688,10 @@ export function App() {
                       annotations: (prev.annotations ?? []).filter((entry) => entry.id !== id)
                     }))
                   }
+                  onEditNote={(id) => {
+                    go('#/library');
+                    setFocusNoteId(id);
+                  }}
                 />
               </Suspense>
             )}
@@ -1981,7 +1986,7 @@ export function App() {
 
       {/* 设置只有页面形态；第二个 SettingsModal（永远打不开）已移除。 */}
       {/* `focusNoteId` is consumed by the library item view; clear it once used. */}
-      {focusNoteId && route.name === 'library-item' && <FocusClear onDone={clearFocusNoteId} />}
+      {focusNoteId && (route.name === 'library' || route.name === 'library-item') && <FocusClear onDone={clearFocusNoteId} />}
 
       {/* Transient feedback for clipboard and other one-line results. */}
       {globalNotice && (

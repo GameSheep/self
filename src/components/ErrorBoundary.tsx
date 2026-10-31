@@ -96,7 +96,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
           <p className="text-xs text-sh-muted leading-relaxed">
             你的数据仍然保存在浏览器本地，没有丢失。可以先重新加载；如果反复出错，请先导出原始数据再重置。
           </p>
-          <pre className="text-[11px] font-mono text-sh-danger bg-black/40 border border-sh-danger/50 rounded-xl p-3 overflow-auto max-h-48 whitespace-pre-wrap">
+          <pre className="text-[11px] font-mono text-sh-danger bg-sh-bg border border-sh-danger/50 rounded-xl p-3 overflow-auto max-h-48 whitespace-pre-wrap">
             {this.state.error.message}
             {this.state.info ? `\n${this.state.info.slice(0, 800)}` : ''}
           </pre>

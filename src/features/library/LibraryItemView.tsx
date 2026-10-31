@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ArrowLeft, ExternalLink, FileWarning, Pencil } from 'lucide-react';
 import type { HubState, NavSite, QuickNote, WebPageAnnotation } from '../../types';
-import { NotesView } from '../../components/views/NotesView';
 import { ConfirmButton, EmptyState, PageHeader, StatusPill } from '../../shared/ui';
 import { Markdown } from '../../components/Markdown';
 import { formatRelative } from '../../lib/dates';
@@ -19,6 +18,8 @@ export interface LibraryItemViewProps {
   /** 编辑「我的批注」。五彩导入的划词没有本机编辑入口，不传也不报错。 */
   onUpdateAnnotation?: (annotation: WebPageAnnotation) => void;
   onDeleteAnnotation?: (id: string) => void;
+  /** 打开编辑器：回 #/library 并让 NotesPane 选中这篇（唯一的编辑入口）。 */
+  onEditNote?: (id: string) => void;
 }
 
 /**
@@ -66,7 +67,8 @@ export const LibraryItemView: React.FC<LibraryItemViewProps> = ({
   onDeleteHandwriting,
   onDeleteSite,
   onUpdateAnnotation,
-  onDeleteAnnotation
+  onDeleteAnnotation,
+  onEditNote
 }) => {
   const [kind, nativeId] = itemKey.split(/:(.+)/) as [string, string];
   const backTo = BACK_ROUTES[kind] ?? '#/library';
@@ -78,18 +80,34 @@ export const LibraryItemView: React.FC<LibraryItemViewProps> = ({
         <MissingItem onNavigate={onNavigate} message="这条笔记可能已经被删除。" />
       );
     }
-    // Reuse the mature note workspace rather than a second editor: drafts,
-    // outline, preview and the unsaved-draft recovery all live there.
+    // 单篇阅读视图，不再渲染整个旧编辑工作台：编辑只有一个入口
+    // （回 NotesPane 并选中这篇），读在这里一次看全。
     return (
       <div data-testid="library-item-note">
         <BackLink to={backTo} onNavigate={onNavigate} />
-        <NotesView
-          notes={state.notes || []}
-          onAddNote={onAddNote}
-          onUpdateNote={onUpdateNote}
-          onDeleteNote={onDeleteNote}
-          focusNoteId={note.id}
+        <PageHeader
+          title={note.title || '未命名笔记'}
+          description={`更新于 ${note.updatedAt ? formatRelative(note.updatedAt) : '未知'}`}
+          actions={
+            onEditNote && (
+              <button
+                onClick={() => onEditNote(note.id)}
+                data-testid="note-edit-open"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sh-accent text-sh-accent-fg text-xs font-semibold"
+              >
+                <Pencil className="w-3.5 h-3.5" aria-hidden />
+                编辑笔记
+              </button>
+            )
+          }
         />
+        <div className="rounded-2xl border border-sh-line bg-sh-surface p-4">
+          {note.content?.trim() ? (
+            <Markdown content={note.content} />
+          ) : (
+            <p className="text-sm text-sh-subtle">这篇笔记只有标题，没有正文。点「编辑笔记」补上。</p>
+          )}
+        </div>
       </div>
     );
   }

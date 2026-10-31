@@ -483,8 +483,7 @@ export function ConfirmButton({
  * 未保存编辑的离开拦截：`request()` 在脏时弹 ConfirmDialog，resolve true 才放行。
  * 用法：`request().then((ok) => ok && setSelectedId(id))`，并把返回的 dialog 渲染出来。
  */
-export function useDirtyGuard(options: {
-  isDirty: boolean;
+export function useDirtyGuard(options: {  isDirty: boolean;
   title?: string;
   message?: React.ReactNode;
   confirmLabel?: string;
@@ -532,4 +531,53 @@ export function useDirtyGuard(options: {
   );
 
   return { request, dialog };
+}
+
+/* -------------------------------------------------------------------------- */
+/* useConfirmDialog                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * promise 化的确认框：`if (!(await confirm({ title }))) return;`。
+ * 全仓剩余的 window.confirm 统一迁到这里——可样式化、可断言、可键盘关闭。
+ * 把返回的 dialog 渲染在组件根部即可（多个实例各自持有状态，互不干扰）。
+ */
+export function useConfirmDialog(): {
+  confirm: (opts: { title: string; description?: React.ReactNode; confirmLabel?: string; tone?: 'default' | 'danger' }) => Promise<boolean>;
+  dialog: React.ReactNode;
+} {
+  const [state, setState] = React.useState<{
+    title: string;
+    description?: React.ReactNode;
+    confirmLabel?: string;
+    tone: 'default' | 'danger';
+    resolve: (ok: boolean) => void;
+  } | null>(null);
+
+  const confirm = React.useCallback((opts: { title: string; description?: React.ReactNode; confirmLabel?: string; tone?: 'default' | 'danger' }) => {
+    return new Promise<boolean>((resolve) => {
+      // 新请求顶掉旧请求：连点不会留下两个都在等的弹窗。
+      state?.resolve(false);
+      setState({ ...opts, tone: opts.tone ?? 'default', resolve });
+    });
+  }, [state]);
+
+  const settle = (ok: boolean) => {
+    state?.resolve(ok);
+    setState(null);
+  };
+
+  const dialog = (
+    <ConfirmDialog
+      open={state !== null}
+      title={state?.title ?? ''}
+      description={state?.description}
+      confirmLabel={state?.confirmLabel}
+      tone={state?.tone}
+      onConfirm={() => settle(true)}
+      onCancel={() => settle(false)}
+    />
+  );
+
+  return { confirm, dialog };
 }

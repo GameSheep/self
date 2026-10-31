@@ -192,6 +192,8 @@ test.describe('备份与恢复', () => {
     await openSettings(page);
     await gotoSettingsPane(page, 'data');
     await page.locator('button', { hasText: '重置所有数据' }).click();
+    // 重置确认现在是应用内弹窗，需要点「清空全部数据」。
+    await page.getByRole('dialog').getByRole('button', { name: '清空全部数据' }).click();
     await page.waitForTimeout(3500);
 
     const after = await page.evaluate(

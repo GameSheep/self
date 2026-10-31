@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Terminal, Copy, Check, ExternalLink, Server, Trash2, Activity, RefreshCw } from 'lucide-react';
 import { ServerDeployment } from '../../types';
 import { healthPresentation, probeUrlFor } from '../../lib/serverHealth';
+import { ConfirmButton } from '../../shared/ui';
+import { showToast as showToastGlobal } from '../../shared/ui/toast';
 
 interface ServerCardProps {
   server: ServerDeployment;
@@ -22,7 +24,7 @@ export const ServerCard: React.FC<ServerCardProps> = ({ server, onDelete, onChec
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      alert('复制失败：浏览器拒绝了剪贴板访问，请手动选择复制。');
+      showToastGlobal('复制失败：浏览器拒绝了剪贴板访问，请手动选择复制', 'danger');
     }
   };
 
@@ -79,18 +81,16 @@ export const ServerCard: React.FC<ServerCardProps> = ({ server, onDelete, onChec
             </div>
           </div>
 
-          <button
-            onClick={() => {
-              if (confirm(`确定删除服务器 ${server.name} 吗？`)) {
-                onDelete(server.id);
-              }
-            }}
+          <ConfirmButton
+            onConfirm={() => onDelete(server.id)}
+            confirmLabel="确认删除？"
+            confirmDetail={server.name}
             className="opacity-100 sm:opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-sh-surface2 text-sh-subtle hover:text-sh-danger transition-opacity shrink-0"
             title="删除"
             aria-label={`删除服务器 ${server.name}`}
           >
             <Trash2 className="w-3.5 h-3.5" aria-hidden />
-          </button>
+          </ConfirmButton>
         </div>
 
         {/* Real health status (never claimed without a probe) */}

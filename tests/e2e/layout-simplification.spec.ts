@@ -51,17 +51,17 @@ test('320px 首页无横向溢出，手机导航仍能到达资料、资源和�
   await expect(navigation).toHaveCount(0);
 });
 
-test('手机先显示笔记编辑区，打开列表后可返回编辑并保存', async ({ page }, info) => {
+test('手机先显示笔记列表，点开即编辑且浏览不打断草稿', async ({ page }, info) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await seedState(page, profile());
   await page.goto('/#/library?view=notes');
-  await expect(page.getByTestId('notes-textarea')).toBeInViewport();
+  // 手机场景是「回看」：首屏列表优先（PRODUCT.md），编辑器点开即入。
+  await expect(page.getByTestId('notes-folder-tree')).toBeInViewport();
   await expect(page.getByRole('tablist', { name: '资料库视图' })).toBeVisible();
-  await expect(page.getByTestId('notes-folder-tree')).toBeHidden();
-  await page.getByTestId('notes-browse-toggle').click();
-  await expect(page.getByTestId('notes-folder-tree')).toBeVisible();
+
   await page.getByTestId('note-row-layout-note').getByRole('button', { name: '项目资料', exact: true }).click();
   await expect(page.getByTestId('note-row-layout-note')).toHaveAttribute('data-selected', 'true');
+  await expect(page.getByTestId('notes-textarea')).toBeInViewport();
   await expect(page.getByTestId('notes-textarea')).toHaveValue(/继续编辑这里/);
   await page.getByTestId('notes-textarea').fill('新的标题\n新的正文');
   // Merely browsing must not discard unsaved edits.

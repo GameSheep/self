@@ -304,6 +304,8 @@ test.describe('全量数据云备份', () => {
     await openBackupTab(page);
 
     await page.getByTestId('restore-from-cloud').click();
+    // 恢复确认现在是应用内弹窗（原生 confirm 已全部退役），点「恢复」。
+    await page.getByRole('dialog').getByRole('button', { name: '恢复', exact: true }).click();
     await expect.poll(async () => (await readState(page)).sites[0]?.title, { timeout: 15_000 }).toBe('来自云端的站点');
   });
 

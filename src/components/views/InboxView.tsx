@@ -14,6 +14,7 @@ import {
 import { InboxItem, QuickNote, NavSite, ProjectItem } from '../../types';
 import { ConfirmDialog } from '../../shared/ui';
 import { showToast as showToastGlobal } from '../../shared/ui/toast';
+import { ConfirmButton, useConfirmDialog } from '../../shared/ui';
 import type { BatchPreview, ConversionResult } from '../../hooks/useInboxActions';
 
 interface InboxViewProps {
@@ -68,6 +69,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [editContent, setEditContent] = useState('');
   const [editType, setEditType] = useState<'text' | 'url' | 'snippet'>('text');
 
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
   // 现在委托给全局 showToast（tone 由内容推断，emoji 前缀在 Toast 层统一剥离），
   // 本视图不再自带一套 2500ms 的绿色对勾。
   const showToast = (msg: string) => {
@@ -151,12 +153,13 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const handleBatchMarkAllProcessed = () => {
     const pending = inbox.filter(i => i.status === 'inbox');
     if (pending.length === 0) return;
-    if (confirm(`确定将当前 ${pending.length} 个待整理项目全部标记为已处理？`)) {
+    void confirm({ title: '全部标记为已处理？', description: `当前 ${pending.length} 条待整理会一起移入「已整理」，可逐条放回。`, confirmLabel: '全部标记' }).then((ok) => {
+      if (!ok) return;
       pending.forEach(item => {
         onUpdateInboxItem({ ...item, status: 'processed' });
       });
       showToast(`已批量处理 ${pending.length} 项`);
-    }
+    });
   };
 
   /**
@@ -197,12 +200,13 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const handleBatchClearProcessed = () => {
     const processed = inbox.filter(i => i.status === 'processed');
     if (processed.length === 0) return;
-    if (confirm(`确定彻底清除 ${processed.length} 个已处理碎片？`)) {
+    void confirm({ title: '彻底清除已处理碎片？', description: `将删除 ${processed.length} 条已整理碎片，无法撤销。`, confirmLabel: '彻底清除', tone: 'danger' }).then((ok) => {
+      if (!ok) return;
       processed.forEach(item => {
         onDeleteInboxItem(item.id);
       });
-      showToast(`🗑️ 已清空 ${processed.length} 项已处理碎片`);
-    }
+      showToast(`已清空 ${processed.length} 项已处理碎片`);
+    });
   };
 
   const filteredItems = inbox.filter((item) => {
@@ -228,6 +232,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
   return (
     <div className="space-y-5">
+      {confirmDialog}
       {/* View Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-sh-surface p-4 sm:p-5 rounded-2xl border border-sh-line">
         <div>
@@ -641,20 +646,19 @@ export const InboxView: React.FC<InboxViewProps> = ({
                     </button>
                   )}
 
-                  <button
-                    onClick={() => {
-                      const preview = (item.title || item.content).slice(0, 40);
-                      if (confirm(`确定彻底删除该碎片吗？此操作不可撤销。\n\n${preview}`)) {
-                        onDeleteInboxItem(item.id);
-                        showToast('🗑️ 已删除');
-                      }
+                  <ConfirmButton
+                    onConfirm={() => {
+                      onDeleteInboxItem(item.id);
+                      showToast('已删除');
                     }}
+                    confirmLabel="彻底删除？"
+                    confirmDetail={(item.title || item.content).slice(0, 30)}
                     className="p-1 rounded-lg text-sh-subtle hover:text-sh-danger"
                     title="删除此碎片"
                     aria-label="删除此碎片"
                   >
                     <Trash2 className="w-3.5 h-3.5" aria-hidden />
-                  </button>
+                  </ConfirmButton>
                 </div>
               </div>
             );
@@ -664,7 +668,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
       {/* In-place Item Edit Modal */}
       {editingItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[var(--sh-overlay)] backdrop-blur-sm animate-in fade-in">
           <div className="w-full max-w-lg bg-sh-surface border border-sh-line rounded-2xl p-5 shadow-2xl space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-sh-line">
               <div className="flex flex-wrap items-center gap-2">

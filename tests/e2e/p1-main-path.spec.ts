@@ -110,7 +110,8 @@ test.describe('P1 主路径', () => {
     const itemId = pendingItem.inbox![0].id;
 
     await page.getByTestId(`inbox-convert-note-${itemId}`).click();
-    await expect(page.locator('main')).toContainText('已转为笔记');
+    // toast 在全局 ToastHost（main 之外），按文本断言。
+    await expect(page.getByText('已转为笔记')).toBeVisible();
 
     const converted = await readState(page);
     expect(converted.notes?.length).toBe(1);

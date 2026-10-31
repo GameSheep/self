@@ -76,6 +76,7 @@ import { Markdown } from '../Markdown';
 import { MarkdownEditor, type EditorMode } from '../MarkdownEditor';
 import { toggleTaskInSource, type MarkdownContext, type MarkdownHeading } from '../../lib/markdown/render';
 import { showToast as showToastGlobal } from '../../shared/ui/toast';
+import { useConfirmDialog } from '../../shared/ui';
 import {
   Database,
   Link2,
@@ -194,6 +195,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   const showToast = (msg: string) => {
     showToastGlobal(msg, /失败|未能|无法|超时/.test(msg) ? 'danger' : /⚠|ℹ|尚未/.test(msg) ? 'warn' : 'ok');
   };
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
 
   // -------------------------------------------------------------
   // Platform 1: Obsidian 阿里云 OSS States
@@ -615,11 +617,14 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
 
     if (node.isDir) {
       if (
-        !confirm(
-          trashed
-            ? `确定永久删除目录「${node.path}」及其下 ${node.children.length} 项吗？回收站中的内容不可恢复。`
-            : `确定把目录「${node.path}」及其下 ${node.children.length} 项移入回收站吗？可从 .trash/ 恢复。`
-        )
+        !(await confirm({
+          title: trashed ? '永久删除目录？' : '移入回收站？',
+          description: trashed
+            ? `「${node.path}」及其下 ${node.children.length} 项将不可恢复。`
+            : `「${node.path}」及其下 ${node.children.length} 项移入 .trash/，可恢复。`,
+          confirmLabel: trashed ? '永久删除' : '移入回收站',
+          tone: 'danger'
+        }))
       ) {
         return;
       }
@@ -636,11 +641,12 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       }
     } else {
       if (
-        !confirm(
-          trashed
-            ? `确定永久删除该文件吗？\n\n${node.path}`
-            : `确定把该文件移入回收站吗？（可在 .trash/ 中恢复）\n\n${node.path}`
-        )
+        !(await confirm({
+          title: trashed ? '永久删除该文件？' : '移入回收站？',
+          description: node.path,
+          confirmLabel: trashed ? '永久删除' : '移入回收站',
+          tone: 'danger'
+        }))
       ) {
         return;
       }
@@ -838,7 +844,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   );
 
   const handleClearIndex = React.useCallback(async () => {
-    if (!confirm('清除全文索引？\n\n只删除本机缓存的笔记正文副本，云端笔记不受影响。之后可重新建立索引。')) return;
+    if (!(await confirm({ title: '清除全文索引？', description: '只删除本机缓存的正文副本，云端笔记不受影响；之后可重新建立索引。', confirmLabel: '清除', tone: 'danger' }))) return;
     await resetIndexDatabase();
     setIndexRecords([]);
     setIndexMeta({});
@@ -847,7 +853,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   }, []);
 
   const handleRebuildIndex = React.useCallback(async () => {
-    if (!confirm('重建全文索引？\n\n会丢弃本机索引并重新抓取所有笔记正文，笔记数量多时需要一点时间。')) return;
+    if (!(await confirm({ title: '重建全文索引？', description: '丢弃本机索引并重新抓取所有笔记正文，笔记数量多时需要一点时间。', confirmLabel: '重建' }))) return;
     await resetIndexDatabase();
     setIndexRecords([]);
     setShowIndexPanel(false);
@@ -874,8 +880,8 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   }, [indexRecords, currentObsidianNote?.key]);
 
   const openNoteByKey = React.useCallback(
-    (key: string) => {
-      if (isDirtyRef.current && key !== latestRef.current.selectedObsidianKey && !confirm('当前笔记有未保存的修改，确定切换吗？')) {
+    async (key: string) => {
+      if (isDirtyRef.current && key !== latestRef.current.selectedObsidianKey && !(await confirm({ title: '切换笔记？', description: '当前笔记有未保存的修改，切换将丢弃。', confirmLabel: '放弃修改', tone: 'danger' }))) {
         return;
       }
       void handleOpenOssFile({
@@ -1079,7 +1085,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   };
 
   const handleDeleteObsidian = async (key: string) => {
-    if (!confirm(`确认从阿里云 OSS 删除该文件？\n\n${key}`)) return;
+    if (!(await confirm({ title: '从 OSS 删除该文件？', description: key, confirmLabel: '删除', tone: 'danger' }))) return;
     const res = await deleteObsidianNote(obsidianConfig, key, obsidianNotes);
     onUpdateObsidianNotes(res.notes);
     // Drop it from the in-memory tree as well, otherwise it lingers until refresh.
@@ -1134,9 +1140,11 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   };
 
   const handleDeleteWucai = (id: string) => {
-    if (!confirm('确认删除这条划词批注？删除后不可恢复。')) return;
-    onUpdateWucaiHighlights(wucaiHighlights.filter((h) => h.id !== id));
-    showToast('🗑️ 划词批注已删除');
+    void confirm({ title: '删除这条划词批注？', description: '删除后不可恢复。', confirmLabel: '删除', tone: 'danger' }).then((ok) => {
+      if (!ok) return;
+      onUpdateWucaiHighlights(wucaiHighlights.filter((h) => h.id !== id));
+      showToast('划词批注已删除');
+    });
   };
 
   const handleSyncWucaiToObsidian = async (hl: WucaiHighlight) => {
@@ -1375,13 +1383,16 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
   };
 
   const handleDeleteYoudao = (id: string) => {
-    if (!confirm('确认删除这条有道笔记？删除后不可恢复。')) return;
-    onUpdateYoudaoNotes(youdaoNotes.filter((n) => n.id !== id));
-    showToast('🗑️ 有道笔记已删除');
+    void confirm({ title: '删除这条有道笔记？', description: '删除后不可恢复。', confirmLabel: '删除', tone: 'danger' }).then((ok) => {
+      if (!ok) return;
+      onUpdateYoudaoNotes(youdaoNotes.filter((n) => n.id !== id));
+      showToast('有道笔记已删除');
+    });
   };
 
   return (
     <div className="space-y-6">
+      {confirmDialog}
       {/* Platform tabs only: each one holds its own settings and its own content. */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-5 rounded-2xl bg-sh-surface border border-sh-line">
         <div>
@@ -1811,8 +1822,8 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                     <button
                       key={key}
                       title={key}
-                      onClick={() => {
-                        if (isDirty && key !== currentObsidianNote?.key && !confirm('当前笔记有未保存的修改，确定切换吗？')) {
+                      onClick={async () => {
+                        if (isDirty && key !== currentObsidianNote?.key && !(await confirm({ title: '切换笔记？', description: '当前笔记有未保存的修改，切换将丢弃。', confirmLabel: '放弃修改', tone: 'danger' }))) {
                           return;
                         }
                         void handleOpenOssFile({
@@ -1870,8 +1881,8 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   searchTerm={obsidianSearch}
                   selectedKey={currentObsidianNote?.key}
                   extraMatchKeys={contentMatchKeys}
-                  onSelectFile={(node) => {
-                    if (isDirty && node.path !== currentObsidianNote?.key && !confirm('当前笔记有未保存的修改，确定切换吗？')) {
+                  onSelectFile={async (node) => {
+                    if (isDirty && node.path !== currentObsidianNote?.key && !(await confirm({ title: '切换笔记？', description: '当前笔记有未保存的修改，切换将丢弃。', confirmLabel: '放弃修改', tone: 'danger' }))) {
                       return;
                     }
                     void handleOpenOssFile(node);
@@ -2579,7 +2590,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       {/* ========================================================================= */}
       {showIndexPanel && (
         <div
-          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-[var(--sh-overlay)] backdrop-blur-sm"
           onClick={() => setShowIndexPanel(false)}
         >
           <div
@@ -2695,7 +2706,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       {/* MODAL: 保存冲突（云端已被其他客户端修改） */}
       {/* ========================================================================= */}
       {conflictState && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-[var(--sh-overlay)] backdrop-blur-sm">
           <div className="w-full max-w-lg bg-sh-surface border border-sh-warn/50 rounded-2xl shadow-2xl overflow-hidden">
             <div className="flex items-center gap-2 p-4 border-b border-sh-line">
               <AlertTriangle className="w-4 h-4 text-sh-warn shrink-0" />
@@ -2772,7 +2783,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       {pathModal && (
         <div
           onClick={() => !pathBusy && setPathModal(null)}
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-[var(--sh-overlay)] backdrop-blur-sm"
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -2854,7 +2865,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       {isCreateObsidianModalOpen && (
         <div 
           onClick={() => setIsCreateObsidianModalOpen(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[var(--sh-overlay)] backdrop-blur-sm animate-in fade-in"
         >
           <div 
             onClick={(e) => e.stopPropagation()}
@@ -2917,7 +2928,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       {isAddWucaiModalOpen && (
         <div 
           onClick={() => setIsAddWucaiModalOpen(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[var(--sh-overlay)] backdrop-blur-sm animate-in fade-in"
         >
           <div 
             onClick={(e) => e.stopPropagation()}
@@ -3029,7 +3040,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       {isAddYoudaoModalOpen && (
         <div 
           onClick={() => setIsAddYoudaoModalOpen(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[var(--sh-overlay)] backdrop-blur-sm animate-in fade-in"
         >
           <div 
             onClick={(e) => e.stopPropagation()}

@@ -6,6 +6,8 @@ import { MarkdownEditor, type EditorMode } from '../../components/MarkdownEditor
 
 export interface NotesPaneProps {
   notes: QuickNote[];
+  /** 深链/搜索进来的定位：挂载时选中这篇（编辑入口只有 NotesPane 一处）。 */
+  focusNoteId?: string | null;
   /** Explicit folder paths (so an empty folder survives a reload). */
   folders?: string[];
   onAddNote: (note: QuickNote) => void;
@@ -108,6 +110,7 @@ function noteAge(ts: number): string {
  * folder filters the list; a new note is created in the selected folder.
  */
 export const NotesPane: React.FC<NotesPaneProps> = ({
+  focusNoteId,
   notes,
   folders = [],
   onAddNote,
@@ -141,7 +144,8 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
   const [restorable, setRestorable] = useState<Draft | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [newFolder, setNewFolder] = useState<string | null>(null);
-  const [browsing, setBrowsing] = useState(false);
+  // 窄屏首屏给列表而不是编辑器：手机场景是「回看和必要操作」。
+  const [browsing, setBrowsing] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches);
   /** 编辑 / 预览两态；本地笔记以前只有裸 textarea，是全站唯一没有渲染的编辑器。 */
   const [editorMode, setEditorMode] = useState<EditorMode>('edit');
   /** 列表分页：1000 篇笔记不该一次画 1000 个 DOM 节点（照抄 AnnotationsPane）。 */
@@ -177,6 +181,14 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
     const draft = readDraft();
     if (draft) setRestorable(draft);
   }, []);
+
+  useEffect(() => {
+    if (focusNoteId && notes.some((note) => note.id === focusNoteId)) {
+      setSelectedId(focusNoteId);
+      setBrowsing(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusNoteId]);
 
   useEffect(() => {
     if (!selected) {

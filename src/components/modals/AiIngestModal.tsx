@@ -5,6 +5,7 @@ import { parseTextWithLLM, ParsedEntities } from '../../lib/aiParser';
 import { maskSecrets, rehydrateValue, describeFindings, type MaskResult } from '../../lib/secretMask';
 import { encryptText, createMaskedPreview } from '../../lib/crypto';
 import { SiteIcon } from '../SiteIcon';
+import { showToast as showToastGlobal } from '../../shared/ui/toast';
 
 interface AiIngestModalProps {
   isOpen: boolean;
@@ -118,7 +119,7 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
     if (!parsedResult || importing) return;
 
     if (parsedResult.secrets.length > 0 && !masterPassword) {
-      alert('检测到敏感凭证需要加密，请先输入主密码解锁金库后再入库！');
+      showToastGlobal('检测到敏感凭证：请先解锁金库再入库', 'warn');
       onRequireUnlock();
       return;
     }
@@ -268,7 +269,7 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
       role="dialog"
       aria-modal="true"
       aria-label="AI 内容整理"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[var(--sh-overlay)] backdrop-blur-sm animate-in fade-in"
     >
       <div 
         onClick={(e) => e.stopPropagation()}

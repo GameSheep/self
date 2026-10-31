@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Key, Eye, EyeOff, Copy, Check, Shield, Trash2, Lock } from 'lucide-react';
 import { SecretItem } from '../../types';
 import { decryptText } from '../../lib/crypto';
+import { ConfirmButton } from '../../shared/ui';
 
 interface SecretCardProps {
   secret: SecretItem;
@@ -181,18 +182,16 @@ export const SecretCard: React.FC<SecretCardProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={() => {
-              if (confirm(`确定删除凭据 ${secret.name} 吗？`)) {
-                onDelete(secret.id);
-              }
-            }}
+          <ConfirmButton
+            onConfirm={() => onDelete(secret.id)}
+            confirmLabel="确认删除？"
+            confirmDetail={secret.name}
             className="opacity-100 sm:opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-sh-surface2 text-sh-subtle hover:text-sh-danger transition-opacity shrink-0"
             title="删除"
             aria-label={`删除凭据 ${secret.name}`}
           >
             <Trash2 className="w-3.5 h-3.5" aria-hidden />
-          </button>
+          </ConfirmButton>
         </div>
 
         {/* Fields: one reveal/copy row each, so revealing a key never exposes its secret. */}

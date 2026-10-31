@@ -225,7 +225,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
       role="dialog"
       aria-modal="true"
       aria-label="全局搜索"
-      className="fixed inset-0 z-50 flex items-start justify-center pt-14 sm:pt-20 p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-14 sm:pt-20 p-3 sm:p-4 bg-[var(--sh-overlay)] backdrop-blur-sm animate-in fade-in"
     >
       <div
         onClick={(event) => event.stopPropagation()}

@@ -86,7 +86,7 @@ export const CaptureConfirmDialog: React.FC<CaptureConfirmDialogProps> = ({
   const categoryOptions = Array.from(new Set([...categories.filter((c) => c !== '全部'), '默认分类']));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" data-testid={testId}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--sh-overlay)] p-4" data-testid={testId}>
       <div
         role="dialog"
         aria-modal="true"

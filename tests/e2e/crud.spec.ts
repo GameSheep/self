@@ -131,10 +131,8 @@ test.describe('核心 CRUD 与持久化', () => {
   test('空画板不会保存出一张空白卡片', async ({ page }) => {
     await gotoTab(page, '交互手绘白板');
     await page.locator('button', { hasText: '保存为卡片' }).first().click();
-    // HandwritingCard still refuses an empty canvas with a native alert() (not a
-    // ConfirmDialog): the dialog is captured by the beforeEach listener above.
-    // Only a failed *write* is reported inline at [data-testid=handwriting-save-error].
-    await expect.poll(() => dialogs.join('|')).toContain('空');
+    // 空画板拒绝保存的提示现在是全局 toast（原生 alert 已退役）。
+    await expect(page.getByText('画板还是空的')).toBeVisible();
     expect((await readState(page)).handwritings.length).toBe(0);
   });
 });

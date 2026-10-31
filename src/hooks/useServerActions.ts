@@ -80,6 +80,17 @@ export function useServerActions(state: HubState, updateState: StateUpdater) {
         };
       })
     }));
+    // 汇总给调用方：批量操作要有批量结果，而不是只看每张卡各自变色。
+    const summary = Object.values(results).reduce(
+      (acc, r) => {
+        acc.total += 1;
+        if (r.state === 'online') acc.online += 1;
+        if (r.state === 'offline') acc.offline += 1;
+        return acc;
+      },
+      { total: 0, online: 0, offline: 0 }
+    );
+    return summary;
   }, [updateState]);
 
   return { addServer, deleteServer, checkServer, checkAllServers };

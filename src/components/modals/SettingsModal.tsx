@@ -42,6 +42,7 @@ import { IntegrationCard } from '../settings/IntegrationCard';
 import { V3BackupSection } from '../settings/V3BackupSection';
 import { Button, ConfirmDialog, Section, StatusPill, VaultStateBadge, inputClass } from '../../shared/ui';
 import { showToast as showToastGlobal } from '../../shared/ui/toast';
+import { useConfirmDialog } from '../../shared/ui';
 import { Hint } from '../../shared/Hint';
 import { capabilityLabel, connectionStatus, fingerprintOf, runConnectionTest } from '../../lib/connectionState';
 import { resolveBackupTarget, type BackupPolicy, type BackupTarget } from '../../lib/backupPolicy';
@@ -308,6 +309,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [exportPassword, setExportPassword] = useState('');
   const [showExportPasswordInput, setShowExportPasswordInput] = useState(false);
   const [canRollback, setCanRollback] = useState(false);
+  const { confirm, dialog: confirmDialog } = useConfirmDialog();
   /** 加密备份导入时无会话主密码：先存文件内容，等遮蔽的密码框而不是明文 prompt()。 */
   const [pendingEncryptedRestore, setPendingEncryptedRestore] = useState<string | null>(null);
   const [restorePassword, setRestorePassword] = useState('');
@@ -358,7 +360,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      alert(`导出失败：${err instanceof Error ? err.message : '未知错误'}`);
+      showToastGlobal(`导出失败：${err instanceof Error ? err.message : '未知错误'}`, 'danger');
     }
   };
 
@@ -508,7 +510,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setShowExportPasswordInput(false);
       setExportPassword('');
     } catch (err: any) {
-      alert(`加密导出失败: ${err.message || '未知错误'}`);
+      showToastGlobal(`加密导出失败：${err.message || '未知错误'}`, 'danger');
     } finally {
       setIsExportingEncrypted(false);
     }
@@ -575,25 +577,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleRollback = async () => {
-    if (!confirm('确定撤销上一次备份导入，恢复到导入前的数据吗？')) return;
+    if (!(await confirm({ title: '撤销上一次备份导入？', description: '恢复到导入前的数据。', confirmLabel: '撤销并恢复', tone: 'danger' }))) return;
     const restored = restoreRollbackSnapshot();
     if (!restored) {
-      alert('❌ 没有可用的回滚快照（快照仅在本次浏览器会话内有效）');
+      showToastGlobal('没有可用的回滚快照（仅本次会话内有效）', 'warn');
       setCanRollback(false);
       return;
     }
     const applied = await Promise.resolve(onRestoreState(restored));
     if (applied === false) {
-      alert('❌ 回滚没有写入本机库，请查看页面顶部的提示');
+      showToastGlobal('回滚没有写入本机库，请看页面顶部提示', 'danger');
       return;
     }
     setCanRollback(false);
-    alert('✅ 已回滚到导入前的数据');
-    onClose();
+    showToastGlobal('已回滚到导入前的数据', 'ok');
   };
 
   const handleResetData = () => {
-    if (confirm('⚠️ 警告：确定彻底清空所有本地数据并恢复纯净出厂状态吗？这将清除全部本地缓存、旧测试数据与历史记录。')) {
+    void confirm({
+      title: '彻底清空所有本地数据？',
+      description: '将清除全部本地缓存、旧测试数据与历史记录，恢复纯净出厂状态；云端已备份的快照不受影响。此操作无法撤销。',
+      confirmLabel: '清空全部数据',
+      tone: 'danger'
+    }).then((ok) => {
+      if (!ok) return;
       void (async () => {
         try {
           const removed = await deleteAllDatabases();
@@ -607,11 +614,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         } catch {}
         saveHubState(INITIAL_STATE);
         onRestoreState(INITIAL_STATE);
-        alert('✅ 本地数据与缓存已彻底清空，已重置为纯净出厂状态！');
+        showToastGlobal('本地数据与缓存已彻底清空，已恢复出厂状态', 'ok');
         onClose();
         window.location.reload();
       })();
-    }
+    });
   };
 
   /* ---------------------------------------------------------------------- */
@@ -1311,18 +1318,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         // Never clobber a newer cloud snapshot silently: ask first.
                         const res = await onBackupNow(false);
                         if (res.ok) {
-                          alert('✅ 已备份到云端');
+                          showToastGlobal('已备份到云端', 'ok');
                           return;
                         }
                         if (res.conflict) {
-                          alert(`⚠️ ${res.error || '云端备份比本机新，已把本地快照另存到 conflicts 目录'}`);
-                          if (confirm('云端备份比本机更新（可能来自另一台设备）。\n\n仍要用本机数据覆盖云端吗？')) {
-                            const forced = await onBackupNow(true);
-                            alert(forced.ok ? '✅ 已用本机数据覆盖云端备份' : `⚠️ ${forced.error || '仍然失败'}`);
-                          }
+                          showToastGlobal(res.error || '云端备份比本机新，本地快照已另存到 conflicts 目录', 'warn');
+                          if (!(await confirm({ title: '覆盖云端备份？', description: '云端备份比本机更新（可能来自另一台设备）。仍要用本机数据覆盖云端吗？', confirmLabel: '覆盖云端', tone: 'danger' }))) return;
+                          const forced = await onBackupNow(true);
+                          showToastGlobal(forced.ok ? '已用本机数据覆盖云端备份' : forced.error || '覆盖失败', forced.ok ? 'ok' : 'danger');
                           return;
                         }
-                        alert(`⚠️ 备份失败：${res.error || '未知原因'}`);
+                        showToastGlobal(`备份失败：${res.error || '未知原因'}`, 'danger');
                       }}
                       disabled={backupStatus?.status === 'saving' || !onBackupNow}
                       data-testid="backup-now"
@@ -1340,22 +1346,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             ? await readStateBackupFromWebdav(webdavConfig)
                             : await readStateBackup(obsidianConfig);
                         if (!res.ok || !res.backup) {
-                          alert(`⚠️ 无法读取云端备份：${res.error || '未知原因'}`);
+                          showToastGlobal(`无法读取云端备份：${res.error || '未知原因'}`, 'danger');
                           return;
                         }
                         const when = res.backup.envelope.updatedAt
                           ? new Date(res.backup.envelope.updatedAt).toLocaleString()
                           : '未知时间';
                         if (
-                          !confirm(
-                            `从云端恢复备份？\n\n备份时间：${when}\n来源设备：${res.backup.envelope.deviceId}\n\n当前本机数据会被这份备份覆盖（建议先「立即备份」把当前状态存上去）。`
-                          )
+                          !(await confirm({
+                            title: '从云端恢复备份？',
+                            description: `备份时间：${when} · 来源设备：${res.backup.envelope.deviceId}。当前本机数据会被这份备份覆盖（建议先「立即备份」把当前状态存上去）。`,
+                            confirmLabel: '恢复',
+                            tone: 'danger'
+                          }))
                         ) {
                           return;
                         }
                         // Credentials never travel in the backup; keep the local ones.
                         onRestoreState(mergeRestoredState(res.backup.envelope.state, state));
-                        alert('✅ 已从云端恢复');
+                        showToastGlobal('已从云端恢复', 'ok');
                       }}
                       data-testid="restore-from-cloud"
                     >
@@ -1453,7 +1462,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     variant="secondary"
                     size="sm"
                     icon={<Download className="w-3.5 h-3.5" />}
-                    onClick={() => {
+                    onClick={async () => {
                       // The plaintext export is the one artifact that DOES contain
                       // credentials, so make the user acknowledge it once.
                       const hasSecrets = Boolean(
@@ -1465,11 +1474,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       );
                       if (
                         hasSecrets &&
-                        !confirm(
-                          '导出的是明文 JSON，其中的 OSS 密钥、WebDAV 密码、AI Key 等会以可读形式保存到文件。\n\n' +
-                            '请只存放在可信位置，不要上传到网盘或发给他人。\n\n' +
-                            '如需安全转移，请改用「导出加密包」。\n\n仍要导出明文吗？'
-                        )
+                        !(await confirm({
+                          title: '仍要导出明文？',
+                          description: '明文 JSON 里的 OSS 密钥、WebDAV 密码、AI Key 会以可读形式写入文件。只存可信位置，不要上传网盘；安全转移请改用「导出加密包」。',
+                          confirmLabel: '导出明文',
+                          tone: 'danger'
+                        }))
                       ) {
                         return;
                       }
@@ -1594,15 +1604,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           const turningOff = extSync.provider !== 'none';
                           if (
                             turningOff &&
-                            !confirm(
-                              '关闭扩展自带同步？\n\n站点、批注、收件箱之后由本应用的「全量备份」统一负责，云端已写入的旧文件不会被删除。'
-                            )
+                            !(await confirm({
+                              title: '关闭扩展自带同步？',
+                              description: '站点、批注、收件箱之后由「全量备份」统一负责；云端已写入的旧文件不会被删除。',
+                              confirmLabel: '关闭同步'
+                            }))
                           ) {
                             return;
                           }
                           const ok = await setExtensionSyncEnabled(!turningOff);
                           if (!ok) {
-                            alert('⚠️ 修改失败，请稍后重试');
+                            showToastGlobal('修改失败，请稍后重试', 'danger');
                             return;
                           }
                           setExtSync(await readExtensionSyncState());
@@ -1844,6 +1856,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
       </div>
 
+      {confirmDialog}
+
       <ConfirmDialog
         open={pendingEncryptedRestore !== null}
         title="输入主密码以解密这份加密备份"
@@ -1943,7 +1957,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     return (
       <div
         onClick={onClose}
-        className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in"
+        className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[var(--sh-overlay)] backdrop-blur-sm animate-in fade-in"
       >
         {panel}
       </div>

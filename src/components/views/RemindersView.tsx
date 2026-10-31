@@ -546,7 +546,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
       {isModalOpen && (
         <div
           onClick={() => setIsModalOpen(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[var(--sh-overlay)] backdrop-blur-sm"
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -675,7 +675,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
       {editingReminder && (
         <div
           onClick={() => setEditingReminder(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[var(--sh-overlay)] backdrop-blur-sm"
         >
           <div
             onClick={(e) => e.stopPropagation()}

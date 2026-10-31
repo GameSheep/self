@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from "react";
 import { Globe, Info, Lock, Plus, Search, ShieldCheck } from 'lucide-react';
 import type { SecretItem } from '../../types';
 import { SecretCard } from '../../components/cards/SecretCard';
@@ -57,6 +57,12 @@ export const VaultView: React.FC<VaultViewProps> = ({
   const [category, setCategory] = useState<string>('all');
   /** 展开状态按站点记录（组内默认只渲染前 30 条）。 */
   const [expandedSites, setExpandedSites] = useState<Record<string, boolean>>({});
+  // 锁定承诺清空「已解密值与搜索缓存」：搜索词也一并清掉，口径与承诺一致。
+  useEffect(() => {
+    const clear = () => setQuery('');
+    window.addEventListener('selfhub:vault-locked', clear);
+    return () => window.removeEventListener('selfhub:vault-locked', clear);
+  }, []);
 
   const categories = useMemo(() => Array.from(new Set(secrets.map((s) => s.category))), [secrets]);
 
