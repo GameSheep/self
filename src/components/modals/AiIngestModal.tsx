@@ -272,23 +272,23 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
     >
       <div 
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-4xl max-h-[90vh] bg-sh-surface border border-zinc-800 rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-in slide-in-from-bottom-2"
+        className="w-full max-w-4xl max-h-[90vh] bg-sh-surface border border-sh-line rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-in slide-in-from-bottom-2"
       >
         
         {/* Header */}
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-zinc-800">
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-sh-line">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-100">
-              <Sparkles className="w-4 h-4 text-amber-400" />
+            <div className="w-8 h-8 rounded-lg bg-sh-surface2 flex items-center justify-center text-sh-fg">
+              <Sparkles className="w-4 h-4 text-sh-warn" />
             </div>
             <div>
-              <h2 className="text-xs sm:text-sm font-semibold text-zinc-100">AI 高精准分拣与存储位置指定</h2>
-              <p className="text-[11px] sm:text-xs text-zinc-400">
+              <h2 className="text-xs sm:text-sm font-semibold text-sh-fg">AI 高精准分拣与存储位置指定</h2>
+              <p className="text-[11px] sm:text-xs text-sh-muted">
                 支持粘贴微信、聊天记录与乱七八糟笔记，AI 解析后由您在预览中自主选择存储分区
               </p>
             </div>
           </div>
-          <button onClick={requestClose} aria-label="关闭整理窗口" className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white">
+          <button onClick={requestClose} aria-label="关闭整理窗口" className="p-1 rounded-lg hover:bg-sh-surface2 text-sh-muted hover:text-sh-fg">
             <X className="w-4 h-4" aria-hidden />
           </button>
         </div>
@@ -298,12 +298,12 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
           {!parsedResult ? (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-medium text-zinc-300">
+                <label className="text-xs font-medium text-sh-muted">
                   粘贴您要整理的大段文本：
                 </label>
                 <button
                   onClick={handleSampleFill}
-                  className="text-xs text-sky-400 hover:underline"
+                  className="text-xs text-sh-info hover:underline"
                 >
                   填入高保真实测样例
                 </button>
@@ -314,18 +314,18 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                 onChange={(e) => setRawText(e.target.value)}
                 rows={9}
                 placeholder="直接粘贴任意杂乱文本，例如：\n测试服务器 1.2.3.4 root 端口22 (下个月18号到期需续费¥199)\n平时刷的网站 https://juejin.cn\nChatGPT Plus 订阅：每月20号扣款 $20\nAPI Key: sk-example-938210931209312388421\n关于架构和Docker配置的长篇备忘..."
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3.5 text-xs text-zinc-200 font-mono placeholder-zinc-600 focus:outline-none focus:border-zinc-700 resize-none leading-relaxed"
+                className="w-full bg-sh-surface2 border border-sh-line rounded-xl p-3.5 text-xs text-sh-fg font-mono placeholder:text-sh-subtle focus:outline-none focus:border-sh-line-strong resize-none leading-relaxed"
               />
 
               {errorMsg && (
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-red-950/40 border border-red-800/40 text-red-400 text-xs mt-2">
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-sh-danger/10 border border-sh-danger/50 text-sh-danger text-xs mt-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{errorMsg}</span>
                 </div>
               )}
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-4">
-                <span className="text-xs text-zinc-400 font-mono">
+                <span className="text-xs text-sh-muted font-mono">
                   {aiConfig.apiKey && aiConfig.cloudAiEnabled === true
                     ? `云端引擎: ${aiConfig.model || 'Gemini 2.5 Flash'}（内容会发送到该服务商）`
                     : '内置本地规则引擎（离线即时，内容不离开本机）'}
@@ -334,7 +334,7 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                 <button
                   onClick={handleAnalyze}
                   disabled={loading || !rawText.trim()}
-                  className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-900 hover:bg-white text-xs font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50 shadow-sm"
+                  className="px-4 py-2 rounded-xl bg-sh-accent text-sh-accent-fg text-xs font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50 shadow-sm"
                 >
                   <Sparkles className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                   <span>{loading ? '正在解析语义与结构...' : '开始高精准识别'}</span>
@@ -344,7 +344,7 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
               {/* Be explicit about the privacy boundary before anything is sent. */}
               {aiConfig.apiKey && aiConfig.cloudAiEnabled === true && (
                 <div
-                  className="mt-3 flex items-start gap-2 rounded-xl border border-amber-900/60 bg-amber-950/25 px-3 py-2 text-[11px] text-amber-300 leading-relaxed"
+                  className="mt-3 flex items-start gap-2 rounded-xl border border-sh-warn/50 bg-sh-warn/10 px-3 py-2 text-[11px] text-sh-warn leading-relaxed"
                   data-testid="cloud-ai-warning"
                 >
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -359,21 +359,21 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
               {/* What the masker removed before sending. */}
               {maskInfo && maskInfo.findings.length > 0 && (
                 <div
-                  className="mt-3 rounded-xl border border-emerald-900/60 bg-emerald-950/25 px-3 py-2 text-[11px] text-emerald-300 leading-relaxed"
+                  className="mt-3 rounded-xl border border-sh-ok/40 bg-sh-ok/10 px-3 py-2 text-[11px] text-sh-ok leading-relaxed"
                   data-testid="mask-report"
                 >
                   <div className="flex items-center gap-2">
                     <ShieldCheck className="w-4 h-4 shrink-0" />
                     <span>{describeFindings(maskInfo.findings)}，发送前已替换为占位符。</span>
                   </div>
-                  <ul className="mt-2 space-y-0.5 font-mono text-[10px] text-emerald-200/80">
+                  <ul className="mt-2 space-y-0.5 font-mono text-[10px] text-sh-ok">
                     {maskInfo.findings.map((f, i) => (
                       <li key={i} data-mask-kind={f.kind}>
                         {f.kind}：{f.preview}
                       </li>
                     ))}
                   </ul>
-                  <p className="mt-2 text-[10px] text-emerald-200/70">
+                  <p className="mt-2 text-[10px] text-sh-ok">
                     原始值只在本机保存；若模型原样保留占位符，入库时会自动还原为真实值。
                   </p>
                 </div>
@@ -382,13 +382,13 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
           ) : (
             /* Review & Destination Selector Screen */
             <div className="space-y-4">
-              <div className="flex items-center justify-between bg-zinc-900/60 p-3 rounded-xl border border-zinc-800">
-                <div className="text-xs text-zinc-300">
+              <div className="flex items-center justify-between bg-sh-surface2 p-3 rounded-xl border border-sh-line">
+                <div className="text-xs text-sh-muted">
                   ✅ 识别完成，请在下方<strong>核对并指定各项存储分区</strong>：
                 </div>
                 <button
                   onClick={() => setParsedResult(null)}
-                  className="text-xs text-zinc-400 hover:text-zinc-200 underline"
+                  className="text-xs text-sh-muted hover:text-sh-fg underline"
                 >
                   重新输入
                 </button>
@@ -398,17 +398,17 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                   success. Say it out loud, with the provider's reason. */}
               {parsedResult.warning && (
                 <div
-                  className="rounded-xl border border-amber-900/60 bg-amber-950/25 px-3 py-2 text-[11px] text-amber-300 leading-relaxed"
+                  className="rounded-xl border border-sh-warn/50 bg-sh-warn/10 px-3 py-2 text-[11px] text-sh-warn leading-relaxed"
                   data-testid="ai-fallback-warning"
                 >
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                     <div>
                       <div className="font-medium">云端 AI 调用失败，已改用本地规则</div>
-                      <p className="mt-1 font-mono text-[10px] text-amber-200/80 break-all">
+                      <p className="mt-1 font-mono text-[10px] text-sh-warn break-all">
                         {parsedResult.warning}
                       </p>
-                      <p className="mt-1 text-[10px] text-amber-200/70">
+                      <p className="mt-1 text-[10px] text-sh-warn">
                         常见原因：模型名与服务商不匹配、Key 失效或额度用尽。可到「设置 → 连接与任务 → AI 模型」核对。
                       </p>
                     </div>
@@ -419,21 +419,21 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                   should still be able to see what was withheld from the provider. */}
               {maskInfo && maskInfo.findings.length > 0 && (
                 <div
-                  className="rounded-xl border border-emerald-900/60 bg-emerald-950/25 px-3 py-2 text-[11px] text-emerald-300 leading-relaxed"
+                  className="rounded-xl border border-sh-ok/40 bg-sh-ok/10 px-3 py-2 text-[11px] text-sh-ok leading-relaxed"
                   data-testid="mask-report"
                 >
                   <div className="flex items-center gap-2">
                     <ShieldCheck className="w-4 h-4 shrink-0" />
                     <span>{describeFindings(maskInfo.findings)}，发送前已替换为占位符。</span>
                   </div>
-                  <ul className="mt-2 space-y-0.5 font-mono text-[10px] text-emerald-200/80">
+                  <ul className="mt-2 space-y-0.5 font-mono text-[10px] text-sh-ok">
                     {maskInfo.findings.map((f, i) => (
                       <li key={i} data-mask-kind={f.kind}>
                         {f.kind}：{f.preview}
                       </li>
                     ))}
                   </ul>
-                  <p className="mt-2 text-[10px] text-emerald-200/70">
+                  <p className="mt-2 text-[10px] text-sh-ok">
                     原始值只在本机保存；入库时会自动还原为真实值。
                   </p>
                 </div>
@@ -442,28 +442,28 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
               {/* Sites with Destination Category Selector */}
               {parsedResult.sites.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-zinc-400 flex items-center gap-1.5">
-                    <Globe className="w-3.5 h-3.5 text-sky-400" />
+                  <h4 className="text-xs font-semibold text-sh-muted flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-sh-info" />
                     网站与工具 ({parsedResult.sites.length}) · 请确认存储分类
                   </h4>
                   <div className="space-y-2">
                     {parsedResult.sites.map((s, i) => (
-                      <div key={i} className="p-3 rounded-xl bg-zinc-900/70 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div key={i} className="p-3 rounded-xl bg-sh-surface2 border border-sh-line flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
                           <SiteIcon url={s.url || ''} title={s.title} size={28} rounded="md" />
                           <div className="min-w-0 flex-1">
-                            <div className="font-semibold text-zinc-200 text-xs truncate">{s.title}</div>
-                            <div className="text-zinc-400 font-mono text-[11px] truncate">{s.url}</div>
+                            <div className="font-semibold text-sh-fg text-xs truncate">{s.title}</div>
+                            <div className="text-sh-muted font-mono text-[11px] truncate">{s.url}</div>
                           </div>
                         </div>
 
                         {/* Storage Category Selector */}
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[11px] text-zinc-400 whitespace-nowrap">存入分类:</span>
+                          <span className="text-[11px] text-sh-muted whitespace-nowrap">存入分类:</span>
                           <select
                             value={siteCategories[i] || s.category || categories[1] || '常用工具'}
                             onChange={(e) => setSiteCategories(prev => ({ ...prev, [i]: e.target.value }))}
-                            className="bg-zinc-800 border border-zinc-700 text-xs text-zinc-200 rounded-lg px-2 py-1 focus:outline-none"
+                            className="bg-sh-surface2 border border-sh-line-strong text-xs text-sh-fg rounded-lg px-2 py-1 focus:outline-none"
                           >
                             {Array.from(new Set([
                               ...categories.filter(c => c !== '全部'),
@@ -482,26 +482,26 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
               {/* Servers with Env Selector */}
               {parsedResult.servers.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-zinc-400 flex items-center gap-1.5">
-                    <Server className="w-3.5 h-3.5 text-emerald-400" />
+                  <h4 className="text-xs font-semibold text-sh-muted flex items-center gap-1.5">
+                    <Server className="w-3.5 h-3.5 text-sh-ok" />
                     服务器与主机部署 ({parsedResult.servers.length}) · 请选择环境级别
                   </h4>
                   <div className="space-y-2">
                     {parsedResult.servers.map((srv, i) => (
-                      <div key={i} className="p-3 rounded-xl bg-zinc-900/70 border border-zinc-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div key={i} className="p-3 rounded-xl bg-sh-surface2 border border-sh-line flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                         <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-zinc-200 text-xs truncate">{srv.name}</div>
-                          <div className="text-zinc-400 font-mono text-[11px]">
+                          <div className="font-semibold text-sh-fg text-xs truncate">{srv.name}</div>
+                          <div className="text-sh-muted font-mono text-[11px]">
                             {srv.publicIp}:{srv.port} ({srv.sshUser})
                           </div>
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[11px] text-zinc-400 whitespace-nowrap">部署级别:</span>
+                          <span className="text-[11px] text-sh-muted whitespace-nowrap">部署级别:</span>
                           <select
                             value={serverEnvs[i] || srv.env || 'prod'}
                             onChange={(e) => setServerEnvs(prev => ({ ...prev, [i]: e.target.value as any }))}
-                            className="bg-zinc-800 border border-zinc-700 text-xs text-zinc-200 rounded-lg px-2 py-1 focus:outline-none"
+                            className="bg-sh-surface2 border border-sh-line-strong text-xs text-sh-fg rounded-lg px-2 py-1 focus:outline-none"
                           >
                             <option value="prod">生产环境 (PROD)</option>
                             <option value="test">测试环境 (TEST)</option>
@@ -517,16 +517,16 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
               {/* Secrets with Category Selector */}
               {parsedResult.secrets.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-zinc-400 flex items-center gap-1.5">
-                    <Key className="w-3.5 h-3.5 text-amber-400" />
+                  <h4 className="text-xs font-semibold text-sh-muted flex items-center gap-1.5">
+                    <Key className="w-3.5 h-3.5 text-sh-warn" />
                     敏感凭据 (将以 AES-256 加密存入金库) ({parsedResult.secrets.length})
                   </h4>
                   <div className="space-y-2">
                     {parsedResult.secrets.map((sec, i) => (
-                      <div key={i} className="p-3 rounded-xl bg-zinc-900/70 border border-amber-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div key={i} className="p-3 rounded-xl bg-sh-surface2 border border-sh-warn/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                         <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-zinc-200 text-xs truncate">{sec.name}</div>
-                          <div className="text-zinc-400 font-mono text-[11px]">
+                          <div className="font-semibold text-sh-fg text-xs truncate">{sec.name}</div>
+                          <div className="text-sh-muted font-mono text-[11px]">
                             {sec.encryptedValue
                               ? `${sec.maskedPreview || '••••••••'}（已是加密凭据，将原样保留）`
                               : sec.rawValue
@@ -536,11 +536,11 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[11px] text-zinc-400 whitespace-nowrap">凭证类型:</span>
+                          <span className="text-[11px] text-sh-muted whitespace-nowrap">凭证类型:</span>
                           <select
                             value={secretCategories[i] || sec.category || 'api_key'}
                             onChange={(e) => setSecretCategories(prev => ({ ...prev, [i]: e.target.value as any }))}
-                            className="bg-zinc-800 border border-zinc-700 text-xs text-zinc-200 rounded-lg px-2 py-1 focus:outline-none"
+                            className="bg-sh-surface2 border border-sh-line-strong text-xs text-sh-fg rounded-lg px-2 py-1 focus:outline-none"
                           >
                             <option value="api_key">API Key</option>
                             <option value="ssh_key">SSH 秘钥口令</option>
@@ -556,15 +556,15 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
               {/* Extracted Knowledge Notes */}
               {parsedResult.notes.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-zinc-400 flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5 text-purple-400" />
+                  <h4 className="text-xs font-semibold text-sh-muted flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-sh-focus" />
                     深度知识与备忘 ({parsedResult.notes.length}) · 存入知识库
                   </h4>
                   <div className="space-y-2">
                     {parsedResult.notes.map((n, i) => (
-                      <div key={i} className="p-3 rounded-xl bg-zinc-900/70 border border-zinc-800 text-xs">
-                        <div className="font-semibold text-zinc-200 mb-1">{n.title}</div>
-                        <div className="text-zinc-400 font-mono text-[11px] line-clamp-2">{n.content}</div>
+                      <div key={i} className="p-3 rounded-xl bg-sh-surface2 border border-sh-line text-xs">
+                        <div className="font-semibold text-sh-fg mb-1">{n.title}</div>
+                        <div className="text-sh-muted font-mono text-[11px] line-clamp-2">{n.content}</div>
                       </div>
                     ))}
                   </div>
@@ -572,17 +572,17 @@ Google Gemini API Key: AIzaSyDemoKeyExampleDoNotUseInProd 用于主力AI代码�
               )}
 
               {/* Action Buttons */}
-              <div className="flex items-center justify-end gap-2 pt-4 border-t border-zinc-800">
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-sh-line">
                 <button
                   onClick={() => setParsedResult(null)}
-                  className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs"
+                  className="px-4 py-2 rounded-xl bg-sh-surface2 hover:bg-sh-surface2 text-sh-muted text-xs"
                 >
                   放弃重置
                 </button>
                 <button
                   onClick={handleConfirmImport}
                   disabled={importing}
-                  className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-900 hover:bg-white text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-xl bg-sh-accent text-sh-accent-fg text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <Check className="w-3.5 h-3.5" />
                   <span>{importing ? '正在加密入库...' : '确认存储位置，一键全部入库'}</span>

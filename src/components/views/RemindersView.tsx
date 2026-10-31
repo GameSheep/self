@@ -29,6 +29,7 @@ import { notificationPermission, requestNotificationPermission, notificationsSup
 import { isExtensionContext } from '../../lib/extensionBridge';
 import { renewReminderOccurrence } from '../../hooks/useReminderActions';
 import { Button, EmptyState, StatusPill, inputClass } from '../../shared/ui';
+import { showToast as showToastGlobal } from '../../shared/ui/toast';
 
 interface RemindersViewProps {
   reminders: ReminderItem[];
@@ -109,10 +110,12 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
   onRenewReminder
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 当前展开「历史」的行：一次只展开一条，折叠着的行高保持常量。 */
   const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
+  // 委托全局 toast：tone 按内容推断（失败/无效→danger，⚠→warn），emoji 前缀剥离。
+  const showToast = (msg: string) => {
+    showToastGlobal(msg, /失败|无效|无法/.test(msg) ? 'danger' : /⚠|已取消|未再次/.test(msg) ? 'warn' : 'ok');
+  };
 
   // Form states (Create)
   const [title, setTitle] = useState('');
@@ -134,16 +137,6 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
   const [editUrl, setEditUrl] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editAutoRollover, setEditAutoRollover] = useState(false);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToastMessage(null), 3200);
-  };
-
-  useEffect(() => () => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-  }, []);
 
   const now = Date.now();
 
@@ -516,13 +509,6 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-sh-surface border border-sh-line text-sh-fg text-xs font-mono shadow-2xl flex items-center gap-2">
-          <Check className="w-4 h-4 text-sh-ok shrink-0" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
-
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-sh-surface p-4 sm:p-5 rounded-2xl border border-sh-line">
         <div>
           <div className="flex items-center gap-2">

@@ -50,7 +50,7 @@ export const Markdown: React.FC<MarkdownProps> = React.memo(function Markdown({
                         {item}
                       </span>
                     ))
-                  : field.value || <span className="text-zinc-500">—</span>}
+                  : field.value || <span className="text-sh-subtle">—</span>}
               </span>
             </div>
           ))}
@@ -65,7 +65,7 @@ export const Markdown: React.FC<MarkdownProps> = React.memo(function Markdown({
 
       {rendered.nodes}
 
-      {!content.trim() && <p className="md-p text-zinc-500">暂无正文内容</p>}
+      {!content.trim() && <p className="md-p text-sh-subtle">暂无正文内容</p>}
     </div>
   );
 });

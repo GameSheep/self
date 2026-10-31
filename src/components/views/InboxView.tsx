@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { InboxItem, QuickNote, NavSite, ProjectItem } from '../../types';
 import { ConfirmDialog } from '../../shared/ui';
+import { showToast as showToastGlobal } from '../../shared/ui/toast';
 import type { BatchPreview, ConversionResult } from '../../hooks/useInboxActions';
 
 interface InboxViewProps {
@@ -55,7 +56,6 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [quickInput, setQuickInput] = useState('');
   const [quickTitle, setQuickTitle] = useState('');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
   /**
    * Items converted during this session stay in the current list so the user can
    * see the outcome and open the original target. Cleared when the filter
@@ -69,13 +69,10 @@ export const InboxView: React.FC<InboxViewProps> = ({
   const [editContent, setEditContent] = useState('');
   const [editType, setEditType] = useState<'text' | 'url' | 'snippet'>('text');
 
-  // One timer handle per view: without clearing, a second toast within 2.5s was
-  // cut short by the first toast's timer.
-  const toastTimerRef = useRef<number | null>(null);
+  // 现在委托给全局 showToast（tone 由内容推断，emoji 前缀在 Toast 层统一剥离），
+  // 本视图不再自带一套 2500ms 的绿色对勾。
   const showToast = (msg: string) => {
-    setToastMessage(msg);
-    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToastMessage(null), 2500);
+    showToastGlobal(msg, /失败|无法|未能/.test(msg) ? 'danger' : /⚠|不能/.test(msg) ? 'warn' : 'ok');
   };
 
   const isUrl = (text: string) => /^https?:\/\//i.test(text.trim());
@@ -232,27 +229,19 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
   return (
     <div className="space-y-5">
-      {/* Toast Alert */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-100 text-xs font-mono shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
-
       {/* View Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-sh-surface p-4 sm:p-5 rounded-2xl border border-sh-line">
         <div>
-          <h2 className="text-sm sm:text-base font-semibold text-zinc-100 flex items-center gap-2">
-            <Inbox className="w-4 h-4 text-indigo-400" />
+          <h2 className="text-sm sm:text-base font-semibold text-sh-fg flex items-center gap-2">
+            <Inbox className="w-4 h-4 text-sh-info" />
             <span>统一极速收件箱 (Quick Inbox)</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-indigo-950/70 text-indigo-300 border border-indigo-800/60">
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-sh-info/10 text-sh-info border border-sh-info/40">
               待整理: {pendingCount}
             </span>
           </h2>
           {/* Hidden on phones: the subtitle is four lines of chrome above a list
               that is the only thing worth screen space there. */}
-          <p className="hidden sm:block text-xs text-zinc-400 mt-0.5">
+          <p className="hidden sm:block text-xs text-sh-muted mt-0.5">
             快速倾倒临时灵感、网页链接、代码片段，后续无缝分流至「知识文档」、「常用书签」或「项目空间」
           </p>
         </div>
@@ -265,14 +254,14 @@ export const InboxView: React.FC<InboxViewProps> = ({
               <button
                 onClick={() => setBatchTarget('note')}
                 data-testid="inbox-batch-note"
-                className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-[11px] text-zinc-300 hover:text-white transition-colors whitespace-nowrap"
+                className="px-2.5 py-1.5 rounded-xl bg-sh-surface2 border border-sh-line hover:border-sh-line-strong text-[11px] text-sh-muted hover:text-sh-fg transition-colors whitespace-nowrap"
               >
                 批量转为笔记 ({pendingCount})
               </button>
               <button
                 onClick={() => setBatchTarget('site')}
                 data-testid="inbox-batch-site"
-                className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-[11px] text-zinc-300 hover:text-white transition-colors whitespace-nowrap"
+                className="px-2.5 py-1.5 rounded-xl bg-sh-surface2 border border-sh-line hover:border-sh-line-strong text-[11px] text-sh-muted hover:text-sh-fg transition-colors whitespace-nowrap"
               >
                 批量存为书签
               </button>
@@ -281,7 +270,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
           {pendingCount > 0 && (
             <button
               onClick={handleBatchMarkAllProcessed}
-              className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-[11px] text-zinc-300 hover:text-white transition-colors whitespace-nowrap"
+              className="px-2.5 py-1.5 rounded-xl bg-sh-surface2 border border-sh-line hover:border-sh-line-strong text-[11px] text-sh-muted hover:text-sh-fg transition-colors whitespace-nowrap"
             >
               全部标记已处理
             </button>
@@ -289,7 +278,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
           {processedCount > 0 && (
             <button
               onClick={handleBatchClearProcessed}
-              className="px-2.5 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-rose-900/60 text-[11px] text-zinc-400 hover:text-rose-400 transition-colors whitespace-nowrap"
+              className="px-2.5 py-1.5 rounded-xl bg-sh-surface2 border border-sh-line hover:border-sh-danger/50 text-[11px] text-sh-muted hover:text-sh-danger transition-colors whitespace-nowrap"
             >
               清空已处理 ({processedCount})
             </button>
@@ -300,7 +289,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
       {batchReport && (
         <div
           data-testid="inbox-batch-report"
-          className="rounded-2xl border border-amber-900/50 bg-amber-950/30 p-3 text-[11px] text-amber-300 leading-relaxed flex items-start justify-between gap-3"
+          className="rounded-2xl border border-sh-warn/50 bg-sh-warn/10 p-3 text-[11px] text-sh-warn leading-relaxed flex items-start justify-between gap-3"
         >
           <span>{batchReport}</span>
           <button onClick={() => setBatchReport(null)} className="shrink-0" aria-label="关闭">
@@ -321,7 +310,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                 <li>{batchPreview.alreadyConverted} 项此前已转换，将打开原目标而不重复创建。</li>
               )}
               {batchPreview.notConvertible > 0 && (
-                <li className="text-amber-400">{batchPreview.notConvertible} 项没有可识别的网址，无法存为书签，将保持原样。</li>
+                <li className="text-sh-warn">{batchPreview.notConvertible} 项没有可识别的网址，无法存为书签，将保持原样。</li>
               )}
               <li>失败的项目会保留在收件箱，并说明原因。</li>
             </ul>
@@ -336,19 +325,19 @@ export const InboxView: React.FC<InboxViewProps> = ({
       <div className="p-3 bg-sh-surface rounded-2xl border border-sh-line flex flex-col md:flex-row md:items-center justify-between gap-3">
         {/* Search */}
         <div className="relative flex-1 max-w-md">
-          <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-2.5" />
+          <Search className="w-3.5 h-3.5 text-sh-subtle absolute left-3 top-2.5" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索碎片内容、网址或标题..."
             aria-label="搜索碎片"
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+            className="w-full bg-sh-surface2 border border-sh-line rounded-xl pl-8 pr-3 py-1.5 text-xs text-sh-fg placeholder:text-sh-subtle focus:outline-none focus:border-sh-line-strong"
           />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-2 text-zinc-500 hover:text-zinc-300"
+              className="absolute right-2.5 top-2 text-sh-subtle hover:text-sh-fg"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -358,11 +347,11 @@ export const InboxView: React.FC<InboxViewProps> = ({
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Status filter */}
-          <div className="flex items-center gap-1 p-1 bg-zinc-900 rounded-xl border border-zinc-800 text-xs">
+          <div className="flex items-center gap-1 p-1 bg-sh-surface2 rounded-xl border border-sh-line text-xs">
             <button
               onClick={() => { setFilter('inbox'); setJustProcessed(new Set()); }}
               className={`px-2.5 py-1 rounded-lg text-xs transition-all ${
-                filter === 'inbox' ? 'bg-indigo-950/80 text-indigo-200 border border-indigo-800/80 font-medium' : 'text-zinc-400 hover:text-zinc-200'
+                filter === 'inbox' ? 'bg-sh-info/10 text-sh-fg border border-sh-info/40 font-medium' : 'text-sh-muted hover:text-sh-fg'
               }`}
             >
               待整理 ({pendingCount})
@@ -370,7 +359,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
             <button
               onClick={() => { setFilter('processed'); setJustProcessed(new Set()); }}
               className={`px-2.5 py-1 rounded-lg text-xs transition-all ${
-                filter === 'processed' ? 'bg-zinc-800 text-zinc-200 font-medium' : 'text-zinc-400 hover:text-zinc-200'
+                filter === 'processed' ? 'bg-sh-surface2 text-sh-fg font-medium' : 'text-sh-muted hover:text-sh-fg'
               }`}
             >
               已分流 ({processedCount})
@@ -378,7 +367,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
             <button
               onClick={() => { setFilter('all'); setJustProcessed(new Set()); }}
               className={`px-2.5 py-1 rounded-lg text-xs transition-all ${
-                filter === 'all' ? 'bg-zinc-800 text-zinc-200 font-medium' : 'text-zinc-400 hover:text-zinc-200'
+                filter === 'all' ? 'bg-sh-surface2 text-sh-fg font-medium' : 'text-sh-muted hover:text-sh-fg'
               }`}
             >
               全部 ({inbox.length})
@@ -386,13 +375,13 @@ export const InboxView: React.FC<InboxViewProps> = ({
           </div>
 
           {/* Type filter */}
-          <div className="flex items-center gap-1 p-1 bg-zinc-900 rounded-xl border border-zinc-800 text-[11px] font-mono">
+          <div className="flex items-center gap-1 p-1 bg-sh-surface2 rounded-xl border border-sh-line text-[11px] font-mono">
             {(['all', 'url', 'text', 'snippet'] as const).map(t => (
               <button
                 key={t}
                 onClick={() => { setTypeFilter(t); setJustProcessed(new Set()); }}
                 className={`px-2 py-0.5 rounded-lg capitalize transition-colors ${
-                  typeFilter === t ? 'bg-zinc-800 text-zinc-100 font-bold' : 'text-zinc-500 hover:text-zinc-300'
+                  typeFilter === t ? 'bg-sh-surface2 text-sh-fg font-bold' : 'text-sh-subtle hover:text-sh-fg'
                 }`}
               >
                 {t === 'all' ? '全部类型' : t === 'url' ? '链接' : t === 'text' ? '速记' : '代码'}
@@ -411,7 +400,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
           placeholder="粘贴文字、网址 (https://…) 或代码片段，Ctrl+Enter 存入；https:// 开头自动识别为链接"
           aria-label="快速存入收件箱"
           rows={2}
-          className="w-full bg-sh-bg border border-zinc-800/80 rounded-xl p-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-indigo-500 font-mono resize-none"
+          className="w-full bg-sh-bg border border-sh-line rounded-xl p-2.5 text-xs text-sh-fg placeholder:text-sh-subtle focus:outline-none focus:border-sh-line-strong font-mono resize-none"
         />
         <div className="flex items-center gap-2 mt-2">
           <input
@@ -420,12 +409,12 @@ export const InboxView: React.FC<InboxViewProps> = ({
             onChange={(e) => setQuickTitle(e.target.value)}
             placeholder="摘要标题 (可选，留空自动取内容开头)"
             aria-label="摘要标题"
-            className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-indigo-500"
+            className="flex-1 min-w-0 bg-sh-surface2 border border-sh-line rounded-xl px-3 py-1.5 text-xs text-sh-fg placeholder:text-sh-subtle focus:outline-none focus:border-sh-line-strong"
           />
           <button
             onClick={handleQuickAdd}
             disabled={!quickInput.trim()}
-            className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition-colors shrink-0"
+            className="px-3 py-1.5 rounded-xl bg-sh-accent text-sh-accent-fg hover:opacity-90 text-sh-accent-fg font-semibold text-xs flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition-colors shrink-0"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>快速存入</span>
@@ -438,10 +427,10 @@ export const InboxView: React.FC<InboxViewProps> = ({
           screen, so a backlog that grows daily became unreadable long before it
           got long. A row carries the summary plus at most one detail line; the
           actions reveal on hover (always visible on narrow/touch screens). */}
-      <div className="bg-sh-surface rounded-2xl border border-sh-line divide-y divide-zinc-800/60 overflow-hidden">
+      <div className="bg-sh-surface rounded-2xl border border-sh-line divide-y divide-sh-line overflow-hidden">
         {filteredItems.length === 0 ? (
-          <div className="py-14 text-center text-zinc-500 font-mono text-xs">
-            <Inbox className="w-7 h-7 mx-auto mb-2 opacity-40 text-indigo-400" />
+          <div className="py-14 text-center text-sh-subtle font-mono text-xs">
+            <Inbox className="w-7 h-7 mx-auto mb-2 opacity-40 text-sh-info" />
             <p>收件箱空空如也，所有碎片资料已整理完毕！</p>
           </div>
         ) : (
@@ -462,17 +451,17 @@ export const InboxView: React.FC<InboxViewProps> = ({
                 key={item.id}
                 data-testid="inbox-row"
                 className={`group flex flex-wrap items-center gap-x-3 gap-y-1 px-3 sm:px-4 py-2 transition-colors ${
-                  done ? 'bg-zinc-900/20' : 'hover:bg-zinc-900/40'
+                  done ? 'bg-sh-surface2/40' : 'hover:bg-sh-surface2/60'
                 }`}
               >
                 {/* Type chip: colour carries the kind, the icon confirms it. */}
                 <span
                   className={`shrink-0 w-6 h-6 rounded-lg flex items-center justify-center border ${
                     item.type === 'url'
-                      ? 'bg-sky-950/60 text-sky-400 border-sky-800/50'
+                      ? 'bg-sh-info/10 text-sh-info border-sh-info/40'
                       : item.type === 'snippet'
-                        ? 'bg-amber-950/60 text-amber-400 border-amber-800/50'
-                        : 'bg-purple-950/60 text-purple-400 border-purple-800/50'
+                        ? 'bg-sh-warn/10 text-sh-warn border-sh-warn/40'
+                        : 'bg-sh-focus/10 text-sh-focus border-sh-focus/40'
                   }`}
                   title={item.type === 'url' ? '链接' : item.type === 'snippet' ? '代码' : '速记'}
                 >
@@ -494,22 +483,22 @@ export const InboxView: React.FC<InboxViewProps> = ({
                       href={item.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="block truncate text-xs leading-5 text-sky-400/90 hover:text-sky-400 hover:underline"
+                      className="block truncate text-xs leading-5 text-sh-info hover:text-sh-info hover:underline"
                       title={item.url}
                     >
                       {summary}
                     </a>
                   ) : (
-                    <p className={`truncate text-xs leading-5 ${done ? 'text-zinc-400' : 'text-zinc-200'}`}>{summary}</p>
+                    <p className={`truncate text-xs leading-5 ${done ? 'text-sh-muted' : 'text-sh-fg'}`}>{summary}</p>
                   )}
                   {detail && (
-                    <p className="truncate text-[11px] leading-4 text-zinc-500 mt-0.5 font-mono">
+                    <p className="truncate text-[11px] leading-4 text-sh-subtle mt-0.5 font-mono">
                       {item.url && item.url === detail ? (
                         <a
                           href={item.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-sky-400/80 hover:text-sky-400 hover:underline"
+                          className="text-sh-info hover:text-sh-info hover:underline"
                         >
                           {detail}
                         </a>
@@ -521,13 +510,13 @@ export const InboxView: React.FC<InboxViewProps> = ({
                 </div>
 
                 {done && item.targetType && (
-                  <span className="shrink-0 hidden md:inline px-1.5 py-0.5 rounded text-[10px] font-mono text-emerald-400/90 bg-emerald-950/40 border border-emerald-900/50">
+                  <span className="shrink-0 hidden md:inline px-1.5 py-0.5 rounded text-[10px] font-mono text-sh-ok bg-sh-ok/10 border border-sh-ok/40">
                     {item.targetType === 'site' ? '已存书签' : '已转笔记'}
                   </span>
                 )}
 
                 <span
-                  className="shrink-0 text-[10px] font-mono text-zinc-500 tabular-nums"
+                  className="shrink-0 text-[10px] font-mono text-sh-subtle tabular-nums"
                   title={new Date(item.createdAt).toLocaleString()}
                 >
                   {timeLabel(item.createdAt)}
@@ -543,7 +532,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                     <button
                       onClick={() => onOpenTarget('note', item.targetId!)}
                       data-testid={`inbox-open-target-${item.id}`}
-                      className="px-2 py-1 rounded-lg border border-zinc-800 text-[11px] text-purple-300 hover:border-purple-800/60 transition-colors"
+                      className="px-2 py-1 rounded-lg border border-sh-line text-[11px] text-sh-info hover:border-sh-focus/40 transition-colors"
                       title="打开此前生成的笔记，不会重复创建"
                     >
                       打开原笔记
@@ -561,7 +550,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                         if (result.reused && result.targetId && onOpenTarget) onOpenTarget('note', result.targetId);
                       }}
                       data-testid={`inbox-convert-note-${item.id}`}
-                      className="px-2 py-1 rounded-lg border border-zinc-800 text-[11px] text-purple-300 hover:border-purple-800/60 transition-colors"
+                      className="px-2 py-1 rounded-lg border border-sh-line text-[11px] text-sh-info hover:border-sh-focus/40 transition-colors"
                       title="转为长期知识笔记并记录目标引用"
                     >
                       转为笔记
@@ -572,7 +561,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                   {done && item.targetType === 'site' && item.targetId && onOpenTarget ? (
                     <button
                       onClick={() => onOpenTarget('site', item.targetId!)}
-                      className="px-2 py-1 rounded-lg border border-zinc-800 text-[11px] text-sky-300 hover:border-sky-800/60 transition-colors"
+                      className="px-2 py-1 rounded-lg border border-sh-line text-[11px] text-sh-info hover:border-sh-info/40 transition-colors"
                       title="打开此前的收藏，不会重复创建"
                     >
                       打开原收藏
@@ -591,7 +580,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                           if (result.reused && result.targetId && onOpenTarget) onOpenTarget('site', result.targetId);
                         }}
                         data-testid={`inbox-convert-site-${item.id}`}
-                        className="px-2 py-1 rounded-lg border border-zinc-800 text-[11px] text-sky-300 hover:border-sky-800/60 transition-colors"
+                        className="px-2 py-1 rounded-lg border border-sh-line text-[11px] text-sh-info hover:border-sh-info/40 transition-colors"
                         title="添加到快捷导航收藏"
                       >
                         存为书签
@@ -609,7 +598,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                       }}
                       defaultValue=""
                       aria-label="关联到项目"
-                      className="max-w-28 truncate px-1.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 text-[11px] focus:outline-none"
+                      className="max-w-28 truncate px-1.5 py-1 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted text-[11px] focus:outline-none"
                     >
                       <option value="" disabled>关联项目...</option>
                       {projects.map((p) => (
@@ -620,7 +609,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
                   <button
                     onClick={() => handleOpenEdit(item)}
-                    className="p-1 rounded-lg text-zinc-500 hover:text-zinc-200 transition-colors"
+                    className="p-1 rounded-lg text-sh-subtle hover:text-sh-fg transition-colors"
                     title="编辑碎片内容与类型"
                     aria-label="编辑碎片内容与类型"
                   >
@@ -633,7 +622,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                         onUpdateInboxItem({ ...item, status: 'processed' });
                         showToast('已标记为已处理');
                       }}
-                      className="p-1 rounded-lg text-zinc-500 hover:text-emerald-400"
+                      className="p-1 rounded-lg text-sh-subtle hover:text-sh-ok"
                       title="标为已处理"
                       aria-label="标为已处理"
                     >
@@ -645,7 +634,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                         onUpdateInboxItem({ ...item, status: 'inbox' });
                         showToast('已重新移回待整理');
                       }}
-                      className="p-1 rounded-lg text-zinc-500 hover:text-indigo-400"
+                      className="p-1 rounded-lg text-sh-subtle hover:text-sh-info"
                       title="重新放回收件箱"
                       aria-label="重新放回收件箱"
                     >
@@ -661,7 +650,7 @@ export const InboxView: React.FC<InboxViewProps> = ({
                         showToast('🗑️ 已删除');
                       }
                     }}
-                    className="p-1 rounded-lg text-zinc-500 hover:text-rose-400"
+                    className="p-1 rounded-lg text-sh-subtle hover:text-sh-danger"
                     title="删除此碎片"
                     aria-label="删除此碎片"
                   >
@@ -678,15 +667,15 @@ export const InboxView: React.FC<InboxViewProps> = ({
       {editingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
           <div className="w-full max-w-lg bg-sh-surface border border-sh-line rounded-2xl p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+            <div className="flex items-center justify-between pb-3 border-b border-sh-line">
               <div className="flex flex-wrap items-center gap-2">
-                <Edit3 className="w-4 h-4 text-indigo-400" />
-                <h3 className="text-sm font-semibold text-zinc-100">编辑碎片灵感</h3>
+                <Edit3 className="w-4 h-4 text-sh-info" />
+                <h3 className="text-sm font-semibold text-sh-fg">编辑碎片灵感</h3>
               </div>
               <button
                 onClick={() => setEditingItem(null)}
                 aria-label="关闭编辑"
-                className="p-1 rounded-lg text-zinc-500 hover:text-zinc-300"
+                className="p-1 rounded-lg text-sh-subtle hover:text-sh-fg"
               >
                 <X className="w-4 h-4" aria-hidden />
               </button>
@@ -694,17 +683,17 @@ export const InboxView: React.FC<InboxViewProps> = ({
 
             <div className="space-y-3">
               <div>
-                <label className="block text-[11px] font-mono text-zinc-400 mb-1">标题 / 描述</label>
+                <label className="block text-[11px] font-mono text-sh-muted mb-1">标题 / 描述</label>
                 <input
                   type="text"
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-100 focus:outline-none focus:border-indigo-500"
+                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg focus:outline-none focus:border-sh-line-strong"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-mono text-zinc-400 mb-1">类型识别</label>
+                <label className="block text-[11px] font-mono text-sh-muted mb-1">类型识别</label>
                 <div className="grid grid-cols-3 gap-2">
                   {(['text', 'url', 'snippet'] as const).map(t => (
                     <button
@@ -713,8 +702,8 @@ export const InboxView: React.FC<InboxViewProps> = ({
                       onClick={() => setEditType(t)}
                       className={`py-1.5 rounded-xl border text-xs capitalize transition-colors ${
                         editType === t
-                          ? 'bg-indigo-950/80 border-indigo-700 text-indigo-200 font-medium'
-                          : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                          ? 'bg-sh-info/10 border-sh-line-strong text-sh-fg font-medium'
+                          : 'bg-sh-surface2 border-sh-line text-sh-muted hover:text-sh-fg'
                       }`}
                     >
                       {t === 'url' ? '网页链接 (URL)' : t === 'snippet' ? '代码片段' : '纯文本笔记'}
@@ -724,26 +713,26 @@ export const InboxView: React.FC<InboxViewProps> = ({
               </div>
 
               <div>
-                <label className="block text-[11px] font-mono text-zinc-400 mb-1">正文内容 (支持 Markdown / 代码)</label>
+                <label className="block text-[11px] font-mono text-sh-muted mb-1">正文内容 (支持 Markdown / 代码)</label>
                 <textarea
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                   rows={5}
-                  className="w-full bg-sh-bg border border-zinc-800 rounded-xl p-3 text-xs font-mono text-zinc-200 focus:outline-none focus:border-indigo-500 resize-none"
+                  className="w-full bg-sh-bg border border-sh-line rounded-xl p-3 text-xs font-mono text-sh-fg focus:outline-none focus:border-sh-line-strong resize-none"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800/80">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-sh-line">
               <button
                 onClick={() => setEditingItem(null)}
-                className="px-3.5 py-1.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-xs text-zinc-400 hover:text-white"
+                className="px-3.5 py-1.5 rounded-xl bg-sh-surface2 hover:bg-sh-surface2 text-xs text-sh-muted hover:text-sh-fg"
               >
                 取消
               </button>
               <button
                 onClick={handleSaveEdit}
-                className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs shadow-sm"
+                className="px-4 py-1.5 rounded-xl bg-sh-accent text-sh-accent-fg hover:opacity-90 text-sh-accent-fg font-medium text-xs shadow-sm"
               >
                 保存修改
               </button>

@@ -14,10 +14,10 @@ interface VaultSearchResultsProps {
 }
 
 const FIELD_META: Record<SearchHit['field'], { label: string; icon: React.ReactNode; className: string }> = {
-  title: { label: '标题', icon: <FileText className="w-3 h-3" />, className: 'text-purple-300 bg-purple-950/50 border-purple-800/60' },
-  content: { label: '正文', icon: <Search className="w-3 h-3" />, className: 'text-sky-300 bg-sky-950/50 border-sky-800/60' },
-  tag: { label: '标签', icon: <Hash className="w-3 h-3" />, className: 'text-cyan-300 bg-cyan-950/50 border-cyan-800/60' },
-  link: { label: '链接', icon: <Link2 className="w-3 h-3" />, className: 'text-amber-300 bg-amber-950/50 border-amber-800/60' }
+  title: { label: '标题', icon: <FileText className="w-3 h-3" />, className: 'text-sh-focus bg-sh-focus/10 border-sh-focus/40' },
+  content: { label: '正文', icon: <Search className="w-3 h-3" />, className: 'text-sh-info bg-sh-info/10 border-sh-info/40' },
+  tag: { label: '标签', icon: <Hash className="w-3 h-3" />, className: 'text-sh-info bg-sh-info/10 bg-sh-info/10950/50 border-sh-info/40/60' },
+  link: { label: '链接', icon: <Link2 className="w-3 h-3" />, className: 'text-sh-warn bg-sh-warn/10 border-sh-warn/50' }
 };
 
 /** Highlight the matched span inside a snippet. */
@@ -27,7 +27,7 @@ export function Highlighted({ text, index, length }: { text: string; index: numb
   return (
     <>
       {text.slice(0, index)}
-      <mark className="bg-amber-400/30 text-amber-100 rounded px-0.5">{text.slice(index, end)}</mark>
+      <mark className="bg-sh-warn/20 text-sh-warn rounded px-0.5">{text.slice(index, end)}</mark>
       {text.slice(end)}
     </>
   );
@@ -48,8 +48,8 @@ export const VaultSearchResults: React.FC<VaultSearchResultsProps> = ({
 }) => {
   if (indexEmpty) {
     return (
-      <div className="py-8 px-3 text-center text-[11px] text-zinc-500 leading-relaxed">
-        <p className="mb-2 text-zinc-400">还没有全文索引，无法搜索笔记正文</p>
+      <div className="py-8 px-3 text-center text-[11px] text-sh-subtle leading-relaxed">
+        <p className="mb-2 text-sh-muted">还没有全文索引，无法搜索笔记正文</p>
         <p className="mb-3">
           全文搜索会把每篇笔记的正文缓存在本机 IndexedDB（约 {totalNoteCount || '若干'} 篇，首次需要一点时间），
           之后可按内容、标签、双链检索。
@@ -58,7 +58,7 @@ export const VaultSearchResults: React.FC<VaultSearchResultsProps> = ({
           <button
             type="button"
             onClick={onCreateIndex}
-            className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[11px] font-semibold"
+            className="px-3 py-1.5 rounded-lg bg-sh-accent hover:opacity-90 text-sh-accent-fg text-[11px] font-semibold"
           >
             建立全文索引
           </button>
@@ -69,7 +69,7 @@ export const VaultSearchResults: React.FC<VaultSearchResultsProps> = ({
 
   if (hits.length === 0) {
     return (
-      <div className="py-10 text-center text-xs text-zinc-500">
+      <div className="py-10 text-center text-xs text-sh-subtle">
         {loading ? '搜索中…' : `没有匹配「${query}」的内容`}
       </div>
     );
@@ -85,7 +85,7 @@ export const VaultSearchResults: React.FC<VaultSearchResultsProps> = ({
             type="button"
             data-oss-hit={hit.key}
             onClick={() => onOpen(hit.key)}
-            className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-zinc-800/70 transition-colors"
+            className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-sh-surface2 transition-colors"
             title={hit.key}
           >
             <div className="flex items-center gap-1.5 min-w-0">
@@ -93,9 +93,9 @@ export const VaultSearchResults: React.FC<VaultSearchResultsProps> = ({
                 {meta.icon}
                 {meta.label}
               </span>
-              <span className="text-xs text-zinc-200 truncate">{hit.title}</span>
+              <span className="text-xs text-sh-fg truncate">{hit.title}</span>
             </div>
-            <div className="mt-0.5 text-[11px] text-zinc-500 leading-snug line-clamp-2 break-all">
+            <div className="mt-0.5 text-[11px] text-sh-subtle leading-snug line-clamp-2 break-all">
               <Highlighted text={hit.snippet} index={hit.matchIndex} length={hit.matchLength} />
             </div>
           </button>

@@ -42,17 +42,17 @@ interface GlobalSearchProps {
 }
 
 const KIND_ICONS: Record<SearchKind, React.ReactNode> = {
-  note: <FileText className="w-3.5 h-3.5 text-purple-400" />,
-  annotation: <BookOpen className="w-3.5 h-3.5 text-amber-400" />,
-  drawing: <PenLine className="w-3.5 h-3.5 text-pink-400" />,
-  bookmark: <ExternalLink className="w-3.5 h-3.5 text-sky-400" />,
-  server: <Server className="w-3.5 h-3.5 text-emerald-400" />,
-  reminder: <Clock className="w-3.5 h-3.5 text-orange-400" />,
-  project: <FolderKanban className="w-3.5 h-3.5 text-emerald-400" />,
-  inbox: <Inbox className="w-3.5 h-3.5 text-amber-400" />,
-  secret: <Key className="w-3.5 h-3.5 text-amber-400" />,
-  remote: <BookOpen className="w-3.5 h-3.5 text-purple-400" />,
-  vault: <Search className="w-3.5 h-3.5 text-purple-400" />
+  note: <FileText className="w-3.5 h-3.5 text-sh-focus" />,
+  annotation: <BookOpen className="w-3.5 h-3.5 text-sh-warn" />,
+  drawing: <PenLine className="w-3.5 h-3.5 text-sh-focus" />,
+  bookmark: <ExternalLink className="w-3.5 h-3.5 text-sh-info" />,
+  server: <Server className="w-3.5 h-3.5 text-sh-ok" />,
+  reminder: <Clock className="w-3.5 h-3.5 text-sh-warn" />,
+  project: <FolderKanban className="w-3.5 h-3.5 text-sh-ok" />,
+  inbox: <Inbox className="w-3.5 h-3.5 text-sh-warn" />,
+  secret: <Key className="w-3.5 h-3.5 text-sh-warn" />,
+  remote: <BookOpen className="w-3.5 h-3.5 text-sh-focus" />,
+  vault: <Search className="w-3.5 h-3.5 text-sh-focus" />
 };
 
 /** Snippet with the literal match highlighted (pinyin matches have no offset). */
@@ -60,13 +60,13 @@ function Snippet({ hit }: { hit: SearchHit }) {
   if (!hit.snippet) return null;
   const { snippet, matchIndex, matchLength } = hit;
   if (matchIndex === undefined || !matchLength) {
-    return <div className="text-[11px] text-zinc-400 truncate">{snippet}</div>;
+    return <div className="text-[11px] text-sh-muted truncate">{snippet}</div>;
   }
   const end = matchIndex + matchLength;
   return (
-    <div className="text-[11px] text-zinc-400 truncate" data-search-snippet>
+    <div className="text-[11px] text-sh-muted truncate" data-search-snippet>
       {snippet.slice(0, matchIndex)}
-      <mark className="bg-amber-400/30 text-amber-100 rounded px-0.5">{snippet.slice(matchIndex, end)}</mark>
+      <mark className="bg-sh-warn/20 text-sh-warn rounded px-0.5">{snippet.slice(matchIndex, end)}</mark>
       {snippet.slice(end)}
     </div>
   );
@@ -229,10 +229,10 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
     >
       <div
         onClick={(event) => event.stopPropagation()}
-        className="w-full max-w-2xl bg-sh-surface border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+        className="w-full max-w-2xl bg-sh-surface border border-sh-line rounded-2xl shadow-2xl overflow-hidden flex flex-col"
       >
-        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-zinc-800">
-          <Search className="w-4 h-4 text-zinc-400 shrink-0" />
+        <div className="flex items-center gap-3 px-4 py-3.5 border-b border-sh-line">
+          <Search className="w-4 h-4 text-sh-muted shrink-0" />
           <input
             ref={inputRef}
             type="text"
@@ -246,20 +246,20 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
             placeholder="搜索笔记、批注、收藏、服务器、提醒、项目、收件箱…（支持拼音首字母）"
             aria-label="搜索全部数据"
             data-testid="global-search-input"
-            className="w-full bg-transparent text-xs sm:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
+            className="w-full bg-transparent text-xs sm:text-sm text-sh-fg placeholder:text-sh-subtle focus:outline-none"
           />
           <div className="flex items-center gap-1.5 shrink-0">
-            <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono bg-zinc-800 text-zinc-400 rounded border border-zinc-700">
+            <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono bg-sh-surface2 text-sh-muted rounded border border-sh-line-strong">
               ESC
             </kbd>
-            <button onClick={onClose} aria-label="关闭搜索" className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white">
+            <button onClick={onClose} aria-label="关闭搜索" className="p-1 rounded-lg hover:bg-sh-surface2 text-sh-muted hover:text-sh-fg">
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
         {chips.length > 1 && (
-          <div className="flex items-center gap-1 px-3 py-1.5 bg-zinc-900/60 border-b border-zinc-800 text-[11px] overflow-x-auto">
+          <div className="flex items-center gap-1 px-3 py-1.5 bg-sh-surface2 border-b border-sh-line text-[11px] overflow-x-auto">
             {chips.map((chip) => (
               <button
                 key={chip.id}
@@ -270,7 +270,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
                 data-search-chip={chip.id}
                 data-active={activeKind === chip.id ? 'true' : 'false'}
                 className={`px-2.5 py-1 rounded-md transition-colors ${
-                  activeKind === chip.id ? 'bg-zinc-800 text-white font-semibold' : 'text-zinc-400 hover:text-zinc-200'
+                  activeKind === chip.id ? 'bg-sh-surface2 text-sh-accent-fg font-semibold' : 'text-sh-muted hover:text-sh-fg'
                 }`}
               >
                 {chip.label} ({chip.count})
@@ -281,20 +281,20 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
 
         <div ref={listRef} role="listbox" aria-label="搜索结果" className="p-2 max-h-[60vh] overflow-y-auto space-y-1" data-testid="global-search-results">
           {query.trim() === '' ? (
-            <div className="p-6 text-center text-xs text-zinc-500">
+            <div className="p-6 text-center text-xs text-sh-subtle">
               输入关键词开始搜索。批注的原文与你的批注、笔记正文都会被检索；金库只匹配名称，明文不参与搜索。
             </div>
           ) : result.total === 0 ? (
-            <div className="p-6 text-center text-xs text-zinc-500 space-y-1">
+            <div className="p-6 text-center text-xs text-sh-subtle space-y-1">
               <div>没有匹配「{query.trim()}」的结果。</div>
-              <div className="text-[10px] text-zinc-600" data-testid="search-coverage-empty">
+              <div className="text-[10px] text-sh-subtle" data-testid="search-coverage-empty">
                 {result.coverage.skipped.join(' ')}
               </div>
             </div>
           ) : (
             result.groups.map((group) => (
               <div key={group.kind} data-search-group={group.kind}>
-                <div className="flex items-center justify-between px-2 pt-2 pb-1 text-[10px] text-zinc-500 font-mono">
+                <div className="flex items-center justify-between px-2 pt-2 pb-1 text-[10px] text-sh-subtle font-mono">
                   <span>
                     {group.label} · {group.total}
                   </span>
@@ -317,11 +317,11 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
                       role="option"
                       aria-selected={isSelected}
                       className={`flex items-center justify-between p-2.5 rounded-xl text-xs cursor-pointer transition-colors ${
-                        isSelected ? 'bg-zinc-800 text-white' : 'text-zinc-300 hover:bg-zinc-900'
+                        isSelected ? 'bg-sh-surface2 text-sh-accent-fg' : 'text-sh-muted hover:bg-sh-surface2'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <div className="w-6 h-6 rounded-md bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
+                        <div className="w-6 h-6 rounded-md bg-sh-surface2 border border-sh-line flex items-center justify-center shrink-0">
                           {KIND_ICONS[hit.kind]}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -331,11 +331,11 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
                       </div>
                       <div className="flex items-center gap-2 shrink-0 ml-2">
                         {hit.meta && (
-                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-sh-surface2 text-sh-muted border border-sh-line">
                             {hit.meta}
                           </span>
                         )}
-                        {isSelected && <ArrowRight className="w-3.5 h-3.5 text-zinc-400" />}
+                        {isSelected && <ArrowRight className="w-3.5 h-3.5 text-sh-muted" />}
                       </div>
                     </div>
                   );
@@ -345,7 +345,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
           )}
         </div>
 
-        <div className="px-4 py-2 border-t border-zinc-800/80 bg-zinc-900/40 text-[10px] text-zinc-500 font-mono space-y-1">
+        <div className="px-4 py-2 border-t border-sh-line bg-sh-surface2 text-[10px] text-sh-subtle font-mono space-y-1">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span>↑↓ 切换</span>
@@ -355,7 +355,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
             <span>已匹配 {result.total} 条</span>
           </div>
           {result.coverage.skipped.length > 0 && (
-            <div className="text-zinc-600" data-testid="search-coverage">
+            <div className="text-sh-subtle" data-testid="search-coverage">
               未覆盖：{result.coverage.skipped.join(' ')}
             </div>
           )}

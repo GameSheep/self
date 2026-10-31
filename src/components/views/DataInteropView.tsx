@@ -75,6 +75,7 @@ import {
 import { Markdown } from '../Markdown';
 import { MarkdownEditor, type EditorMode } from '../MarkdownEditor';
 import { toggleTaskInSource, type MarkdownContext, type MarkdownHeading } from '../../lib/markdown/render';
+import { showToast as showToastGlobal } from '../../shared/ui/toast';
 import {
   Database,
   Link2,
@@ -187,11 +188,11 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       : 'wucai';
   /** Nothing enabled → the panes below must not render at all (the notice explains why). */
   const paneVisible = anySourceOn;
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // 委托全局 toast：tone 按内容推断（失败/未能/无法→danger，⚠/ℹ→warn），emoji 前缀剥离。
+  // 旧的 3000ms 本地实现连「拉取失败」都打绿勾。
   const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    showToastGlobal(msg, /失败|未能|无法|超时/.test(msg) ? 'danger' : /⚠|ℹ|尚未/.test(msg) ? 'warn' : 'ok');
   };
 
   // -------------------------------------------------------------
@@ -1381,14 +1382,6 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-sh-surface2 border border-sh-line-strong text-sh-fg text-xs font-mono shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
-
       {/* Platform tabs only: each one holds its own settings and its own content. */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-5 rounded-2xl bg-sh-surface border border-sh-line">
         <div>
@@ -1590,7 +1583,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
           <div className="lg:col-span-4 flex flex-col rounded-2xl bg-sh-surface border border-sh-line p-4">
             <div className="flex items-center justify-between gap-2 pb-3 border-b border-sh-line">
               <div className="flex items-center gap-2">
-                <HardDrive className="w-4 h-4 text-purple-400" />
+                <HardDrive className="w-4 h-4 text-sh-focus" />
                 <span className="text-xs font-semibold text-sh-fg">Bucket: {obsidianConfig.bucket || '未配置'}</span>
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
@@ -1601,7 +1594,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   title="从 OSS 拉取最新文件列表；连接或权限有问题会在这里报出来"
                   data-testid="oss-refresh"
                 >
-                  <RefreshCw className={`w-3 h-3 text-emerald-400 ${isRefreshingOss ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-3 h-3 text-sh-ok ${isRefreshingOss ? 'animate-spin' : ''}`} />
                   <span>{isRefreshingOss ? '拉取中…' : '刷新列表'}</span>
                 </button>
                 <button
@@ -1616,14 +1609,14 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 </button>
                 <button
                   onClick={() => openPathModal('newFolder')}
-                  className="p-1 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-amber-300"
+                  className="p-1 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-sh-warn"
                   title="新建目录"
                 >
                   <FolderPlus className="w-3.5 h-3.5" />
                 </button>
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="p-1 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-sky-300"
+                  className="p-1 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-sh-info"
                   title={`上传文件到附件目录（${obsidianConfig.prefix || ''}图片位置/）`}
                 >
                   <UploadCloud className="w-3.5 h-3.5" />
@@ -1648,22 +1641,22 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
               <div
                 className={`mt-2.5 p-2.5 rounded-xl border text-xs font-mono flex items-start gap-2 ${
                   ossTestResult.success && ossTestResult.isRealOss
-                    ? 'bg-emerald-950/40 border-emerald-800/60 text-emerald-300'
-                    : 'bg-amber-950/40 border-amber-800/60 text-amber-300'
+                    ? 'bg-sh-ok/10 border-sh-ok/40 text-sh-ok'
+                    : 'bg-sh-warn/10 border-sh-warn/50 text-sh-warn'
                 }`}
                 data-testid="oss-self-check-result"
               >
                 {ossTestResult.success && ossTestResult.isRealOss ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-4 h-4 text-sh-ok shrink-0 mt-0.5" />
                 ) : (
-                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <AlertCircle className="w-4 h-4 text-sh-warn shrink-0 mt-0.5" />
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="leading-snug">{ossTestResult.message}</p>
                   {!ossTestResult.isRealOss && (
                     <button
                       onClick={() => setShowCorsGuide(!showCorsGuide)}
-                      className="text-[11px] underline text-amber-200 hover:text-white mt-1 block"
+                      className="text-[11px] underline text-sh-warn hover:text-sh-fg mt-1 block"
                     >
                       {showCorsGuide ? '收起 CORS 配置指南' : '查看阿里云控制台开通 CORS 指南'}
                     </button>
@@ -1674,15 +1667,15 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
 
             {/* CORS guide drawer: opened by a failed self-check or a CORS/network listing error. */}
             {showCorsGuide && (
-              <div className="mt-2.5 p-3 rounded-xl bg-sh-bg border border-amber-800/60 text-[11px] text-sh-muted font-mono space-y-1.5 leading-relaxed animate-in fade-in">
-                <div className="font-bold text-amber-400 flex items-center justify-between">
+              <div className="mt-2.5 p-3 rounded-xl bg-sh-bg border border-sh-warn/50 text-[11px] text-sh-muted font-mono space-y-1.5 leading-relaxed animate-in fade-in">
+                <div className="font-bold text-sh-warn flex items-center justify-between">
                   <span>阿里云 OSS 跨域 (CORS) 设置三步法:</span>
-                  <button onClick={() => setShowCorsGuide(false)} className="text-sh-subtle hover:text-white">✕</button>
+                  <button onClick={() => setShowCorsGuide(false)} className="text-sh-subtle hover:text-sh-fg">✕</button>
                 </div>
                 <p>1. 登录阿里云控制台 ➔ 对象存储 OSS ➔ 存储桶 ({obsidianConfig.bucket || '您的存储桶'})</p>
                 <p>2. 左侧菜单「数据安全」➔「跨域设置 (CORS)」➔ 点击「创建规则」</p>
                 <p>3. 填入参数：</p>
-                <div className="p-2 rounded bg-black/60 border border-sh-line text-[10px] space-y-0.5 text-sh-muted">
+                <div className="p-2 rounded bg-sh-bg/80 border border-sh-line text-[10px] space-y-0.5 text-sh-muted">
                   <p><b className="text-sh-fg">来源 (AllowedOrigin):</b> * 或 您的实际访问域名</p>
                   <p><b className="text-sh-fg">允许 Methods:</b> GET, PUT, DELETE, HEAD</p>
                   <p><b className="text-sh-fg">允许 Headers:</b> *</p>
@@ -1703,7 +1696,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                     ? '搜索笔记正文、标签、双链…'
                     : '在整棵目录树中搜索文件或文件夹...'
                 }
-                className="w-full bg-sh-surface2 border border-sh-line rounded-xl pl-8 pr-3 py-1.5 text-xs text-sh-fg placeholder-zinc-500 focus:outline-none focus:border-purple-600"
+                className="w-full bg-sh-surface2 border border-sh-line rounded-xl pl-8 pr-3 py-1.5 text-xs text-sh-fg placeholder:text-sh-subtle focus:outline-none focus:border-sh-focus/40"
               />
             </div>
 
@@ -1731,7 +1724,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
 
               <div className="flex items-center gap-2 font-mono text-sh-subtle">
                 {isIndexing ? (
-                  <span className="text-sky-400">
+                  <span className="text-sh-info">
                     索引中 {indexProgress?.done ?? 0}/{indexProgress?.total ?? 0}
                   </span>
                 ) : (
@@ -1756,7 +1749,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   <button
                     onClick={() => indexAbortRef.current?.abort()}
                     data-testid="index-cancel"
-                    className="px-2 py-0.5 rounded-md bg-sh-surface2 border border-amber-800/60 text-amber-300 hover:text-amber-100"
+                    className="px-2 py-0.5 rounded-md bg-sh-surface2 border border-sh-warn/50 text-sh-warn hover:text-sh-warn"
                     title="停止抓取；已经抓到的正文会保留"
                   >
                     取消
@@ -1768,7 +1761,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
             {isIndexing && indexProgress && indexProgress.total > 0 && (
               <div className="mb-2 h-1 rounded bg-sh-surface2 overflow-hidden">
                 <div
-                  className="h-full bg-sky-500 transition-all"
+                  className="h-full bg-sh-info transition-all"
                   style={{ width: `${Math.round((indexProgress.done / indexProgress.total) * 100)}%` }}
                 />
               </div>
@@ -1782,7 +1775,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 <span>{ossListMeta.pages} 页</span>
                 <span>·</span>
                 <span>前缀「{ossListMeta.prefixUsed || '（空，整桶）'}」</span>
-                {ossListMeta.truncated && <span className="text-amber-400">· 已达安全上限</span>}
+                {ossListMeta.truncated && <span className="text-sh-warn">· 已达安全上限</span>}
               </div>
             )}
 
@@ -1791,15 +1784,15 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
               ossListMeta.source === 'oss' &&
               ossListMeta.objects.length === 0 &&
               ossListMeta.bucketTotalCount ? (
-                <div className="mb-2 rounded-xl border border-amber-800/50 bg-amber-950/30 p-3 text-[11px] text-amber-200 leading-relaxed">
+                <div className="mb-2 rounded-xl border border-sh-warn/40 bg-sh-warn/10 p-3 text-[11px] text-sh-warn leading-relaxed">
                   <div className="font-semibold">前缀把内容过滤空了</div>
-                  <div className="mt-1 text-amber-300/90">
+                  <div className="mt-1 text-sh-warn">
                     当前前缀「{ossListMeta.prefixUsed}」下没有任何对象，但桶内至少有 {ossListMeta.bucketTotalCount}{' '}
                     个对象。请到设置里把「文件前缀」留空，即可列出整个 Bucket。
                   </div>
                   <button
                     onClick={handleClearPrefix}
-                    className="mt-2 px-2.5 py-1 rounded-lg bg-amber-500/90 hover:bg-amber-400 text-zinc-950 font-semibold text-[11px]"
+                    className="mt-2 px-2.5 py-1 rounded-lg bg-sh-accent hover:opacity-90 text-sh-accent-fg font-semibold text-[11px]"
                   >
                     去清空前缀
                   </button>
@@ -1833,7 +1826,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                       }}
                       className={`max-w-[46%] truncate px-2 py-0.5 rounded-md text-[11px] border ${
                         key === currentObsidianNote?.key
-                          ? 'bg-purple-950/40 border-purple-800/60 text-purple-200'
+                          ? 'bg-sh-focus/10 border-sh-focus/40 text-sh-focus'
                           : 'bg-sh-surface2 border-sh-line text-sh-muted hover:text-sh-fg'
                       }`}
                     >
@@ -1908,12 +1901,12 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                       }
                       className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs truncate ${
                         note.key === currentObsidianNote?.key
-                          ? 'bg-purple-950/40 text-purple-200'
+                          ? 'bg-sh-focus/10 text-sh-focus'
                           : 'text-sh-muted hover:bg-sh-surface2/60'
                       }`}
                       title={note.path}
                     >
-                      <FileText className="w-3.5 h-3.5 inline mr-1.5 text-purple-400" />
+                      <FileText className="w-3.5 h-3.5 inline mr-1.5 text-sh-focus" />
                       {note.title}
                     </button>
                   ))}
@@ -1932,7 +1925,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
               <>
                 <div className="p-4 border-b border-sh-line flex items-center justify-between gap-3 bg-sh-surface">
                   <div className="min-w-0 flex items-center gap-2">
-                    <ImageIcon className="w-4 h-4 text-sky-400 shrink-0" />
+                    <ImageIcon className="w-4 h-4 text-sh-info shrink-0" />
                     <div className="min-w-0">
                       <h2 className="text-sm font-bold text-sh-fg truncate">
                         {previewKey.split('/').pop()}
@@ -1953,7 +1946,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 </div>
                 <div className="flex-1 flex items-center justify-center p-6 overflow-auto min-h-[320px] bg-sh-bg">
                   {contentError ? (
-                    <div className="text-xs text-rose-400">{contentError}</div>
+                    <div className="text-xs text-sh-danger">{contentError}</div>
                   ) : previewUrl ? (
                     <img
                       data-testid="attachment-preview"
@@ -1975,7 +1968,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 <div className="p-4 border-b border-sh-line flex flex-wrap items-center justify-between gap-3 bg-sh-surface">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-purple-400 shrink-0" />
+                      <FileText className="w-4 h-4 text-sh-focus shrink-0" />
                       <h2 className="text-sm font-bold text-sh-fg truncate">{currentObsidianNote.title}</h2>
                     </div>
                     <p className="text-[11px] text-sh-subtle font-mono truncate mt-0.5">{currentObsidianNote.path}</p>
@@ -2004,7 +1997,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                         disabled={isLoadingContent}
                         title={isLoadingContent ? '正文加载中...' : '编辑正文'}
                         className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${
-                          isEditingObsidian ? 'bg-purple-950/80 text-purple-300 font-medium border border-purple-800/60' : 'text-sh-muted hover:text-sh-fg'
+                          isEditingObsidian ? 'bg-sh-focus/10 text-sh-info font-medium border border-sh-focus/40' : 'text-sh-muted hover:text-sh-fg'
                         }`}
                       >
                         <Edit3 className="w-3.5 h-3.5" />
@@ -2028,7 +2021,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                       <button
                         onClick={() => void handleSaveObsidian()}
                         disabled={isSavingObsidian}
-                        className="px-3 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                        className="px-3 py-1 rounded-lg bg-sh-accent text-sh-accent-fg hover:opacity-90 text-sh-accent-fg text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
                       >
                         <Save className="w-3.5 h-3.5" />
                         <span>{isSavingObsidian ? '保存至 OSS...' : isDirty ? '保存修改 •' : '保存修改'}</span>
@@ -2037,7 +2030,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
 
                     <button
                       onClick={() => handleDeleteObsidian(currentObsidianNote.key)}
-                      className="p-1.5 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-rose-400"
+                      className="p-1.5 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-sh-danger"
                       title="从 OSS 删除笔记"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -2053,7 +2046,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                       className="w-full flex items-center justify-between px-4 py-1.5 text-[11px] text-sh-muted hover:text-sh-fg"
                     >
                       <span className="flex items-center gap-1.5">
-                        <Link2 className="w-3 h-3 text-amber-400" />
+                        <Link2 className="w-3 h-3 text-sh-warn" />
                         反向链接 ({backlinks.length})
                         <span className="text-sh-subtle">· 有这些笔记引用了本篇</span>
                       </span>
@@ -2067,7 +2060,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                             onClick={() => openNoteByKey(hit.key)}
                             title={hit.key}
                             data-backlink={hit.key}
-                            className="max-w-[48%] truncate px-2 py-0.5 rounded-md text-[11px] bg-amber-950/40 border border-amber-900/50 text-amber-200 hover:bg-amber-900/40"
+                            className="max-w-[48%] truncate px-2 py-0.5 rounded-md text-[11px] bg-sh-warn/10 border border-sh-warn/50 text-sh-warn hover:bg-sh-warn/20"
                           >
                             {hit.title}
                           </button>
@@ -2086,7 +2079,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                         正在从阿里云 OSS 读取正文...
                       </div>
                     ) : contentError ? (
-                      <div className="text-xs text-rose-400 p-6 leading-relaxed">{contentError}</div>
+                      <div className="text-xs text-sh-danger p-6 leading-relaxed">{contentError}</div>
                     ) : isEditingObsidian ? (
                       <MarkdownEditor
                         value={editObsidianContent}
@@ -2174,7 +2167,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   value={wucaiSearch}
                   onChange={(e) => setWucaiSearch(e.target.value)}
                   placeholder="搜索划词文本、思考、原文标题..."
-                  className="w-64 bg-sh-surface2 border border-sh-line rounded-xl pl-8 pr-3 py-1.5 text-xs text-sh-fg placeholder-zinc-500 focus:outline-none focus:border-amber-600"
+                  className="w-64 bg-sh-surface2 border border-sh-line rounded-xl pl-8 pr-3 py-1.5 text-xs text-sh-fg placeholder:text-sh-subtle focus:outline-none focus:border-sh-warn/50"
                 />
               </div>
 
@@ -2198,29 +2191,29 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
               <button
                 onClick={handleFetchFromWucaiApi}
                 disabled={isFetchingWucai}
-                className="px-3 py-1.5 rounded-xl bg-amber-950/70 border border-amber-700/80 hover:bg-amber-900 text-amber-200 text-xs flex items-center gap-1.5 shadow-sm transition-all"
+                className="px-3 py-1.5 rounded-xl bg-sh-warn/10 border border-sh-warn/50 hover:bg-sh-warn/20 text-sh-warn text-xs flex items-center gap-1.5 shadow-sm transition-all"
                 title="用五彩 OpenAPI Token 从云端拉取新划词（按 id 去重，不覆盖本地编辑）"
               >
-                <CloudDownload className={`w-3.5 h-3.5 text-amber-400 ${isFetchingWucai ? 'animate-pulse' : ''}`} />
+                <CloudDownload className={`w-3.5 h-3.5 text-sh-warn ${isFetchingWucai ? 'animate-pulse' : ''}`} />
                 <span>{isFetchingWucai ? '拉取中...' : '从五彩拉取'}</span>
               </button>
 
               <button
                 onClick={handleSyncFromExtension}
                 disabled={isSyncingExtension}
-                className="px-3 py-1.5 rounded-xl bg-indigo-950/70 border border-indigo-700/80 hover:bg-indigo-900 text-indigo-200 text-xs flex items-center gap-1.5 shadow-sm transition-all"
+                className="px-3 py-1.5 rounded-xl bg-sh-info/10 border border-sh-info/40 hover:bg-sh-info/20 text-sh-fg text-xs flex items-center gap-1.5 shadow-sm transition-all"
                 title="通过浏览器扩展 Bridge 直接同步提取当前已划词高亮与批注"
               >
-                <RefreshCw className={`w-3.5 h-3.5 text-indigo-400 ${isSyncingExtension ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-3.5 h-3.5 text-sh-info ${isSyncingExtension ? 'animate-spin' : ''}`} />
                 <span>{isSyncingExtension ? '同步中...' : '插件一键同步'}</span>
               </button>
 
               <button
                 onClick={handleExportAllToMarkdown}
-                className="px-3 py-1.5 rounded-xl bg-sh-surface2 border border-sh-line text-sh-muted hover:text-white text-xs flex items-center gap-1.5"
+                className="px-3 py-1.5 rounded-xl bg-sh-surface2 border border-sh-line text-sh-muted hover:text-sh-fg text-xs flex items-center gap-1.5"
                 title="导出所有划词为完整 Obsidian Markdown 离线文档"
               >
-                <Download className="w-3.5 h-3.5 text-sky-400" />
+                <Download className="w-3.5 h-3.5 text-sh-info" />
                 <span>导出 .md</span>
               </button>
 
@@ -2229,16 +2222,16 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 href="https://doc.wucai.site/obsidian/"
                 target="_blank"
                 rel="noreferrer"
-                className="px-3 py-1.5 rounded-xl bg-sh-surface2 border border-sh-line text-amber-300 hover:text-white text-xs flex items-center gap-1.5"
+                className="px-3 py-1.5 rounded-xl bg-sh-surface2 border border-sh-line text-sh-warn hover:text-sh-fg text-xs flex items-center gap-1.5"
                 title="查看五彩官方 Obsidian 插件教程"
               >
-                <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
+                <ExternalLink className="w-3.5 h-3.5 text-sh-warn" />
                 <span>官方 Obsidian 插件教程</span>
               </a>
 
               <button
                 onClick={() => setIsAddWucaiModalOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs flex items-center gap-1.5 shadow-sm"
+                className="px-3 py-1.5 rounded-xl bg-sh-accent text-sh-accent-fg hover:opacity-90 text-sh-accent-fg font-semibold text-xs flex items-center gap-1.5 shadow-sm"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>录入划词</span>
@@ -2275,7 +2268,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                         href={hl.pageUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-xs font-semibold text-sh-fg hover:text-amber-400 flex items-center gap-1.5 line-clamp-1"
+                        className="text-xs font-semibold text-sh-fg hover:text-sh-warn flex items-center gap-1.5 line-clamp-1"
                       >
                         <span>{hl.pageTitle}</span>
                         <ArrowUpRight className="w-3 h-3 shrink-0" />
@@ -2292,7 +2285,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
 
                     {/* User's Note / Thought */}
                     <div className="mt-3">
-                      <div className="flex items-center justify-between text-[11px] font-semibold text-amber-400/90 mb-1">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-sh-warn mb-1">
                         <span className="flex items-center gap-1">
                           <Edit3 className="w-3 h-3" />
                           个人思考与批注
@@ -2312,7 +2305,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                           <textarea
                             value={editWucaiNote}
                             onChange={(e) => setEditWucaiNote(e.target.value)}
-                            className="w-full p-2.5 rounded-lg bg-sh-surface2 border border-sh-line-strong text-xs text-sh-fg font-sans focus:outline-none focus:border-amber-500"
+                            className="w-full p-2.5 rounded-lg bg-sh-surface2 border border-sh-line-strong text-xs text-sh-fg font-sans focus:outline-none focus:border-sh-warn/50"
                             rows={3}
                           />
                           <div className="flex justify-end gap-2">
@@ -2324,7 +2317,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                             </button>
                             <button
                               onClick={() => handleSaveWucaiEdit(hl.id)}
-                              className="px-2.5 py-1 rounded bg-amber-500 text-zinc-950 font-semibold text-xs"
+                              className="px-2.5 py-1 rounded bg-sh-accent text-sh-accent-fg text-sh-accent-fg font-semibold text-xs"
                             >
                               保存批注
                             </button>
@@ -2354,10 +2347,10 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleSyncWucaiToObsidian(hl)}
-                        className="px-2.5 py-1 rounded-lg bg-purple-950/60 hover:bg-purple-900/80 border border-purple-800/60 text-purple-300 font-medium text-[11px] flex items-center gap-1 shadow-sm"
+                        className="px-2.5 py-1 rounded-lg bg-sh-focus/10 hover:bg-sh-focus/20 border border-sh-focus/40 text-sh-info font-medium text-[11px] flex items-center gap-1 shadow-sm"
                         title="格式化并保存至阿里云 OSS 的 Obsidian 库"
                       >
-                        <BookOpen className="w-3 h-3 text-purple-400" />
+                        <BookOpen className="w-3 h-3 text-sh-focus" />
                         <span>同步至 Obsidian OSS</span>
                       </button>
 
@@ -2373,7 +2366,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
 
                     <button
                       onClick={() => handleDeleteWucai(hl.id)}
-                      className="p-1.5 rounded-lg text-sh-subtle hover:text-rose-400"
+                      className="p-1.5 rounded-lg text-sh-subtle hover:text-sh-danger"
                       title="删除划词"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -2397,12 +2390,12 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
           <div className="lg:col-span-4 flex flex-col rounded-2xl bg-sh-surface border border-sh-line p-4">
             <div className="flex items-center justify-between gap-2 pb-3 border-b border-sh-line">
               <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-sky-400" />
+                <FileText className="w-4 h-4 text-sh-info" />
                 <span className="text-xs font-semibold text-sh-fg">有道云历史资产 ({youdaoNotes.length})</span>
               </div>
               <button
                 onClick={() => setIsAddYoudaoModalOpen(true)}
-                className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium flex items-center gap-1 shadow-sm"
+                className="px-2.5 py-1 rounded-lg bg-sh-accent text-sh-accent-fg hover:opacity-90 text-sh-accent-fg text-xs font-medium flex items-center gap-1 shadow-sm"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>新建</span>
@@ -2423,7 +2416,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 value={youdaoSearch}
                 onChange={(e) => setYoudaoSearch(e.target.value)}
                 placeholder="搜索有道云笔记标题、目录..."
-                className="w-full bg-sh-surface2 border border-sh-line rounded-xl pl-8 pr-3 py-1.5 text-xs text-sh-fg placeholder-zinc-500 focus:outline-none focus:border-sky-600"
+                className="w-full bg-sh-surface2 border border-sh-line rounded-xl pl-8 pr-3 py-1.5 text-xs text-sh-fg placeholder:text-sh-subtle focus:outline-none focus:border-sh-info/40"
               />
             </div>
 
@@ -2437,14 +2430,14 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                     onClick={() => handleSelectYoudaoNote(note)}
                     className={`p-3 rounded-xl border cursor-pointer transition-all ${
                       isSelected
-                        ? 'bg-sky-950/30 border-sky-800/80 shadow-sm'
+                        ? 'bg-sh-info/10 border-sh-info/40 shadow-sm'
                         : 'bg-sh-surface2/50 border-sh-line/60 hover:border-sh-line-strong'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <div className="flex items-center gap-2 min-w-0">
-                        <Folder className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-sky-400' : 'text-sh-subtle'}`} />
-                        <h3 className={`text-xs font-semibold truncate ${isSelected ? 'text-sky-200' : 'text-sh-fg'}`}>
+                        <Folder className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-sh-info' : 'text-sh-subtle'}`} />
+                        <h3 className={`text-xs font-semibold truncate ${isSelected ? 'text-sh-info' : 'text-sh-fg'}`}>
                           {note.title}
                         </h3>
                       </div>
@@ -2455,7 +2448,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                     <p className="text-[11px] text-sh-subtle font-mono truncate">{note.folder}</p>
                     <div className="flex items-center justify-between text-[10px] text-sh-subtle mt-2 pt-1.5 border-t border-sh-line/50">
                       <span>{new Date(note.updatedAt).toLocaleDateString()}</span>
-                      <span className="text-sky-400 font-mono text-[9px]">可迁移至 OSS</span>
+                      <span className="text-sh-info font-mono text-[9px]">可迁移至 OSS</span>
                     </div>
                   </div>
                 );
@@ -2471,7 +2464,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 <div className="p-4 border-b border-sh-line flex flex-wrap items-center justify-between gap-3 bg-sh-surface">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-sky-400 shrink-0" />
+                      <FileText className="w-4 h-4 text-sh-info shrink-0" />
                       <h2 className="text-sm font-bold text-sh-fg truncate">{currentYoudaoNote.title}</h2>
                     </div>
                     <p className="text-[11px] text-sh-subtle font-mono truncate mt-0.5">{currentYoudaoNote.folder}</p>
@@ -2480,10 +2473,10 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleSyncYoudaoToObsidian(currentYoudaoNote)}
-                      className="px-3 py-1.5 rounded-lg bg-purple-950/70 hover:bg-purple-900 border border-purple-800/70 text-purple-300 font-medium text-xs flex items-center gap-1.5 shadow-sm"
+                      className="px-3 py-1.5 rounded-lg bg-sh-focus/10 hover:bg-sh-focus/20 border border-sh-focus/40 text-sh-info font-medium text-xs flex items-center gap-1.5 shadow-sm"
                       title="将当前有道笔记转换并保存至阿里云 OSS Obsidian 库"
                     >
-                      <BookOpen className="w-3.5 h-3.5 text-purple-400" />
+                      <BookOpen className="w-3.5 h-3.5 text-sh-focus" />
                       <span>推送到 Obsidian OSS</span>
                     </button>
 
@@ -2516,7 +2509,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                           setEditYoudaoContent(currentYoudaoNote.content);
                         }}
                         className={`px-2 py-1 rounded-md flex items-center gap-1 ${
-                          isEditingYoudao ? 'bg-sky-950/80 text-sky-300 font-medium border border-sky-800/60' : 'text-sh-muted'
+                          isEditingYoudao ? 'bg-sh-info/10 text-sh-info font-medium border border-sh-info/40' : 'text-sh-muted'
                         }`}
                       >
                         <Edit3 className="w-3.5 h-3.5" />
@@ -2527,7 +2520,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                     {isEditingYoudao && (
                       <button
                         onClick={handleSaveYoudaoEdit}
-                        className="px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold flex items-center gap-1 shadow-sm"
+                        className="px-3 py-1 rounded-lg bg-sh-accent text-sh-accent-fg hover:opacity-90 text-sh-accent-fg text-xs font-semibold flex items-center gap-1 shadow-sm"
                       >
                         <Save className="w-3.5 h-3.5" />
                         <span>保存</span>
@@ -2536,7 +2529,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
 
                     <button
                       onClick={() => handleDeleteYoudao(currentYoudaoNote.id)}
-                      className="p-1.5 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-rose-400"
+                      className="p-1.5 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-sh-danger"
                       title="删除有道笔记"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -2552,14 +2545,14 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                         type="text"
                         value={editYoudaoTitle}
                         onChange={(e) => setEditYoudaoTitle(e.target.value)}
-                        className="w-full p-2.5 rounded-xl bg-sh-surface2 border border-sh-line text-sm font-bold text-sh-fg focus:outline-none focus:border-sky-600"
+                        className="w-full p-2.5 rounded-xl bg-sh-surface2 border border-sh-line text-sm font-bold text-sh-fg focus:outline-none focus:border-sh-info/40"
                         placeholder="笔记标题"
                       />
                       <textarea
                         value={editYoudaoContent}
                         onChange={(e) => setEditYoudaoContent(e.target.value)}
                         placeholder="在此直接修改有道云笔记内容..."
-                        className="w-full flex-1 min-h-[440px] p-4 bg-sh-bg border border-sh-line/80 rounded-xl font-mono text-xs text-sh-fg leading-relaxed focus:outline-none focus:border-sky-600 resize-none select-text"
+                        className="w-full flex-1 min-h-[440px] p-4 bg-sh-bg border border-sh-line/80 rounded-xl font-mono text-xs text-sh-fg leading-relaxed focus:outline-none focus:border-sh-info/40 resize-none select-text"
                       />
                     </div>
                   ) : (
@@ -2596,7 +2589,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
           >
             <div className="flex items-center justify-between p-4 border-b border-sh-line">
               <div className="flex items-center gap-2">
-                <Database className="w-4 h-4 text-sky-400" />
+                <Database className="w-4 h-4 text-sh-info" />
                 <h3 className="text-sm font-semibold text-sh-fg">全文索引</h3>
               </div>
               <button onClick={() => setShowIndexPanel(false)} className="p-1 rounded hover:bg-sh-surface2 text-sh-subtle">
@@ -2650,18 +2643,18 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   problems, and only one of them is fixed by rebuilding. */}
               {indexHealth?.problems.length ? (
                 <div
-                  className="rounded-lg border border-amber-800/60 bg-amber-950/20 p-2 space-y-1"
+                  className="rounded-lg border border-sh-warn/50 bg-sh-warn/10 p-2 space-y-1"
                   data-testid="index-health-warning"
                 >
-                  <div className="text-[11px] text-amber-300">索引状态需要注意：</div>
+                  <div className="text-[11px] text-sh-warn">索引状态需要注意：</div>
                   {indexHealth.problems.map((problem) => (
-                    <div key={problem} className="text-[11px] text-amber-200/80" data-index-problem>
+                    <div key={problem} className="text-[11px] text-sh-warn" data-index-problem>
                       · {problem}
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="text-[11px] text-emerald-400/80" data-testid="index-health-ok">
+                <div className="text-[11px] text-sh-ok" data-testid="index-health-ok">
                   索引状态正常{indexHealth?.meta.partial ? '（上次未跑完）' : ''}。
                 </div>
               )}
@@ -2673,7 +2666,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                     void handleBuildIndex();
                   }}
                   disabled={isIndexing}
-                  className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[11px] font-semibold disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-lg bg-sh-accent text-sh-accent-fg hover:opacity-90 text-sh-accent-fg text-[11px] font-semibold disabled:opacity-50"
                 >
                   更新索引
                 </button>
@@ -2687,7 +2680,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 <button
                   onClick={() => void handleClearIndex()}
                   disabled={isIndexing || indexRecords.length === 0}
-                  className="px-3 py-1.5 rounded-lg bg-rose-950/60 border border-rose-900/60 text-rose-300 hover:bg-rose-900/50 text-[11px] disabled:opacity-40"
+                  className="px-3 py-1.5 rounded-lg bg-sh-danger/10 border border-sh-danger/50 text-sh-danger hover:bg-sh-danger/20 text-[11px] disabled:opacity-40"
                   data-testid="index-clear"
                 >
                   清除索引
@@ -2703,15 +2696,15 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
       {/* ========================================================================= */}
       {conflictState && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="w-full max-w-lg bg-sh-surface border border-amber-800/60 rounded-2xl shadow-2xl overflow-hidden">
+          <div className="w-full max-w-lg bg-sh-surface border border-sh-warn/50 rounded-2xl shadow-2xl overflow-hidden">
             <div className="flex items-center gap-2 p-4 border-b border-sh-line">
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <AlertTriangle className="w-4 h-4 text-sh-warn shrink-0" />
               <h3 className="text-sm font-semibold text-sh-fg">云端文件已被修改</h3>
             </div>
 
             <div className="p-4 space-y-3 text-xs text-sh-muted leading-relaxed">
               <p>
-                这篇笔记在你打开之后<b className="text-amber-300">被其他客户端改过</b>
+                这篇笔记在你打开之后<b className="text-sh-warn">被其他客户端改过</b>
                 （例如桌面 Obsidian 通过 Remotely Save 写回）。为避免覆盖对方的修改，本次保存已中止，
                 <b className="text-sh-fg">你的改动仍保留在编辑器里</b>。
               </p>
@@ -2751,10 +2744,10 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                     setEditObsidianContent(state.content);
                     await handleSaveObsidian({ force: true });
                   }}
-                  className="w-full text-left px-3 py-2 rounded-lg bg-amber-950/60 border border-amber-800/60 hover:bg-amber-900/50 text-amber-200 font-medium"
+                  className="w-full text-left px-3 py-2 rounded-lg bg-sh-warn/10 border border-sh-warn/50 hover:bg-sh-warn/20 text-sh-warn font-medium"
                 >
                   仍然用我的版本覆盖
-                  <span className="block text-[11px] font-normal text-amber-300/80 mt-0.5">
+                  <span className="block text-[11px] font-normal text-sh-warn mt-0.5">
                     云端的其他改动会丢失
                   </span>
                 </button>
@@ -2787,7 +2780,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
           >
             <div className="flex items-center justify-between p-4 border-b border-sh-line">
               <h3 className="text-sm font-semibold text-sh-fg flex items-center gap-2">
-                <FolderInput className="w-4 h-4 text-amber-400" />
+                <FolderInput className="w-4 h-4 text-sh-warn" />
                 {pathModal.mode === 'rename'
                   ? pathModal.node?.isDir
                     ? '重命名目录'
@@ -2800,7 +2793,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
               </h3>
               <button
                 onClick={() => !pathBusy && setPathModal(null)}
-                className="text-sh-subtle hover:text-white"
+                className="text-sh-subtle hover:text-sh-fg"
                 disabled={pathBusy}
               >
                 <X className="w-4 h-4" />
@@ -2821,7 +2814,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                     if (e.key === 'Enter') void submitPathModal();
                     if (e.key === 'Escape') setPathModal(null);
                   }}
-                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg font-mono focus:outline-none focus:border-amber-600"
+                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg font-mono focus:outline-none focus:border-sh-warn/50"
                   placeholder="日记/2026年/2026年10月.md"
                 />
               </div>
@@ -2844,7 +2837,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 <button
                   onClick={() => void submitPathModal()}
                   disabled={pathBusy}
-                  className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-4 py-1.5 rounded-xl bg-sh-accent text-sh-accent-fg hover:opacity-90 text-sh-accent-fg font-semibold text-xs flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {pathBusy ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
                   {pathModal.mode === 'newFolder' ? '创建' : '确定'}
@@ -2869,10 +2862,10 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
           >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-sh-fg flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-purple-400" />
+                <BookOpen className="w-4 h-4 text-sh-focus" />
                 新建笔记并直接推送至阿里云 OSS
               </h3>
-              <button onClick={() => setIsCreateObsidianModalOpen(false)} className="text-sh-subtle hover:text-white">✕</button>
+              <button onClick={() => setIsCreateObsidianModalOpen(false)} className="text-sh-subtle hover:text-sh-fg">✕</button>
             </div>
 
             <div className="space-y-3">
@@ -2883,7 +2876,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   value={newObsidianPath}
                   onChange={(e) => setNewObsidianPath(e.target.value)}
                   placeholder="Notes/架构设计思路.md"
-                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg font-mono focus:outline-none focus:border-purple-600"
+                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg font-mono focus:outline-none focus:border-sh-focus/40"
                 />
               </div>
 
@@ -2894,7 +2887,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   onChange={(e) => setNewObsidianContent(e.target.value)}
                   placeholder="# 笔记标题&#10;&#10;在此输入笔记正文..."
                   rows={8}
-                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl p-3 text-xs text-sh-fg font-mono focus:outline-none focus:border-purple-600"
+                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl p-3 text-xs text-sh-fg font-mono focus:outline-none focus:border-sh-focus/40"
                 />
               </div>
             </div>
@@ -2909,7 +2902,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
               <button
                 onClick={handleCreateObsidianNote}
                 disabled={isCreatingObsidian}
-                className="px-4 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shadow-sm disabled:opacity-60"
+                className="px-4 py-1.5 rounded-xl bg-sh-accent text-sh-accent-fg hover:opacity-90 text-sh-accent-fg font-semibold text-xs shadow-sm disabled:opacity-60"
               >
                 {isCreatingObsidian ? '正在写入 OSS…' : '创建并写入 OSS'}
               </button>
@@ -2932,10 +2925,10 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
           >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-sh-fg flex items-center gap-2">
-                <Highlighter className="w-4 h-4 text-amber-400" />
+                <Highlighter className="w-4 h-4 text-sh-warn" />
                 手动录入五彩划词批注
               </h3>
-              <button onClick={() => setIsAddWucaiModalOpen(false)} className="text-sh-subtle hover:text-white">✕</button>
+              <button onClick={() => setIsAddWucaiModalOpen(false)} className="text-sh-subtle hover:text-sh-fg">✕</button>
             </div>
 
             <div className="space-y-3">
@@ -2946,7 +2939,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   value={newWucaiTitle}
                   onChange={(e) => setNewWucaiTitle(e.target.value)}
                   placeholder="例如: Cloudflare 边缘计算最佳实践"
-                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg focus:outline-none focus:border-amber-600"
+                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg focus:outline-none focus:border-sh-warn/50"
                 />
               </div>
 
@@ -2957,7 +2950,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   value={newWucaiUrl}
                   onChange={(e) => setNewWucaiUrl(e.target.value)}
                   placeholder="https://..."
-                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg font-mono focus:outline-none focus:border-amber-600"
+                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg font-mono focus:outline-none focus:border-sh-warn/50"
                 />
               </div>
 
@@ -2968,7 +2961,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   onChange={(e) => setNewWucaiText(e.target.value)}
                   placeholder="粘贴网页中划出的重点段落..."
                   rows={3}
-                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl p-3 text-xs text-sh-fg focus:outline-none focus:border-amber-600"
+                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl p-3 text-xs text-sh-fg focus:outline-none focus:border-sh-warn/50"
                 />
               </div>
 
@@ -2979,7 +2972,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   onChange={(e) => setNewWucaiNote(e.target.value)}
                   placeholder="输入你对这段话的看法、启示或实现思路..."
                   rows={2}
-                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl p-3 text-xs text-sh-fg focus:outline-none focus:border-amber-600"
+                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl p-3 text-xs text-sh-fg focus:outline-none focus:border-sh-warn/50"
                 />
               </div>
 
@@ -3020,7 +3013,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
               </button>
               <button
                 onClick={handleCreateWucaiHighlight}
-                className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs shadow-sm"
+                className="px-4 py-1.5 rounded-xl bg-sh-accent text-sh-accent-fg hover:opacity-90 text-sh-accent-fg font-semibold text-xs shadow-sm"
               >
                 确认录入
               </button>
@@ -3044,10 +3037,10 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
           >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-sh-fg flex items-center gap-2">
-                <FileText className="w-4 h-4 text-sky-400" />
+                <FileText className="w-4 h-4 text-sh-info" />
                 新建有道云笔记
               </h3>
-              <button onClick={() => setIsAddYoudaoModalOpen(false)} className="text-sh-subtle hover:text-white">✕</button>
+              <button onClick={() => setIsAddYoudaoModalOpen(false)} className="text-sh-subtle hover:text-sh-fg">✕</button>
             </div>
 
             <div className="space-y-3">
@@ -3058,7 +3051,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   value={newYoudaoTitle}
                   onChange={(e) => setNewYoudaoTitle(e.target.value)}
                   placeholder="例如: 生产机负载均衡配置指南"
-                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg focus:outline-none focus:border-sky-600"
+                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg focus:outline-none focus:border-sh-info/40"
                 />
               </div>
 
@@ -3069,7 +3062,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   value={newYoudaoFolder}
                   onChange={(e) => setNewYoudaoFolder(e.target.value)}
                   placeholder="/工作/架构设计/"
-                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg font-mono focus:outline-none focus:border-sky-600"
+                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3 py-2 text-xs text-sh-fg font-mono focus:outline-none focus:border-sh-info/40"
                 />
               </div>
 
@@ -3080,7 +3073,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   onChange={(e) => setNewYoudaoContent(e.target.value)}
                   placeholder="# 标题&#10;&#10;输入正文内容..."
                   rows={6}
-                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl p-3 text-xs text-sh-fg font-mono focus:outline-none focus:border-sky-600"
+                  className="w-full bg-sh-surface2 border border-sh-line rounded-xl p-3 text-xs text-sh-fg font-mono focus:outline-none focus:border-sh-info/40"
                 />
               </div>
             </div>
@@ -3094,7 +3087,7 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
               </button>
               <button
                 onClick={handleCreateYoudaoNote}
-                className="px-4 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs shadow-sm"
+                className="px-4 py-1.5 rounded-xl bg-sh-accent text-sh-accent-fg hover:opacity-90 text-sh-accent-fg font-semibold text-xs shadow-sm"
               >
                 创建笔记
               </button>

@@ -15,6 +15,7 @@ import { isFeatureEnabled } from './lib/features';
 import { fetchWucaiHighlights } from './lib/wucaiClient';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
+import { ToastHost } from './shared/ui/toast';
 import { InboxView } from './components/views/InboxView';
 import { ProjectsView } from './components/views/ProjectsView';
 import { RemindersView } from './components/views/RemindersView';
@@ -353,7 +354,6 @@ export function App() {
     },
     [go, flashNotice]
   );
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1264,7 +1264,15 @@ export function App() {
       className="flex h-screen overflow-hidden bg-sh-bg text-sh-fg font-sans"
       data-write-mode={readOnlyNotice ? 'read-only' : 'writable'}
     >
-      <a href="#/home" className="sh-skip-link">
+      {/* 真·跳转：把焦点交给 main（href 写 #/home 只会回到首页，焦点一步也没省）。 */}
+      <a
+        href="#main"
+        className="sh-skip-link"
+        onClick={(e) => {
+          e.preventDefault();
+          document.getElementById('main')?.focus();
+        }}
+      >
         跳到主要内容
       </a>
 
@@ -1300,7 +1308,7 @@ export function App() {
           inboxCount={counts.inbox || 0}
         />
 
-        <main id="main" className="flex-1 p-3 sm:p-5 max-w-[1400px] w-full mx-auto">
+        <main id="main" tabIndex={-1} className="flex-1 p-3 sm:p-5 max-w-[1400px] w-full mx-auto focus:outline-none">
           {readOnlyNotice && (
             <div
               className="mb-4 flex items-start gap-2.5 rounded-2xl border border-sh-warn/50 bg-sh-warn/10 p-3.5 text-xs text-sh-warn"
@@ -1916,65 +1924,10 @@ export function App() {
         }}
       />
 
-      {/* The modal variant of settings is still used by in-page shortcuts. */}
-      <Suspense fallback={null}>
-        <SettingsModal
-          isOpen={isSettingsOpen}
-          onClose={() => setIsSettingsOpen(false)}
-          obsidianConfig={state.obsidianConfig}
-          obsidianConnections={obsidianConnections}
-          onSelectObsidianConnection={selectObsidianConnection}
-          onAddObsidianConnection={addObsidianConnection}
-                  onRemoveObsidianConnection={removeObsidianConnection}
-          aiConfig={state.aiConfig}
-          onSaveIntegration={(id, values) => updateState((prev) => applyIntegrationValues(prev, id, values))}
-          onToggleFeature={(id, enabled) =>
-            updateState((prev) => ({ ...prev, features: { ...(prev.features || {}), [id]: enabled } }))
-          }
-          state={state}
-          onRestoreState={handleRestoreState}
-          masterPassword={masterPassword}
-          backupStatus={backupStatus}
-          onBackupNow={(force) => runStateBackup(force, 'manual')}
-          webdavConfig={state.webdavConfig}
-          backupTarget={backupTarget}
-          onUpdateBackupPolicy={(backupPolicy) =>
-            updateState((prev) => ({
-              ...prev,
-              backupPolicy: {
-                provider: backupPolicy.provider,
-                enabled: backupPolicy.enabled,
-                format: backupPolicy.format ?? prev.backupPolicy?.format ?? 'legacy',
-                destinations: backupPolicy.destinations ?? prev.backupPolicy?.destinations
-              }
-            }))
-          }
-          v3Backup={{
-            panel: v3Backup.panel,
-            onUnlock: v3Backup.unlock,
-            onLock: v3Backup.lock,
-            onRefresh: () => void v3Backup.refresh(),
-            onRun: () => void v3Backup.runNow(),
-            onPrune: () => void v3Backup.pruneNow(),
-            onFormatChange: v3Backup.setFormat,
-            onPreviewBatch: (id: string) => void v3Backup.previewBatch(id),
-            onConflictChoice: v3Backup.setConflictChoice,
-            onRestoreMode: v3Backup.setRestoreMode,
-            onApplyRestore: () => void v3Backup.applyPreview(),
-            onDiscardPreview: v3Backup.discardPreview,
-            onExportMigration: () => void v3Backup.exportMigration(),
-            onPreviewMigration: (id: string) => void v3Backup.previewMigration(id),
-            onImportCredentialsChange: v3Backup.setImportCredentials,
-            onRemoveMigration: (id: string) => void v3Backup.removeMigration(id),
-            onExportBundle: (withCredentials: boolean) => void v3Backup.buildBundleFile({ includeCredentials: withCredentials }),
-            onImportBundle: (json: string) => void v3Backup.previewBundleFile(json),
-            onRetestConnections: (services: string[]) => void v3Backup.retestConnections(services)
-          }}
-          storageMode={{ mode: storageMode, counts: v3Status.counts, error: v3Status.error, migration: v3Status.migration }}
-          onSwitchStorageMode={switchStorageMode}
-        />
-      </Suspense>
-
+      {/* The modal variant of settings was retired: settings only exists as the
+          settings PAGE (#/settings/...). The second copy of these 25 props here
+          meant every settings-interface change had to be made twice, and the
+          "in-page shortcuts" it claimed to serve never existed. */}
       {/* `focusNoteId` is consumed by the library item view; clear it once used. */}
       {focusNoteId && route.name === 'library-item' && <FocusClear onDone={clearFocusNoteId} />}
 
@@ -1983,7 +1936,7 @@ export function App() {
         <div
           role="status"
           data-testid="global-notice"
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] px-3.5 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-xs text-zinc-100 shadow-xl max-w-[90vw] truncate"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] px-3.5 py-2 rounded-xl bg-sh-surface2 border border-sh-line-strong text-xs text-sh-fg shadow-xl max-w-[90vw] truncate"
         >
           {globalNotice}
         </div>
@@ -1991,6 +1944,8 @@ export function App() {
 
       {/* Exposed for diagnostics without importing the whole app in tests. */}
       <span className="hidden" data-testid="write-guard" data-mode={checkWritable().mode} />
+
+      <ToastHost />
     </div>
   );
 }

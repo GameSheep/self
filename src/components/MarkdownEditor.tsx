@@ -447,7 +447,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       onClick={() => onModeChange(target)}
       title={label}
       className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 text-[11px] transition-colors ${
-        mode === target ? 'bg-zinc-800 text-zinc-100 font-medium' : 'text-zinc-400 hover:text-zinc-200'
+        mode === target ? 'bg-sh-surface2 text-sh-fg font-medium' : 'text-sh-muted hover:text-sh-fg'
       }`}
     >
       {icon}
@@ -485,7 +485,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           ))}
         </div>
 
-        <div className="flex items-center gap-1 p-0.5 rounded-lg bg-zinc-900 border border-zinc-800">
+        <div className="flex items-center gap-1 p-0.5 rounded-lg bg-sh-surface2 border border-sh-line">
           {modeButton('edit', <PencilLine className="w-3 h-3" />, '编辑')}
           {modeButton('split', <Columns2 className="w-3 h-3" />, '分屏')}
           {modeButton('preview', <Eye className="w-3 h-3" />, '预览')}
@@ -496,7 +496,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
             type="button"
             onClick={onSave}
             disabled={saving}
-            className="ml-2 px-3 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-semibold flex items-center gap-1.5 disabled:opacity-50"
+            className="ml-2 px-3 py-1 rounded-lg bg-sh-accent text-sh-accent-fg hover:opacity-90 text-[11px] font-semibold flex items-center gap-1.5 disabled:opacity-50"
           >
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
             <span>{saving ? '保存中' : '保存'}</span>
@@ -529,7 +529,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
       </div>
 
       {uploadingCount > 0 && (
-        <div className="px-3 py-1.5 text-[11px] text-sky-400 border-t border-sh-line bg-sh-surface flex items-center gap-1.5">
+        <div className="px-3 py-1.5 text-[11px] text-sh-info border-t border-sh-line bg-sh-surface flex items-center gap-1.5">
           <Loader2 className="w-3 h-3 animate-spin" />
           正在上传 {uploadingCount} 个附件到 OSS…
         </div>
@@ -540,8 +540,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         <span className="flex items-center gap-3">
           <span>{value.length} 字符</span>
           <span>{value.split('\n').length} 行</span>
-          {previewStale && mode === 'split' && <span className="text-sky-400">预览更新中…</span>}
-          {dirty ? <span className="text-amber-400">● 未保存</span> : <span className="text-emerald-500">已同步</span>}
+          {previewStale && mode === 'split' && <span className="text-sh-info">预览更新中…</span>}
+          {dirty ? <span className="text-sh-warn">● 未保存</span> : <span className="text-sh-ok">已同步</span>}
         </span>
         <span className="flex items-center gap-3">{statusRight}</span>
       </div>

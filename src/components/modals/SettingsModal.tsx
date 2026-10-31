@@ -40,7 +40,8 @@ import { INTEGRATIONS, IntegrationId, IntegrationDef, ossConnectionDefs } from '
 import { FEATURE_DEFS, FeatureId, isFeatureEnabled } from '../../lib/features';
 import { IntegrationCard } from '../settings/IntegrationCard';
 import { V3BackupSection } from '../settings/V3BackupSection';
-import { Button, ConfirmDialog, Section, StatusPill } from '../../shared/ui';
+import { Button, ConfirmDialog, Section, StatusPill, inputClass } from '../../shared/ui';
+import { showToast as showToastGlobal } from '../../shared/ui/toast';
 import { Hint } from '../../shared/Hint';
 import { capabilityLabel, connectionStatus, fingerprintOf, runConnectionTest } from '../../lib/connectionState';
 import { resolveBackupTarget, type BackupPolicy, type BackupTarget } from '../../lib/backupPolicy';
@@ -302,6 +303,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [exportPassword, setExportPassword] = useState('');
   const [showExportPasswordInput, setShowExportPasswordInput] = useState(false);
   const [canRollback, setCanRollback] = useState(false);
+  /** 加密备份导入时无会话主密码：先存文件内容，等遮蔽的密码框而不是明文 prompt()。 */
+  const [pendingEncryptedRestore, setPendingEncryptedRestore] = useState<string | null>(null);
+  const [restorePassword, setRestorePassword] = useState('');
   /**
    * Damaged payloads kept aside by `loadHubState`.
    *
@@ -515,50 +519,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       try {
         const parsed = JSON.parse(content);
         if (parsed.encryptedData && parsed.app === 'self-hub') {
-          // Encrypted backup
-          let pwd = masterPassword;
+          // Encrypted backup. 密码输入必须是遮蔽的模态输入框——原生 prompt()
+          // 不遮蔽，主密码会明文留在屏幕上。
+          const pwd = masterPassword;
           if (!pwd) {
-            pwd = prompt('检测到 AES-256 加密备份文件，请输入主密码以解密恢复：');
-            if (!pwd) return;
+            setPendingEncryptedRestore(content);
+            return;
           }
-          snapshotForRollback();
-          const restored = await importEncryptedBackup(content, pwd);
-          if (restored) {
-            const applied = await Promise.resolve(onRestoreState(restored));
-            if (applied === false) {
-              alert('❌ 数据没有写入本机库，请查看页面顶部的提示后再试');
-              return;
-            }
-            setCanRollback(true);
-            alert(`✅ 加密备份已成功解密并恢复！共恢复 ${restored.sites?.length || 0} 个站点，${restored.notes?.length || 0} 条笔记。`);
-            onClose();
-          } else {
-            alert('❌ 解密失败：主密码错误或备份文件损坏');
-          }
+          await runEncryptedRestore(content, pwd);
         } else {
           // Standard plaintext backup
           const imported = importBackup(content);
           if (imported) {
             const applied = await Promise.resolve(onRestoreState(imported));
             if (applied === false) {
-              alert('❌ 数据没有写入本机库，请查看页面顶部的提示后再试');
+              showToastGlobal('数据没有写入本机库，请查看页面顶部的提示后再试', 'danger');
               return;
             }
             setCanRollback(true);
-            alert('✅ 备份数据已成功恢复！');
-            onClose();
+            showToastGlobal('备份数据已成功恢复（可随时在本面板回滚）', 'ok');
           } else {
-            alert('❌ 备份文件格式错误或数据校验未通过，恢复中止以保护现有数据');
+            showToastGlobal('备份文件格式错误或数据校验未通过，恢复中止以保护现有数据', 'danger');
           }
         }
       } catch (err: any) {
-        alert(`❌ 读取备份失败: ${err.message || '不是有效的 JSON 文件'}`);
+        showToastGlobal(`读取备份失败：${err.message || '不是有效的 JSON 文件'}`, 'danger');
       } finally {
         // Allow re-selecting the same file again.
         e.target.value = '';
       }
     };
     reader.readAsText(file);
+  };
+
+  /** 带主密码的加密备份恢复；成功后留在本面板（回滚入口就在手边）。 */
+  const runEncryptedRestore = async (content: string, pwd: string) => {
+    snapshotForRollback();
+    const restored = await importEncryptedBackup(content, pwd);
+    if (restored) {
+      const applied = await Promise.resolve(onRestoreState(restored));
+      if (applied === false) {
+        showToastGlobal('数据没有写入本机库，请查看页面顶部的提示后再试', 'danger');
+        return;
+      }
+      setCanRollback(true);
+      showToastGlobal(`加密备份已解密并恢复：${restored.sites?.length || 0} 个站点、${restored.notes?.length || 0} 条笔记`, 'ok');
+    } else {
+      showToastGlobal('解密失败：主密码错误或备份文件损坏', 'danger');
+    }
   };
 
   const handleRollback = async () => {
@@ -1049,17 +1057,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 className="bg-sh-surface2/40"
               >
                 <div className="space-y-3" data-testid="cloud-backup-section">
-                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                    <span className="font-mono text-sh-muted" data-testid="backup-status">
-                      {backupStatus?.status === 'saving'
-                        ? '备份中…'
-                        : backupStatus?.status === 'conflict'
-                        ? '⚠️ 云端更新，未覆盖'
-                        : backupStatus?.status === 'error'
-                        ? `⚠️ 备份失败：${backupStatus.message || '未知原因'}`
-                        : describeBackupAge(backupStatus?.lastAt)}
-                    </span>
-                  </div>
+                  {backupStatus?.status === 'error' ? (
+                    /* 失败不能是灰色小字：PRODUCT.md 的四问里「失败后如何处理」
+                       必须就地给出重试和去因入口。 */
+                    <div
+                      className="rounded-xl border border-sh-danger/50 bg-sh-danger/10 px-3 py-2 space-y-1.5"
+                      data-testid="backup-status"
+                      role="alert"
+                    >
+                      <p className="text-[11px] text-sh-danger font-medium">
+                        最近一次备份失败：{backupStatus.message || '未知原因'}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button size="sm" variant="danger" onClick={() => void onBackupNow?.(true)}>
+                          重试备份
+                        </Button>
+                        <Button size="sm" variant="secondary" onClick={() => requestPane('connections')}>
+                          检查连接
+                        </Button>
+                      </div>
+                    </div>
+                  ) : backupStatus?.status === 'conflict' ? (
+                    <div
+                      className="rounded-xl border border-sh-warn/50 bg-sh-warn/10 px-3 py-2 text-[11px] text-sh-warn"
+                      data-testid="backup-status"
+                      role="status"
+                    >
+                      云端更新，未覆盖：备份没有写入，本机数据完好。可在下方「立即备份」里强制覆盖。
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      <span className="font-mono text-sh-muted" data-testid="backup-status">
+                        {backupStatus?.status === 'saving' ? '备份中…' : describeBackupAge(backupStatus?.lastAt)}
+                      </span>
+                    </div>
+                  )}
+                  {/* 2024-06 及更早的备份结果也在这里继续：目的地卡片属于同一个分区。 */}
 
                   <div className="rounded-xl border border-sh-line bg-sh-surface p-3 space-y-2" data-testid="backup-destination">
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -1779,6 +1812,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={pendingEncryptedRestore !== null}
+        title="输入主密码以解密这份加密备份"
+        tone="danger"
+        confirmLabel="解密并恢复"
+        cancelLabel="取消导入"
+        onConfirm={async () => {
+          const content = pendingEncryptedRestore;
+          const pwd = restorePassword;
+          setPendingEncryptedRestore(null);
+          setRestorePassword('');
+          if (content && pwd) await runEncryptedRestore(content, pwd);
+        }}
+        onCancel={() => {
+          setPendingEncryptedRestore(null);
+          setRestorePassword('');
+        }}
+        description={
+          <div className="space-y-2">
+            <p>检测到 AES-256 加密备份文件。主密码只用于本机解密，不会离开这台设备。</p>
+            <input
+              type="password"
+              value={restorePassword}
+              onChange={(e) => setRestorePassword(e.target.value)}
+              autoFocus
+              aria-label="备份主密码"
+              data-testid="restore-password-input"
+              className={inputClass}
+              placeholder="主密码"
+            />
+            <p className="text-sh-warn">密码错误时恢复会中止，现有数据不受影响。</p>
+          </div>
+        }
+      />
 
       <ConfirmDialog
         open={salvageToDelete !== null}

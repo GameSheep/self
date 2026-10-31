@@ -232,11 +232,11 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
     <div className="p-5 rounded-2xl bg-sh-surface border border-sh-line shadow-sm">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
-          <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-            <PenTool className="w-4 h-4 text-sky-400" />
+          <h2 className="text-sm font-semibold text-sh-fg flex items-center gap-2">
+            <PenTool className="w-4 h-4 text-sh-info" />
             快速手写与架构画板
           </h2>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-sh-subtle">
             支持鼠标与平板触控笔手写、绘制拓扑架构、灵感涂鸦并一键归档
           </p>
         </div>
@@ -292,14 +292,14 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
           </div>
 
           {/* Stroke Width */}
-          <div className="flex items-center gap-1 bg-zinc-900 p-1 rounded-lg border border-zinc-800 text-xs">
+          <div className="flex items-center gap-1 bg-sh-surface2 p-1 rounded-lg border border-sh-line text-xs">
             {[2, 4, 8].map((w) => (
               <button
                 key={w}
                 onClick={() => setLineWidth(w)}
                 aria-label={`线宽 ${w} 像素`}
                 aria-pressed={lineWidth === w}
-                className={`px-2 py-0.5 rounded ${lineWidth === w ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}
+                className={`px-2 py-0.5 rounded ${lineWidth === w ? 'bg-sh-surface2 text-sh-accent-fg' : 'text-sh-subtle'}`}
               >
                 {w}px
               </button>
@@ -310,7 +310,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
           <button
             onClick={() => setIsEraser(!isEraser)}
             className={`p-1.5 rounded-lg border text-xs flex items-center gap-1 transition-colors ${
-              isEraser ? 'bg-zinc-800 border-zinc-600 text-white' : 'bg-zinc-900 border-zinc-800 text-zinc-400'
+              isEraser ? 'bg-sh-surface2 border-sh-line-strong text-sh-accent-fg' : 'bg-sh-surface2 border-sh-line text-sh-muted'
             }`}
             title="橡皮擦"
           >
@@ -320,7 +320,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
           {/* Undo */}
           <button
             onClick={handleUndo}
-            className="p-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white"
+            className="p-1.5 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-sh-fg"
             title="撤销一步"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -329,7 +329,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
           {/* Clear */}
           <button
             onClick={handleClear}
-            className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-red-400 text-xs"
+            className="px-2.5 py-1 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-sh-danger text-xs"
           >
             清屏
           </button>
@@ -361,21 +361,21 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
           value={noteTitle}
           onChange={(e) => setNoteTitle(e.target.value)}
           placeholder="给这幅手绘命名 (例如: 服务拓扑/今日草稿)..."
-          className="flex-1 bg-zinc-900/80 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-zinc-700"
+          className="flex-1 bg-sh-surface2/80 border border-sh-line rounded-lg px-3 py-1.5 text-xs text-sh-fg focus:outline-none focus:border-sh-line-strong"
         />
         <button
           onClick={handleSave}
           data-testid="handwriting-save"
-          className="px-3 py-1.5 rounded-lg bg-zinc-100 text-zinc-900 hover:bg-white text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
+          className="px-3 py-1.5 rounded-lg bg-sh-accent text-sh-accent-fg hover:opacity-90 text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
         >
-          {savedSuccess ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Save className="w-3.5 h-3.5" />}
+          {savedSuccess ? <Check className="w-3.5 h-3.5 text-sh-ok" /> : <Save className="w-3.5 h-3.5" />}
           <span>{savedSuccess ? '已保存入库' : saveError ? '重试保存' : '保存为卡片'}</span>
         </button>
       </div>
 
       {saveError && (
         <p
-          className="mt-2 text-[11px] text-rose-400 leading-relaxed"
+          className="mt-2 text-[11px] text-sh-danger leading-relaxed"
           data-testid="handwriting-save-error"
           role="alert"
         >
@@ -385,15 +385,15 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
 
       {/* Saved Notes Gallery */}
       {savedNotes.length > 0 && (
-        <div className="mt-5 pt-4 border-t border-zinc-800/60">
-          <h4 className="text-xs font-semibold text-zinc-400 mb-3">
+        <div className="mt-5 pt-4 border-t border-sh-line">
+          <h4 className="text-xs font-semibold text-sh-muted mb-3">
             已归档的手写草图 ({savedNotes.length})
           </h4>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
             {savedNotes.map((note) => (
-              <div key={note.id} className="group relative rounded-lg border border-zinc-800/90 bg-zinc-900/60 overflow-hidden">
+              <div key={note.id} className="group relative rounded-lg border border-sh-line bg-sh-surface2/70 overflow-hidden">
                 <img src={note.dataUrl} alt={note.title} className="w-full h-24 object-cover" />
-                <div className="p-2 flex items-center justify-between text-[11px] text-zinc-400">
+                <div className="p-2 flex items-center justify-between text-[11px] text-sh-muted">
                   <span className="truncate">{note.title}</span>
                   <button
                     onClick={() => {
@@ -403,7 +403,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
                       onDeleteNote(note.id);
                     }}
                     aria-label={`删除手绘 ${note.title}`}
-                    className="opacity-100 sm:opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 text-[10px]"
+                    className="opacity-100 sm:opacity-0 group-hover:opacity-100 text-sh-subtle hover:text-sh-danger text-[10px]"
                   >
                     删除
                   </button>

@@ -48,9 +48,9 @@ export function isImageFile(name: string): boolean {
 
 function fileIcon(name: string) {
   const lower = name.toLowerCase();
-  if (isEditableFile(name)) return <FileText className="w-3.5 h-3.5 shrink-0 text-purple-400" />;
-  if (isImageFile(lower)) return <ImageIcon className="w-3.5 h-3.5 shrink-0 text-sky-400" />;
-  return <File className="w-3.5 h-3.5 shrink-0 text-zinc-500" />;
+  if (isEditableFile(name)) return <FileText className="w-3.5 h-3.5 shrink-0 text-sh-focus" />;
+  if (isImageFile(lower)) return <ImageIcon className="w-3.5 h-3.5 shrink-0 text-sh-info" />;
+  return <File className="w-3.5 h-3.5 shrink-0 text-sh-subtle" />;
 }
 
 function formatSize(bytes: number): string {
@@ -134,7 +134,7 @@ export const OssTree: React.FC<OssTreeProps> = ({
       const restorable = Boolean(onRestore && canRestore?.(node));
       if (!onRename && !onMove && !onDelete && !restorable) return null;
       return (
-        <span className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity shrink-0 bg-zinc-800/90 rounded-md px-0.5">
+        <span className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 transition-opacity shrink-0 bg-sh-surface2 rounded-md px-0.5">
           {restorable && (
             <button
               type="button"
@@ -143,7 +143,7 @@ export const OssTree: React.FC<OssTreeProps> = ({
                 e.stopPropagation();
                 onRestore?.(node);
               }}
-              className="p-0.5 rounded hover:bg-zinc-700 text-emerald-400 hover:text-emerald-300"
+              className="p-0.5 rounded hover:bg-sh-surface2 text-sh-ok hover:text-sh-ok"
             >
               <RotateCcw className="w-3 h-3" />
             </button>
@@ -156,7 +156,7 @@ export const OssTree: React.FC<OssTreeProps> = ({
                 e.stopPropagation();
                 onRename(node);
               }}
-              className="p-0.5 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100"
+              className="p-0.5 rounded hover:bg-sh-surface2 text-sh-muted hover:text-sh-fg"
             >
               <Pencil className="w-3 h-3" />
             </button>
@@ -169,7 +169,7 @@ export const OssTree: React.FC<OssTreeProps> = ({
                 e.stopPropagation();
                 onMove(node);
               }}
-              className="p-0.5 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-100"
+              className="p-0.5 rounded hover:bg-sh-surface2 text-sh-muted hover:text-sh-fg"
             >
               <FolderInput className="w-3 h-3" />
             </button>
@@ -182,7 +182,7 @@ export const OssTree: React.FC<OssTreeProps> = ({
                 e.stopPropagation();
                 onDelete(node);
               }}
-              className="p-0.5 rounded hover:bg-zinc-700 text-zinc-400 hover:text-rose-400"
+              className="p-0.5 rounded hover:bg-sh-surface2 text-sh-muted hover:text-sh-danger"
             >
               <Trash2 className="w-3 h-3" />
             </button>
@@ -198,7 +198,7 @@ export const OssTree: React.FC<OssTreeProps> = ({
      */
     const metaCell = (label: string | number, node: OssTreeNode) => (
       <span className="ml-auto relative shrink-0 w-[74px] h-4 flex items-center justify-end">
-        <span className="text-[10px] font-mono text-zinc-500 group-hover/row:opacity-0 transition-opacity">
+        <span className="text-[10px] font-mono text-sh-subtle group-hover/row:opacity-0 transition-opacity">
           {label}
         </span>
         {rowActions(node)}
@@ -217,21 +217,21 @@ export const OssTree: React.FC<OssTreeProps> = ({
         return (
           <div key={`d:${node.path}`}>
             <div
-              className="group/row w-full flex items-center gap-1.5 py-1.5 pr-2 rounded-lg text-xs text-zinc-300 hover:bg-zinc-800/60 transition-colors cursor-pointer"
+              className="group/row w-full flex items-center gap-1.5 py-1.5 pr-2 rounded-lg text-xs text-sh-muted hover:bg-sh-surface2 transition-colors cursor-pointer"
               style={pad}
               data-oss-kind="dir"
               data-oss-path={node.path}
               onClick={() => toggle(node.path)}
             >
               {open ? (
-                <ChevronDown className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                <ChevronDown className="w-3.5 h-3.5 shrink-0 text-sh-subtle" />
               ) : (
-                <ChevronRight className="w-3.5 h-3.5 shrink-0 text-zinc-500" />
+                <ChevronRight className="w-3.5 h-3.5 shrink-0 text-sh-subtle" />
               )}
               {open ? (
-                <FolderOpen className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                <FolderOpen className="w-3.5 h-3.5 shrink-0 text-sh-warn" />
               ) : (
-                <Folder className="w-3.5 h-3.5 shrink-0 text-amber-500/80" />
+                <Folder className="w-3.5 h-3.5 shrink-0 text-sh-warn" />
               )}
               <span className="truncate font-medium">{node.name}</span>
               {metaCell(node.children.length, node)}
@@ -246,7 +246,7 @@ export const OssTree: React.FC<OssTreeProps> = ({
                       setLimits((prev) => ({ ...prev, [node.path]: (prev[node.path] ?? pageSize) + pageSize * 2 }))
                     }
                     style={{ paddingLeft: `${(depth + 1) * 14 + 26}px` }}
-                    className="w-full text-left py-1 text-[11px] text-sky-400 hover:text-sky-300"
+                    className="w-full text-left py-1 text-[11px] text-sh-info hover:text-sh-info"
                   >
                     还有 {hidden} 项，点击加载更多
                   </button>
@@ -266,7 +266,7 @@ export const OssTree: React.FC<OssTreeProps> = ({
           data-oss-kind="file"
           data-oss-path={node.path}
           className={`group/row w-full flex items-center gap-1.5 py-1.5 pr-2 rounded-lg text-xs transition-colors cursor-pointer ${
-            selected ? 'bg-purple-950/40 text-purple-200' : 'text-zinc-300 hover:bg-zinc-800/60'
+            selected ? 'bg-sh-focus/10 text-sh-focus' : 'text-sh-muted hover:bg-sh-surface2'
           }`}
           title={node.path}
         >
@@ -281,7 +281,7 @@ export const OssTree: React.FC<OssTreeProps> = ({
 
   if (visibleChildren.length === 0) {
     return (
-      <div className="py-10 text-center text-xs text-zinc-500">
+      <div className="py-10 text-center text-xs text-sh-subtle">
         {searching ? '没有匹配的文件或目录' : '该前缀下没有任何对象'}
       </div>
     );

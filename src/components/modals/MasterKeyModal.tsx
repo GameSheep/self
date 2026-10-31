@@ -106,25 +106,25 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
     >
       <div 
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-sh-surface border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-2"
+        className="w-full max-w-md bg-sh-surface border border-sh-line rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-2"
       >
         
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-zinc-800">
+        <div className="flex items-center justify-between p-5 border-b border-sh-line">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-emerald-950/50 border border-emerald-800/50 flex items-center justify-center text-emerald-400">
+            <div className="w-8 h-8 rounded-lg bg-sh-ok/10 border border-sh-ok/40 flex items-center justify-center text-sh-ok">
               <ShieldCheck className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-zinc-100">
+              <h2 className="text-sm font-semibold text-sh-fg">
                 {isFirstTime ? '初始化主密码 (Master Password)' : '解锁安全金库'}
               </h2>
-              <p className="text-xs text-zinc-500 font-mono">
+              <p className="text-xs text-sh-subtle font-mono">
                 {isFirstTime ? '设置仅您自己知道的解密凭证' : '输入主密码以查看/复制敏感资产'}
               </p>
             </div>
           </div>
-          <button onClick={onClose} aria-label="关闭" className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white">
+          <button onClick={onClose} aria-label="关闭" className="p-1 rounded-lg hover:bg-sh-surface2 text-sh-muted hover:text-sh-fg">
             <X className="w-4 h-4" aria-hidden />
           </button>
         </div>
@@ -132,7 +132,7 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div>
-            <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+            <label className="block text-xs font-medium text-sh-muted mb-1.5">
               主密码 (Master Password)
             </label>
             <input
@@ -141,13 +141,13 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••••"
-              className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
+              className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3.5 py-2.5 text-xs text-sh-fg font-mono focus:outline-none focus:border-sh-line-strong"
             />
           </div>
 
           {isFirstTime && (
             <div>
-              <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+              <label className="block text-xs font-medium text-sh-muted mb-1.5">
                 确认主密码
               </label>
               <input
@@ -155,7 +155,7 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="再次输入以确认"
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 font-mono focus:outline-none focus:border-zinc-700"
+                className="w-full bg-sh-surface2 border border-sh-line rounded-xl px-3.5 py-2.5 text-xs text-sh-fg font-mono focus:outline-none focus:border-sh-line-strong"
               />
             </div>
           )}
@@ -167,21 +167,21 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
               id="remember"
               checked={rememberDevice}
               onChange={(e) => setRememberDevice(e.target.checked)}
-              className="rounded bg-zinc-900 border-zinc-700 text-emerald-500 focus:ring-0"
+              className="rounded bg-sh-surface2 border-sh-line-strong text-sh-ok focus:ring-0"
             />
-            <label htmlFor="remember" className="text-xs text-zinc-400 cursor-pointer select-none">
+            <label htmlFor="remember" className="text-xs text-sh-muted cursor-pointer select-none">
               在这台常用设备保持记住（30天内免密自动加载）
             </label>
           </div>
 
           {errorMsg && (
-            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-red-950/40 border border-red-800/40 text-red-400 text-xs">
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-sh-danger/10 border border-sh-danger/50 text-sh-danger text-xs">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
               <span>{errorMsg}</span>
             </div>
           )}
 
-          <div className="text-[11px] text-zinc-500 bg-zinc-900/60 p-3 rounded-xl border border-zinc-800/80 leading-relaxed">
+          <div className="text-[11px] text-sh-subtle bg-sh-surface2 p-3 rounded-xl border border-sh-line leading-relaxed">
             🛡️ <strong>零知识加密承诺</strong>：主密码绝不上网、绝不保存到远程服务器，仅在您本地浏览器中进行端到端解密。
           </div>
 
@@ -189,14 +189,14 @@ export const MasterKeyModal: React.FC<MasterKeyModalProps> = ({ isOpen, onClose,
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs"
+              className="px-4 py-2 rounded-xl bg-sh-surface2 hover:bg-sh-surface2 text-sh-muted text-xs"
             >
               取消
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-900 hover:bg-white text-xs font-semibold flex items-center gap-1.5 shadow-sm"
+              className="px-4 py-2 rounded-xl bg-sh-accent text-sh-accent-fg text-xs font-semibold flex items-center gap-1.5 shadow-sm"
             >
               <Check className="w-3.5 h-3.5" />
               <span>{isFirstTime ? '完成设置并开启金库' : '立即解锁'}</span>

@@ -85,39 +85,39 @@ export class ErrorBoundary extends React.Component<Props, State> {
     if (!this.state.error) return this.props.children;
 
     return (
-      <div className="min-h-screen bg-sh-bg text-zinc-100 flex items-center justify-center p-6">
-        <div className="max-w-2xl w-full bg-sh-surface border border-red-900/50 rounded-2xl p-6 space-y-4">
-          <div className="flex items-center gap-2 text-red-400">
+      <div className="min-h-screen bg-sh-bg text-sh-fg flex items-center justify-center p-6">
+        <div className="max-w-2xl w-full bg-sh-surface border border-sh-danger/50 rounded-2xl p-6 space-y-4">
+          <div className="flex items-center gap-2 text-sh-danger">
             <AlertTriangle className="w-5 h-5" />
             <h1 className="text-base font-semibold">
               界面渲染出错{this.props.scope ? ` · ${this.props.scope}` : ''}
             </h1>
           </div>
-          <p className="text-xs text-zinc-400 leading-relaxed">
+          <p className="text-xs text-sh-muted leading-relaxed">
             你的数据仍然保存在浏览器本地，没有丢失。可以先重新加载；如果反复出错，请先导出原始数据再重置。
           </p>
-          <pre className="text-[11px] font-mono text-red-300 bg-black/40 border border-red-900/40 rounded-xl p-3 overflow-auto max-h-48 whitespace-pre-wrap">
+          <pre className="text-[11px] font-mono text-sh-danger bg-black/40 border border-sh-danger/50 rounded-xl p-3 overflow-auto max-h-48 whitespace-pre-wrap">
             {this.state.error.message}
             {this.state.info ? `\n${this.state.info.slice(0, 800)}` : ''}
           </pre>
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <button
               onClick={this.reload}
-              className="px-4 py-2 rounded-xl bg-zinc-100 text-zinc-900 text-xs font-semibold flex items-center gap-1.5"
+              className="px-4 py-2 rounded-xl bg-sh-accent text-sh-accent-fg text-xs font-semibold flex items-center gap-1.5"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               重新加载
             </button>
             <button
               onClick={this.exportRaw}
-              className="px-4 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-300 text-xs flex items-center gap-1.5"
+              className="px-4 py-2 rounded-xl bg-sh-surface2 border border-sh-line text-sh-muted text-xs flex items-center gap-1.5"
             >
               <Download className="w-3.5 h-3.5" />
               导出原始数据
             </button>
             <button
               onClick={this.resetAll}
-              className="px-4 py-2 rounded-xl bg-red-950/40 border border-red-800/40 text-red-400 text-xs flex items-center gap-1.5"
+              className="px-4 py-2 rounded-xl bg-sh-danger/10 border border-sh-danger/50 text-sh-danger text-xs flex items-center gap-1.5"
             >
               <Trash2 className="w-3.5 h-3.5" />
               清空并重置
