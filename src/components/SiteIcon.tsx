@@ -43,6 +43,10 @@ interface SiteIconProps {
  * Chromium quirk (see the fetch below): the bare `/favicon.ico` path must carry a
  * query string or the browser cancels the request outright.
  *
+ * 加载成功 ≠ 可见：GitHub、MDN 的深色 logo 落在深色主题的 sh-bg 上就是一块
+ * 黑洞（截图实证）。底板用按站点色相派生的中明度色（25% 饱和 / 55% 明度），
+ * 深色浅色 logo 都有对比，两站并肩时色相不同、可扫读，离线也不破。
+ *
  * Because derivation is render-time from `url`, every flow that holds a URL —
  * manually adding a site, the AI ingest preview, the navigation cards, the home
  * tiles — gets icons "for free" with zero user input and zero stored state.
@@ -93,8 +97,8 @@ export const SiteIcon: React.FC<SiteIconProps> = ({
         onError={() => setIconFailed(true)}
         data-testid={testId}
         data-site-icon-src={faviconUrl}
-        style={box}
-        className={`object-contain bg-sh-bg border border-sh-line shrink-0 ${radius} ${className}`}
+        style={{ ...box, backgroundColor: `hsl(${hue} 25% 55%)` }}
+        className={`object-contain border border-sh-line shrink-0 ${radius} ${className}`}
       />
     );
   }

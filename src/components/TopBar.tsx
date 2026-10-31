@@ -125,10 +125,10 @@ export const TopBar: React.FC<TopBarProps> = ({
             <button
               onClick={onOpenAiIngest}
               className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-sh-surface2 border border-sh-line text-xs text-sh-muted hover:text-sh-fg transition-colors sh-tap"
-              title="粘贴杂乱内容，用本地规则或已启用的云端 AI 整理入库"
+              title="批量导入向导：用本地规则或已启用的云端 AI 把杂乱内容整理入库（粘贴识别在快捷导航页）"
             >
               <Sparkles className="w-3.5 h-3.5 shrink-0" aria-hidden />
-              <span className="whitespace-nowrap">整理内容</span>
+              <span className="whitespace-nowrap">AI 批量导入</span>
             </button>
 
             <button

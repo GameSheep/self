@@ -1041,9 +1041,32 @@
     return items;
   }
 
+  /* 搜索是这一页的主操作（newtab.html 自述），所以键盘必须完整：打字 →
+     ↑↓ 选择 → Enter 打开。没有这套键位的搜索框，等于让最高频的动作每次
+     都伸手去拿鼠标。activeIndex 是 runSearch 闭包内的状态，与渲染同步。 */
+  var searchActiveIndex = -1;
+  var searchHits = [];
+
+  function highlightActiveResult() {
+    var results = document.getElementById('results');
+    if (!results) return;
+    var rows = results.querySelectorAll('button.result');
+    rows.forEach(function (row, i) {
+      row.classList.toggle('is-active', i === searchActiveIndex);
+      if (i === searchActiveIndex) row.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
+  function openActiveResult() {
+    var hit = searchHits[searchActiveIndex] || searchHits[0];
+    if (hit) hit.onOpen();
+  }
+
   function runSearch(query) {
     var results = document.getElementById('results');
     var needle = String(query || '').trim().toLowerCase();
+    searchActiveIndex = -1;
+    searchHits = [];
     if (!needle) {
       results.hidden = true;
       results.textContent = '';
@@ -1054,6 +1077,7 @@
         return item.title.toLowerCase().indexOf(needle) >= 0 || item.sub.toLowerCase().indexOf(needle) >= 0;
       })
       .slice(0, 40);
+    searchHits = hits;
     results.textContent = '';
     results.hidden = false;
     if (!hits.length) {
@@ -1068,9 +1092,23 @@
       main.appendChild(el('span', 'result-title', hit.title || '（无标题）'));
       if (hit.sub) main.appendChild(el('span', 'result-sub', String(hit.sub).slice(0, 160)));
       row.appendChild(main);
-      row.addEventListener('click', hit.onOpen);
+      row.addEventListener('click', function () {
+        // 鼠标点击与 Enter 走同一条路：让悬停态也写回 activeIndex，避免
+        // 键盘选择的行和鼠标点击的行各说各话。
+        searchActiveIndex = searchHits.indexOf(hit);
+        hit.onOpen();
+      });
+      row.addEventListener('mousemove', function () {
+        if (searchActiveIndex !== searchHits.indexOf(hit)) {
+          searchActiveIndex = searchHits.indexOf(hit);
+          highlightActiveResult();
+        }
+      });
       results.appendChild(row);
     });
+    // 有结果时默认停在第一条：Enter 立刻可用，无需先按方向键。
+    searchActiveIndex = 0;
+    highlightActiveResult();
   }
 
   /* ── 启动 ───────────────────────────────────────────────── */
@@ -1088,6 +1126,15 @@
         if (event.key === 'Escape') {
           search.value = '';
           runSearch('');
+        } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          if (!searchHits.length) return;
+          event.preventDefault();
+          var delta = event.key === 'ArrowDown' ? 1 : -1;
+          searchActiveIndex = (searchActiveIndex + delta + searchHits.length) % searchHits.length;
+          highlightActiveResult();
+        } else if (event.key === 'Enter') {
+          event.preventDefault();
+          openActiveResult();
         }
       });
       // The new tab exists to search; nothing else should compete for the cursor.

@@ -742,8 +742,14 @@ export function App() {
       const typing =
         target &&
         (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable === true);
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && !typing) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        // 在输入框里也不再失效：首页两个输入框曾经吞掉 Ctrl+K，鼠标用户
+        // 在首页就够不到全局检索。打开时顺手全选已有内容，连续检索不摩擦。
         e.preventDefault();
+        if (typing && target instanceof HTMLElement) {
+          const input = target as HTMLInputElement;
+          input.select?.();
+        }
         setIsSearchOpen((prev) => !prev);
       }
     };
@@ -1451,11 +1457,27 @@ export function App() {
                 onNavigate={go}
                 onVisitSite={visitSite}
                 onCapture={captureEntry}
+                onCaptureSite={(raw) => {
+                  // 第二去向：先入收件箱（保留原文与「未整理」状态），再把生成的
+                  // 条目立即转为书签——比静默建站多一层可回溯的痕迹。
+                  const result = captureEntry(raw, 'home');
+                  if (!result.ok || !result.id) return result;
+                  // captureEntry 已经 updateState，但本闭包里的 state 还是旧渲染
+                  // 快照——从 stateRef 取最新值才能找到刚生成的条目。
+                  const entry = stateRef.current.inbox?.find((item) => item.id === result.id);
+                  if (!entry) return result;
+                  const converted = convertToSite(entry);
+                  return converted.ok ? { ok: true, message: '已存为网站（收件箱里留有原始记录）' } : result;
+                }}
                 onOpenAddModal={(type) => openAddModal(type)}
                 onOpenSearchHit={openSearchHit}
                 backupStatus={backupStatus}
                 vaultUnlocked={Boolean(hasMasterAuth && masterPassword)}
                 onRequireUnlock={() => setIsMasterKeyOpen(true)}
+                onToggleReminderComplete={toggleReminderComplete}
+                onRenewReminder={renewReminder}
+                onRunCheckIn={(id) => runCheckIn(id, 'mark_done')}
+                onCheckAllServers={() => void checkAllServers()}
               />
             )}
 
@@ -1466,7 +1488,6 @@ export function App() {
                 onVisit={visitSite}
                 onDelete={deleteSite}
                 onOpenAddModal={(type) => openAddModal(type)}
-                onOpenAiIngest={() => setIsAiIngestOpen(true)}
                 onImportBookmarks={importBookmarks}
                 onPasteRecognized={{
                   aiConfig: state.aiConfig,

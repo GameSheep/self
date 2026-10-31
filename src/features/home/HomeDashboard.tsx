@@ -37,13 +37,22 @@ export interface HomeDashboardProps {
   onNavigate: (path: string) => void;
   onVisitSite: (id: string) => void;
   onCapture: (raw: string, source: InboxItem['source']) => CaptureResult;
+  /** 捕捉框检测到 URL 时的第二去向：入收件箱后立即转为书签。 */
+  onCaptureSite?: (raw: string) => CaptureResult;
   onOpenAddModal: (type?: 'site' | 'note') => void;
   onOpenSearchHit?: (hit: SearchHit) => void;
   backupStatus?: { status: string; lastAt?: number; message?: string };
   /** True only after unlocking; the summary never displays credential contents. */
   vaultUnlocked?: boolean;
   onRequireUnlock?: () => void;
+  /** 首页的就地动词：每个状态行都该带一个能直接执行的动词，而不是只指路。 */
+  onToggleReminderComplete?: (id: string) => void;
+  onRenewReminder?: (id: string) => void;
+  onRunCheckIn?: (id: string) => Promise<void> | void;
+  onCheckAllServers?: () => void;
 }
+
+const looksLikeUrl = (raw: string) => /^https?:\/\//i.test(raw.trim());
 
 /** Search and capture first, followed by shortcuts and recent work. */
 export const HomeDashboard: React.FC<HomeDashboardProps> = ({
@@ -51,11 +60,16 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onNavigate,
   onVisitSite,
   onCapture,
+  onCaptureSite,
   onOpenAddModal,
   onOpenSearchHit,
   backupStatus,
   vaultUnlocked = false,
-  onRequireUnlock
+  onRequireUnlock,
+  onToggleReminderComplete,
+  onRenewReminder,
+  onRunCheckIn,
+  onCheckAllServers
 }) => {
   const [captureText, setCaptureText] = useState('');
   const [feedback, setFeedback] = useState<CaptureResult | null>(null);
@@ -69,24 +83,10 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
   /**
    * Most-used sites, pinned first. `selectHomeSites` orders by pin → visit
-   * count → recency over the whole collection, then slices — so a pinned site
-   * can never crowd out the actually-visited ones and the limit applies after
-   * the grouping filter below.
+   * count → recency over the whole collection, then slices. 首页承诺的是
+   * 「最常用」——分类筛选属于快捷导航页，不在这里重复一套决策。
    */
-  const [siteGroup, setSiteGroup] = useState('全部');
-  const siteGroups = useMemo(() => {
-    const set = new Set<string>(['全部']);
-    for (const site of state.sites || []) if (site.category) set.add(site.category);
-    return Array.from(set);
-  }, [state.sites]);
-  const sites = useMemo(
-    () => selectHomeSites(state, 12, siteGroup === '全部' ? undefined : siteGroup),
-    [state, siteGroup]
-  );
-  const siteGroupTotal = useMemo(() => {
-    if (siteGroup === '全部') return (state.sites || []).length;
-    return (state.sites || []).filter((s) => s.category === siteGroup).length;
-  }, [state.sites, siteGroup]);
+  const sites = useMemo(() => selectHomeSites(state, 12), [state]);
 
   const dueReminders = useMemo(
     () =>
@@ -113,6 +113,17 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     }
   };
 
+  const submitAsSite = () => {
+    const raw = captureText.trim();
+    if (!raw || !onCaptureSite) return;
+    const result = onCaptureSite(raw);
+    setFeedback(result);
+    if (result.ok) {
+      setCaptureText('');
+      setTimeout(() => setFeedback(null), 2600);
+    }
+  };
+
   const openNote = (id: string) => onNavigate(`#/library/item/note:${id}`);
 
   return (
@@ -132,12 +143,24 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             className="sh-tap px-4 rounded-lg bg-sh-accent text-sh-accent-fg text-sm font-medium disabled:opacity-50">
             记到收件箱
           </button>
+          {/* 粘贴的是链接时给第二去向：同一个意图不该只有一个命运。 */}
+          {looksLikeUrl(captureText) && onCaptureSite && (
+            <button type="button" data-testid="home-capture-site" onClick={submitAsSite}
+              className="sh-tap px-4 rounded-lg border border-sh-line text-sm text-sh-muted hover:text-sh-fg">
+              存为网站
+            </button>
+          )}
           {pendingInbox > 0 && <button type="button" onClick={() => onNavigate('#/inbox')}
             className="sh-tap text-xs text-sh-muted hover:text-sh-fg">待整理 {pendingInbox} 条 <ArrowRight className="inline w-3 h-3" aria-hidden /></button>}
         </form>
         {feedback && <p role="status" data-testid="home-capture-feedback"
-          className={'text-xs ' + (feedback.ok ? 'text-sh-ok' : 'text-sh-danger')}>
-          {feedback.ok ? feedback.message || '已保存到本机' : feedback.error || '保存失败'}
+          className={'text-xs flex items-center gap-2 ' + (feedback.ok ? 'text-sh-ok' : 'text-sh-danger')}>
+          <span>{feedback.ok ? feedback.message || '已保存到本机' : feedback.error || '保存失败'}</span>
+          {feedback.ok && feedback.id && (
+            <button onClick={() => onNavigate('#/inbox')} className="text-sh-info hover:underline">
+              去收件箱整理 <ArrowRight className="inline w-3 h-3" aria-hidden />
+            </button>
+          )}
         </p>}
       </section>
 
@@ -156,27 +179,12 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         {sites.length === 0 ? <EmptyState icon={<Globe className="w-5 h-5" />} title="添加常用网站，从这里一键打开"
           action={<button onClick={() => onOpenAddModal('site')} className="sh-tap px-3 rounded-lg bg-sh-accent text-sh-accent-fg text-sm">添加网站</button>} /> : (
           <>
-            {siteGroups.length > 1 && (
-              <div className="flex flex-wrap items-center gap-1.5 mb-3">
-                {siteGroups.map((g) => (
-                  <button
-                    key={g}
-                    onClick={() => setSiteGroup(g)}
-                    className={`sh-tap px-2 py-0.5 rounded-lg text-[11px] border transition-colors ${
-                      siteGroup === g ? 'bg-sh-surface2 border-sh-line-strong text-sh-fg' : 'border-sh-line text-sh-muted hover:text-sh-fg'
-                    }`}
-                  >
-                    {g}
-                  </button>
-                ))}
-              </div>
-            )}
             <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3">
               {sites.map((site) => <HomeSiteTile key={site.id} site={site} onVisit={onVisitSite} />)}
             </div>
-            {siteGroupTotal > 12 && (
+            {(state.sites || []).length > 12 && (
               <p className="mt-2.5 text-[11px] text-sh-subtle">
-                显示最常用的前 12 个，共 {siteGroupTotal} 个 ·{' '}
+                显示最常用的前 12 个，共 {(state.sites || []).length} 个 ·{' '}
                 <button onClick={() => onNavigate('#/navigation')} className="sh-tap text-sh-info hover:underline">查看全部</button>
               </p>
             )}
@@ -218,13 +226,36 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           <div className="border-t border-sh-line">
             {dueReminders.length === 0 ? <p className="py-5 text-sm text-sh-subtle">暂无待处理的提醒。</p> : (
               <ul>{dueReminders.map(({reminder, days}) => <li key={reminder.id}>
-                <button onClick={() => onNavigate('#/reminders')} className="w-full flex items-center gap-3 text-left py-3 px-2 border-b border-sh-line/60 hover:bg-sh-surface2 rounded-lg">
-                  <Bell className="w-4 h-4 text-sh-subtle shrink-0" aria-hidden />
-                  <span className="flex-1 min-w-0 text-sm text-sh-fg truncate">{reminder.title}</span>
-                  <span className={'text-xs shrink-0 ' + (days < 0 ? 'text-sh-danger' : days <= 7 ? 'text-sh-warn' : 'text-sh-subtle')}>
-                    {days < 0 ? '已过期 ' + Math.abs(days) + ' 天' : days === 0 ? '今天到期' : days + ' 天后'}
-                  </span>
-                </button>
+                <div className="w-full flex items-center gap-2 text-left py-3 px-2 border-b border-sh-line/60 hover:bg-sh-surface2 rounded-lg">
+                  <button onClick={() => onNavigate('#/reminders')} className="sh-tap min-w-0 flex-1 flex items-center gap-3 text-left">
+                    <Bell className="w-4 h-4 text-sh-subtle shrink-0" aria-hidden />
+                    <span className="flex-1 min-w-0 text-sm text-sh-fg truncate">{reminder.title}</span>
+                    <span className={'text-xs shrink-0 ' + (days < 0 ? 'text-sh-danger' : days <= 7 ? 'text-sh-warn' : 'text-sh-subtle')}>
+                      {days < 0 ? '已过期 ' + Math.abs(days) + ' 天' : days === 0 ? '今天到期' : days + ' 天后'}
+                    </span>
+                  </button>
+                  {/* 就地动词：完成本次只记录这一次；过期项另外给「续期」。 */}
+                  {onToggleReminderComplete && (
+                    <button
+                      onClick={() => onToggleReminderComplete(reminder.id)}
+                      data-testid={'home-reminder-complete-' + reminder.id}
+                      className="shrink-0 px-1.5 py-0.5 rounded text-[11px] text-sh-muted hover:text-sh-fg hover:bg-sh-surface"
+                      title="完成本次（到期日保持不变）"
+                    >
+                      完成
+                    </button>
+                  )}
+                  {days < 0 && onRenewReminder && reminder.recurring && reminder.recurring !== 'once' && (
+                    <button
+                      onClick={() => onRenewReminder(reminder.id)}
+                      data-testid={'home-reminder-renew-' + reminder.id}
+                      className="shrink-0 px-1.5 py-0.5 rounded text-[11px] text-sh-warn hover:text-sh-fg hover:bg-sh-surface"
+                      title="已续费，把到期日推进到下一期"
+                    >
+                      续期
+                    </button>
+                  )}
+                </div>
               </li>)}</ul>
             )}
           </div>
@@ -234,13 +265,28 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               <span className="flex-1 text-right text-xs text-sh-subtle">{state.checkIns?.length ? state.checkIns.length + ' 项任务' : '添加签到任务'}</span>
               <ArrowRight className="w-3.5 h-3.5" aria-hidden />
             </button>
-            {checkIns.map((task) => <button key={task.id} onClick={() => onNavigate('#/tools/checkins')}
-              className="sh-tap w-full flex items-center justify-between gap-2 px-2 text-left hover:bg-sh-surface2 rounded-lg">
-              <span className="text-sm text-sh-fg truncate">{task.name}</span>
-              <span className={'text-xs shrink-0 ' + (task.lastStatus === 'failed' ? 'text-sh-danger' : task.lastStatus === 'success' ? 'text-sh-ok' : 'text-sh-subtle')}>
-                {task.lastStatus === 'failed' ? '上次失败' : task.lastStatus === 'success' ? '上次成功' : '未执行'}
-              </span>
-            </button>)}
+            {checkIns.map((task) => (
+              <div key={task.id} className="w-full flex items-center justify-between gap-2 px-2 py-0.5 hover:bg-sh-surface2 rounded-lg">
+                <button onClick={() => onNavigate('#/tools/checkins')} className="sh-tap min-w-0 flex-1 text-left text-sm text-sh-fg truncate">
+                  {task.name}
+                </button>
+                <span className={'text-xs shrink-0 ' + (task.lastStatus === 'failed' ? 'text-sh-danger' : task.lastStatus === 'success' ? 'text-sh-ok' : 'text-sh-subtle')}>
+                  {task.lastStatus === 'failed' ? '上次失败' : task.lastStatus === 'success' ? '上次成功' : '未执行'}
+                </span>
+                {/* 就地动词：标记完成不需要跳页——打开→签→回来这套动线之外，
+                    纯确认型任务（mark_done）在首页就能闭环。 */}
+                {onRunCheckIn && (
+                  <button
+                    onClick={() => void onRunCheckIn(task.id)}
+                    data-testid={'home-checkin-run-' + task.id}
+                    className="shrink-0 px-1.5 py-0.5 rounded text-[11px] text-sh-muted hover:text-sh-fg hover:bg-sh-surface"
+                    title="标记今天已完成（打开站点去签请在签到页进行）"
+                  >
+                    标记完成
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         </section>
       </div>
@@ -251,7 +297,22 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               onClick={() => onNavigate('#/resources/servers')}
               className="w-full text-left rounded-xl border border-sh-line p-2.5 hover:border-sh-line-strong"
             >
-              <span className="block text-[11px] text-sh-muted">服务器</span>
+              <span className="flex items-center justify-between gap-2">
+                <span className="block text-[11px] text-sh-muted">服务器</span>
+                {/* 就地动词：从未检测不是「去别处看看」的理由，而是现在就测的理由。 */}
+                {ops.serversTotal > 0 && onCheckAllServers && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCheckAllServers();
+                    }}
+                    data-testid="home-servers-check"
+                    className="text-[11px] text-sh-info hover:underline"
+                  >
+                    全部检测
+                  </button>
+                )}
+              </span>
               <span className="block text-sm text-sh-fg">{ops.serversTotal} 台</span>
               <span className="block text-[11px] text-sh-subtle">
                 {ops.serversNeverChecked > 0 ? `${ops.serversNeverChecked} 台从未检测` : '都有检测记录'}
@@ -259,7 +320,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               </span>
             </button>
             <button
-              onClick={() => onNavigate('#/reminders')}
+              onClick={() => onNavigate('#/resources/assets')}
               className="w-full text-left rounded-xl border border-sh-line p-2.5 hover:border-sh-line-strong"
             >
               <span className="block text-[11px] text-sh-muted">30 天内到期</span>

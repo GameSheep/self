@@ -85,7 +85,6 @@ interface SitesViewProps {
   onVisit: (id: string) => void;
   onDelete: (id: string) => void;
   onOpenAddModal: (type?: 'site' | 'server' | 'secret' | 'checkin' | 'note') => void;
-  onOpenAiIngest: () => void;
   /** Paste-to-recognise: writes sites / inbox / note after the user confirms destinations. */
   onPasteRecognized?: {
     onAddSites: (sites: NavSite[]) => void;
@@ -108,15 +107,43 @@ export const SitesView: React.FC<SitesViewProps> = ({
   onVisit,
   onDelete,
   onOpenAddModal,
-  onOpenAiIngest,
   onPasteRecognized,
   onImportBookmarks
 }) => {
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+    // 视图与折叠是用户偏好：侧栏折叠都持久化了，这两项没理由每次刷新都重置。
+    try {
+      return localStorage.getItem('selfhub_sites_view') === 'list' ? 'list' : 'grid';
+    } catch {
+      return 'grid';
+    }
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(ALL);
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('selfhub_sites_collapsed') ?? '{}') as Record<string, boolean>;
+    } catch {
+      return {};
+    }
+  });
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('selfhub_sites_view', viewMode);
+    } catch {
+      /* 只丢偏好，不丢数据 */
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('selfhub_sites_collapsed', JSON.stringify(collapsedGroups));
+    } catch {
+      /* 只丢偏好，不丢数据 */
+    }
+  }, [collapsedGroups]);
 
   // Per-site management state.
   const [editing, setEditing] = useState<NavSite | null>(null);
@@ -344,30 +371,6 @@ export const SitesView: React.FC<SitesViewProps> = ({
     }
   }, []);
 
-  const handleAddSite = useCallback(
-    (draft: { title: string; url: string; category: string; description?: string; tags?: string[] }) => {
-      const category = draft.category.trim() || '默认分类';
-      const inGroup = sites.filter((site) => categoryKey(site) === category);
-      const highest = inGroup.reduce<number>(
-        (max, site) => (typeof site.order === 'number' && site.order > max ? site.order : max),
-        inGroup.length - 1
-      );
-      const site: NavSite = {
-        id: `site-${Date.now()}`,
-        title: draft.title.trim(),
-        url: draft.url,
-        category,
-        description: draft.description?.trim() || undefined,
-        tags: draft.tags?.length ? draft.tags : undefined,
-        visitCount: 0,
-        createdAt: Date.now(),
-        order: highest + 1
-      };
-      commit([...sites, site]);
-    },
-    [commit, sites]
-  );
-
   /* ---------------------------------------------------------------------- */
   /* Drag and drop — same helpers as the buttons                           */
   /* ---------------------------------------------------------------------- */
@@ -528,7 +531,8 @@ export const SitesView: React.FC<SitesViewProps> = ({
               variant="primary"
               icon={<Plus className="w-3.5 h-3.5" />}
               data-testid="new-site"
-              onClick={() => setAdding(true)}
+              onClick={() => onOpenAddModal?.('site')}
+              title="与顶栏「新建」同一套表单——建网站不再有两个字段不一致的入口"
             >
               新建网站
             </Button>
@@ -729,7 +733,7 @@ export const SitesView: React.FC<SitesViewProps> = ({
               description="先添加一个常用网站，或从浏览器导出的书签 HTML 批量导入。导入前会先给你看清楚数量和重复项。"
               action={
                 <>
-                  <Button variant="primary" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => setAdding(true)}>
+                  <Button variant="primary" icon={<Plus className="w-3.5 h-3.5" />} onClick={() => onOpenAddModal?.('site')}>
                     添加第一个网站
                   </Button>
                   <Button variant="secondary" icon={<Upload className="w-3.5 h-3.5" />} onClick={() => setImportOpen(true)}>
@@ -827,17 +831,8 @@ export const SitesView: React.FC<SitesViewProps> = ({
       {/* Dialogs                                                            */}
       {/* ------------------------------------------------------------------ */}
 
-      {adding && (
-        <SiteEditorDialog
-          mode="create"
-          groups={tagOptions}
-          onCancel={() => setAdding(false)}
-          onSubmit={(values) => {
-            handleAddSite(values);
-            setAdding(false);
-          }}
-        />
-      )}
+      {/* 「新建」不再有本地第二套表单：PageHeader 与空状态都走全局 AddItemModal，
+          编辑仍用本地对话框（编辑场景它更快，且没有跨类型选择的需要）。 */}
 
       {editing && (
         <SiteEditorDialog

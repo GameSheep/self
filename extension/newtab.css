@@ -187,6 +187,10 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .result:last-child { border-bottom: 0; }
 .result:hover { background: var(--surface2); }
 
+/* 键盘选择的行与悬停同款：↑↓ 走到哪，哪一行就亮。 */
+.result.is-active,
+.result.is-active:hover { background: var(--surface2); }
+
 .result-kind {
   font-size: 0.72rem;
   color: var(--subtle);
