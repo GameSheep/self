@@ -49,6 +49,8 @@ interface MarkdownEditorProps {
    * vault-relative path to insert, or null on failure.
    */
   onUploadFile?: (file: File) => Promise<string | null>;
+  /** 供宿主页面定位内部 textarea（e2e 用）。 */
+  textareaTestId?: string;
 }
 
 interface Edit {
@@ -130,7 +132,8 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   placeholder,
   statusRight,
   onHeadings,
-  onUploadFile
+  onUploadFile,
+  textareaTestId
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
@@ -510,6 +513,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
           <textarea
             ref={textareaRef}
             className="md-editor-textarea"
+            data-testid={textareaTestId}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileText, Folder, FolderPlus, Save, Trash2, X } from 'lucide-react';
 import type { QuickNote } from '../../types';
 import { ConfirmButton, EmptyState, PageHeader, inputClass, useDirtyGuard } from '../../shared/ui';
+import { MarkdownEditor, type EditorMode } from '../../components/MarkdownEditor';
 
 export interface NotesPaneProps {
   notes: QuickNote[];
@@ -141,7 +142,10 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [newFolder, setNewFolder] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState(false);
-  const areaRef = useRef<HTMLTextAreaElement | null>(null);
+  /** 编辑 / 预览两态；本地笔记以前只有裸 textarea，是全站唯一没有渲染的编辑器。 */
+  const [editorMode, setEditorMode] = useState<EditorMode>('edit');
+  /** 列表分页：1000 篇笔记不该一次画 1000 个 DOM 节点（照抄 AnnotationsPane）。 */
+  const [visibleCount, setVisibleCount] = useState(100);
 
   // 切换笔记 / 新建 / 点文件夹之前都要过这道闸：旧实现直接 setSelectedId，
   // useEffect 立刻用新笔记覆盖 textarea，正在写的内容在会话内就没了。
@@ -230,7 +234,10 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
       setSelectedId('');
       setText('');
       setDirty(false);
-      setTimeout(() => areaRef.current?.focus(), 0);
+      setEditorMode('edit');
+      setTimeout(() => {
+        (document.querySelector('[data-testid="notes-textarea"]') as HTMLTextAreaElement | null)?.focus();
+      }, 0);
     });
   };
 
@@ -427,7 +434,7 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
             {visibleNotes.length === 0 ? (
               <p className="px-1 py-2 text-[11px] text-sh-subtle">这个文件夹还没有笔记，右边直接写。</p>
             ) : (
-              visibleNotes.map((note) => {
+              visibleNotes.slice(0, visibleCount).map((note) => {
                 const selectedNote = note.id === selectedId;
                 const meta = [note.folder || '根目录', noteAge(note.updatedAt)].filter(Boolean).join(' · ');
                 return (
@@ -477,6 +484,15 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
                 );
               })
             )}
+            {visibleNotes.length > visibleCount && (
+              <button
+                onClick={() => setVisibleCount((count) => count + 200)}
+                data-testid="notes-show-more"
+                className="w-full py-1.5 text-[11px] text-sh-muted hover:text-sh-fg"
+              >
+                再显示 200 篇（还有 {visibleNotes.length - visibleCount} 篇）
+              </button>
+            )}
           </div>
         </aside>
 
@@ -507,23 +523,19 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
             </label>
           </div>
 
-          <textarea
-            ref={areaRef}
+          <MarkdownEditor
             value={text}
-            onChange={(e) => {
-              setText(e.target.value);
+            onChange={(next) => {
+              setText(next);
               setDirty(true);
             }}
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                e.preventDefault();
-                save();
-              }
-            }}
-            placeholder="直接把内容粘进来…&#10;第一行会成为标题，其余是正文。Ctrl/⌘ + Enter 保存。"
-            aria-label="笔记正文"
-            data-testid="notes-textarea"
-            className="w-full h-[45vh] min-h-[240px] lg:h-[52vh] lg:min-h-[360px] bg-sh-surface border-0 rounded-lg px-2 py-2 text-sm text-sh-fg leading-relaxed focus:outline-none focus:ring-1 focus:ring-sh-line-strong resize-y"
+            noteKey={selected?.id ?? '__new__'}
+            onSave={save}
+            mode={editorMode}
+            onModeChange={setEditorMode}
+            dirty={dirty}
+            placeholder="直接把内容粘进来…&#10;第一行会成为标题，其余是正文。支持 Markdown；Ctrl/⌘ + Enter 保存。"
+            textareaTestId="notes-textarea"
           />
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-sh-subtle" data-testid="notes-status">

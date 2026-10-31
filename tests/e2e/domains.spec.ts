@@ -99,8 +99,11 @@ test.describe('域名', () => {
     await page.getByTestId('domain-save').click();
     await expect.poll(async () => (await readState(page)).domains.find((d: any) => d.id === 'd2')?.registrar).toBe('腾讯云');
 
-    // Delete one.
-    await page.getByTestId('domain-delete-d1').click();
+    // Delete one — 两击确认（首击只武装按钮，这是 data-safety 的下限约定）。
+    const del = page.getByTestId('domain-delete-d1');
+    await del.click();
+    await expect(del).toHaveAttribute('data-armed', 'true');
+    await del.click();
     await expect.poll(async () => (await readState(page)).domains.length).toBe(1);
   });
 });

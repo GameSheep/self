@@ -295,14 +295,15 @@ test.describe('功能开关', () => {
       })
     );
     await page.goto('/#/library?type=webpage');
-    await expect(page.locator('main')).toContainText('被开关藏起来的批注');
+    // 行式布局里 pageTitle 在链接的 title 属性上，行内显示的是原文与域名。
+    await expect(page.locator('main')).toContainText('example.invalid');
 
     await gotoSettingsPane(page, 'features');
     await page.locator('[data-feature-toggle="annotations"]').click();
     await page.waitForTimeout(200);
 
     await page.goto('/#/library?type=webpage');
-    await expect(page.locator('main')).not.toContainText('被开关藏起来的批注');
+    await expect(page.locator('main')).not.toContainText('example.invalid');
     // The pane says the module is off and how many rows are kept, instead of showing a module
     // the user turned off.
     await expect(page.getByTestId('module-switched-off')).toContainText('网页批注已关闭');

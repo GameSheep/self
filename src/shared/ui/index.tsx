@@ -323,6 +323,29 @@ export function ConfirmDialog({
 }
 
 /* -------------------------------------------------------------------------- */
+/* VaultStateBadge                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 金库状态的唯一口径。之前金库页、侧栏、设置页各自措辞——设置页甚至在
+ * 「已设主密码但金库锁定」时显示「主密码：未设置」（它只看会话解锁变量）。
+ * 三个事实分开表达：没设过主密码 / 设了但锁定 / 已解锁。
+ */
+export function VaultStateBadge({
+  hasMasterAuth,
+  unlocked,
+  className
+}: {
+  hasMasterAuth: boolean;
+  unlocked: boolean;
+  className?: string;
+}) {
+  const tone: StatusTone = !hasMasterAuth ? 'neutral' : unlocked ? 'ok' : 'warn';
+  const label = !hasMasterAuth ? '未设置主密码' : unlocked ? '金库已解锁' : '金库已锁定';
+  return <StatusPill tone={tone} label={label} className={className} data-vault-state={!hasMasterAuth ? 'none' : unlocked ? 'unlocked' : 'locked'} />;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Page scaffolding                                                           */
 /* -------------------------------------------------------------------------- */
 

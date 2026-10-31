@@ -8,7 +8,6 @@ export interface AssetsViewProps {
   state: HubState;
   onNavigate: (path: string) => void;
   onAddReminder: () => void;
-  onToggleComplete: (id: string) => void;
   /**
    * Create a domain / subscription from this page.
    *

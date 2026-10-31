@@ -40,7 +40,7 @@ import { INTEGRATIONS, IntegrationId, IntegrationDef, ossConnectionDefs } from '
 import { FEATURE_DEFS, FeatureId, isFeatureEnabled } from '../../lib/features';
 import { IntegrationCard } from '../settings/IntegrationCard';
 import { V3BackupSection } from '../settings/V3BackupSection';
-import { Button, ConfirmDialog, Section, StatusPill, inputClass } from '../../shared/ui';
+import { Button, ConfirmDialog, Section, StatusPill, VaultStateBadge, inputClass } from '../../shared/ui';
 import { showToast as showToastGlobal } from '../../shared/ui/toast';
 import { Hint } from '../../shared/Hint';
 import { capabilityLabel, connectionStatus, fingerprintOf, runConnectionTest } from '../../lib/connectionState';
@@ -117,6 +117,8 @@ interface SettingsModalProps {
    */
   onRestoreState: (state: HubState) => void | boolean | Promise<void | boolean>;
   masterPassword?: string | null;
+  /** 是否创建过主密码（与「本次会话是否解锁」是两个事实，混用会显示成「未设置」）。 */
+  hasMasterAuth?: boolean;
   /** Auto-backup status shown next to the OSS settings. */
   backupStatus?: {
     status: 'idle' | 'saving' | 'error' | 'conflict' | 'disabled';
@@ -236,6 +238,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   state,
   onRestoreState,
   masterPassword,
+  hasMasterAuth,
   backupStatus,
   onBackupNow,
   webdavConfig,
@@ -1614,8 +1617,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="space-y-3" data-testid="settings-privacy">
               <div className="rounded-xl border border-sh-line bg-sh-surface2/40 p-4 space-y-1 text-[11px] leading-relaxed">
                 <div className="text-xs text-sh-fg">解锁与信任</div>
-                <div className="text-sh-muted" data-vault-lock-state={masterPassword ? 'set' : 'none'}>
-                  主密码：{masterPassword ? '已设置（本次会话已解锁）' : '未设置'}
+                {/* 三个事实分开说：设没设过主密码 / 金库锁没锁 / 本次会话解没解锁。
+                    旧实现只看 masterPassword，「设过但锁定」会显示成「未设置」。 */}
+                <div
+                  className="text-sh-muted flex items-center gap-1.5"
+                  data-vault-lock-state={!hasMasterAuth ? 'none' : masterPassword ? 'unlocked' : 'locked'}
+                >
+                  <VaultStateBadge hasMasterAuth={Boolean(hasMasterAuth)} unlocked={Boolean(masterPassword)} />
+                  <span>
+                    主密码：{hasMasterAuth ? '已设置' : '未设置'}
+                    {hasMasterAuth && !masterPassword ? '（金库当前锁定中）' : ''}
+                  </span>
                 </div>
                 <div className="text-sh-muted">
                   金库解锁是独立机制：锁定会清除内存中的明文，取消「在首页显示金库」不等于锁定。凭据不会写进首页片段与普通全文检索。

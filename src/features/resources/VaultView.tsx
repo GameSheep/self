@@ -5,6 +5,9 @@ import { SecretCard } from '../../components/cards/SecretCard';
 import { EmptyState, PageHeader, inputClass } from '../../shared/ui';
 import { Hint } from '../../shared/Hint';
 
+/** 每个站点组默认渲染的凭据卡上限：每张卡都挂解密缓存与监听，500 条一次全画会卡死主线程。 */
+const PER_GROUP_LIMIT = 30;
+
 export interface VaultViewProps {
   secrets: SecretItem[];
   masterPassword: string | null;
@@ -52,6 +55,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
 }) => {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<string>('all');
+  /** 展开状态按站点记录（组内默认只渲染前 30 条）。 */
+  const [expandedSites, setExpandedSites] = useState<Record<string, boolean>>({});
 
   const categories = useMemo(() => Array.from(new Set(secrets.map((s) => s.category))), [secrets]);
 
@@ -189,8 +194,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 </h3>
                 <span className="text-[10px] text-sh-subtle">{group.length} 条</span>
               </div>
+              {/* 每张卡都挂着解密缓存与锁定监听：500 条一次全画会把主线程拖死。
+                  组内先裁前 30 条，超出的折叠在「显示更多」后面。 */}
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                {group.map((secret) => (
+                 {group.slice(0, expandedSites[website] ? group.length : PER_GROUP_LIMIT).map((secret) => (
                   <SecretCard
                     key={secret.id}
                     secret={secret}
@@ -200,6 +207,14 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   />
                 ))}
               </div>
+              {group.length > PER_GROUP_LIMIT && (
+                <button
+                  onClick={() => setExpandedSites((prev) => ({ ...prev, [website]: true }))}
+                  className="mt-1.5 text-[11px] text-sh-info hover:underline"
+                >
+                  显示该站其余 {group.length - PER_GROUP_LIMIT} 条
+                </button>
+              )}
             </section>
           ))}
         </div>

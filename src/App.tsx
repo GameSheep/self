@@ -46,6 +46,8 @@ import { HomeDashboard, type CaptureResult } from './features/home/HomeDashboard
 import { LibraryTabs } from './features/library/LibraryTabs';
 import { ServersView } from './features/resources/ServersView';
 import { DomainsView } from './features/resources/DomainsView';
+import { AssetsView } from './features/resources/AssetsView';
+import { anchorFromDate, parseDateInputValue } from './lib/dates';
 import { VaultView } from './features/resources/VaultView';
 import { CheckInsView } from './features/tools/CheckInsView';
 import { DrawingView } from './features/tools/DrawingView';
@@ -1731,19 +1733,51 @@ export function App() {
             )}
 
             {route.name === 'assets' && (
-              <DomainsView
-                state={state}
-                onAddDomain={(domain) => updateState((prev) => ({ ...prev, domains: [domain, ...(prev.domains ?? [])] }))}
-                onUpdateDomain={(domain) =>
-                  updateState((prev) => ({
-                    ...prev,
-                    domains: (prev.domains ?? []).map((entry) => (entry.id === domain.id ? domain : entry))
-                  }))
-                }
-                onDeleteDomain={(id) =>
-                  updateState((prev) => ({ ...prev, domains: (prev.domains ?? []).filter((entry) => entry.id !== id) }))
-                }
-              />
+              <>
+                {/* 到期总览是投影（提醒/服务器/凭证谁拥有日期这里读谁）+ 就地新建；
+                    394 行的 AssetsView 曾经是孤儿组件——从未被任何文件 import，
+                    订阅/证书集中视图对用户根本不存在。现在它才是这一页的主角。 */}
+                <AssetsView
+                  state={state}
+                  onNavigate={go}
+                  onAddReminder={() => go('#/reminders')}
+                  onCreateAsset={(asset) => {
+                    // 日期的权威归属仍是提醒（设计约束：一个到期日只有一个 owner），
+                    // 但录入发生在这一页、用这一页的语言。
+                    const due = parseDateInputValue(asset.due);
+                    if (!Number.isFinite(due)) return;
+                    const anchor = anchorFromDate(due, 'yearly');
+                    addReminder({
+                      id: `rem-${Date.now()}`,
+                      title: asset.name,
+                      category: asset.kind,
+                      targetDate: due,
+                      recurring: 'yearly',
+                      cost: asset.cost,
+                      url: asset.manageUrl,
+                      autoRollover: true,
+                      completed: false,
+                      createdAt: Date.now(),
+                      ...(anchor ? { anchorDay: anchor.day, anchorMonth: anchor.month } : {})
+                    });
+                  }}
+                />
+                <div className="mt-6">
+                  <DomainsView
+                    state={state}
+                    onAddDomain={(domain) => updateState((prev) => ({ ...prev, domains: [domain, ...(prev.domains ?? [])] }))}
+                    onUpdateDomain={(domain) =>
+                      updateState((prev) => ({
+                        ...prev,
+                        domains: (prev.domains ?? []).map((entry) => (entry.id === domain.id ? domain : entry))
+                      }))
+                    }
+                    onDeleteDomain={(id) =>
+                      updateState((prev) => ({ ...prev, domains: (prev.domains ?? []).filter((entry) => entry.id !== id) }))
+                    }
+                  />
+                </div>
+              </>
             )}
 
             {route.name === 'vault' && (
@@ -1799,6 +1833,7 @@ export function App() {
                   state={state}
                   onRestoreState={handleRestoreState}
                   masterPassword={masterPassword}
+                  hasMasterAuth={hasMasterAuth}
                   backupStatus={backupStatus}
                   onBackupNow={(force) => runStateBackup(force, 'manual')}
                   webdavConfig={state.webdavConfig}
