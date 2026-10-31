@@ -326,11 +326,7 @@ export function ConfirmDialog({
 /* VaultStateBadge                                                            */
 /* -------------------------------------------------------------------------- */
 
-/**
- * 金库状态的唯一口径。之前金库页、侧栏、设置页各自措辞——设置页甚至在
- * 「已设主密码但金库锁定」时显示「主密码：未设置」（它只看会话解锁变量）。
- * 三个事实分开表达：没设过主密码 / 设了但锁定 / 已解锁。
- */
+/** 金库状态的唯一口径：没设主密码 / 锁定 / 已解锁，三态一个组件。 */
 export function VaultStateBadge({
   hasMasterAuth,
   unlocked,
@@ -414,13 +410,9 @@ export interface ConfirmButtonProps extends Omit<React.ButtonHTMLAttributes<HTML
 }
 
 /**
- * Two-click inline confirmation for destructive actions, replacing both
- * `window.confirm()` (which is unstyleable, unreadable to tests and steals
- * focus) and dialogs for low-stakes single-item deletes.
- *
- * First click arms the button: it turns red and asks 确认？. Second click runs
- * `onConfirm`. Escape, blur or `revertMs` (default 3s) disarm it, so a stray
- * hover-click cannot destroy anything and a changed mind needs no dialog.
+ * 两击式内联确认：首击武装（变红显示确认文案），再击执行 onConfirm。
+ * Esc / 失焦 / 3 秒自动解除，误触不销毁。替代不可样式化、测试难断言的
+ * window.confirm。
  */
 export function ConfirmButton({
   onConfirm,
@@ -488,22 +480,8 @@ export function ConfirmButton({
 /* -------------------------------------------------------------------------- */
 
 /**
- * Interception for "this pane has unsaved edits and the user is about to
- * navigate away from it" — the guard NotesPane lacked when switching notes
- * silently overwrote the textarea mid-edit.
- *
- * ```tsx
- * const { request, dialog } = useDirtyGuard({ isDirty, message: '…' });
- * const openNote = (id: string) => {
- *   request().then((ok) => ok && setSelectedId(id));
- * };
- * return (<>{dialog}<button onClick={() => request().then(ok => ok && close())} /></>);
- * ```
- *
- * `request()` resolves `true` when the pane may be left (not dirty, or the user
- * accepted the discard) and `false` when the action must be aborted. The dialog
- * is a real ConfirmDialog, so it is stylable, keyboard-closable and assertable
- * in Playwright — none of which `window.confirm` offers.
+ * 未保存编辑的离开拦截：`request()` 在脏时弹 ConfirmDialog，resolve true 才放行。
+ * 用法：`request().then((ok) => ok && setSelectedId(id))`，并把返回的 dialog 渲染出来。
  */
 export function useDirtyGuard(options: {
   isDirty: boolean;
@@ -517,21 +495,17 @@ export function useDirtyGuard(options: {
   const resolveRef = React.useRef<((ok: boolean) => void) | null>(null);
 
   React.useEffect(() => {
-    if (!open) return;
-    // If the dirty flag clears while the dialog is up (autosave landed), the
-    // guard's premise is gone — answer true instead of trapping the user.
-    if (!isDirty) {
-      setOpen(false);
-      resolveRef.current?.(true);
-      resolveRef.current = null;
-    }
+    // 弹窗期间脏标记被自动保存清掉 → 前提消失，直接放行，别把用户困住。
+    if (!open || isDirty) return;
+    setOpen(false);
+    resolveRef.current?.(true);
+    resolveRef.current = null;
   }, [open, isDirty]);
 
   const request = React.useCallback((): Promise<boolean> => {
     if (!isDirty) return Promise.resolve(true);
     return new Promise<boolean>((resolve) => {
-      // A pending request always wins: the older one is answered false so a
-      // double click cannot leave two dialogs fighting over one state.
+      // 双击场景：旧请求直接判 false，避免两个弹窗抢一个状态。
       resolveRef.current?.(false);
       resolveRef.current = resolve;
       setOpen(true);
@@ -549,7 +523,7 @@ export function useDirtyGuard(options: {
       open={open}
       tone="danger"
       title={title}
-      description={message ?? '当前内容还没有保存，离开会丢失这次修改（草稿仍保留在本机，刷新后可恢复）。'}
+      description={message ?? '有未保存的修改，离开将丢弃（草稿仍保留在本机）。'}
       confirmLabel={confirmLabel}
       cancelLabel={cancelLabel}
       onConfirm={() => settle(true)}

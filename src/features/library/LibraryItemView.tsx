@@ -135,7 +135,7 @@ export const LibraryItemView: React.FC<LibraryItemViewProps> = ({
                 onDeleteHandwriting(drawing.id);
                 onNavigate(backTo);
               }}
-              confirmLabel="删除后不可恢复，确认？"
+              confirmLabel="确认删除？"
               className="px-3 py-1.5 rounded-lg border border-sh-danger/50 text-sh-danger text-xs"
               aria-label={`删除手绘 ${drawing.title || '未命名'}`}
             >
@@ -203,7 +203,7 @@ export const LibraryItemView: React.FC<LibraryItemViewProps> = ({
                 onDeleteSite(site.id);
                 onNavigate(backTo);
               }}
-              confirmLabel="删除后不可恢复，确认？"
+              confirmLabel="确认删除？"
               className="px-3 py-1.5 rounded-lg border border-sh-danger/50 text-sh-danger text-xs"
               aria-label={`删除收藏 ${site.title}`}
             >
@@ -299,7 +299,7 @@ const WebpageDetail: React.FC<{
                   onDeleteAnnotation(page.id);
                   onNavigate(backTo);
                 }}
-                confirmLabel="删除后不可恢复，确认？"
+                confirmLabel="确认删除？"
                 data-testid="annotation-detail-delete"
                 className="px-2.5 py-1 rounded-lg border border-sh-line text-[11px] text-sh-danger hover:bg-sh-danger/10"
                 aria-label="删除这条批注"

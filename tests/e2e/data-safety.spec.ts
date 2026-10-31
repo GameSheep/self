@@ -2,14 +2,8 @@ import { test, expect } from '@playwright/test';
 import { baseState, gotoTab, seedState, readState } from './helpers';
 
 /**
- * 批次1（数据安全与闭环）回归：
- *
- * 这组用例守的是全仓的下限约定——不可逆删除必须有确认、未保存编辑必须被
- * 拦截、深链必须落地。每一条都对应审查报告里的一个 P0：
- * 1. NotesPane 切换笔记曾经直接 setSelectedId，编辑中的内容被静默覆盖；
- * 2. #/projects/:id 路由解析出来但 App 没有分支，搜索项目回车 = 整页空白；
- * 3. 域名删除曾是全站唯一零确认的破坏性操作（比删收件箱碎片防护还弱）；
- * 4. 批注详情页曾经只读——用户的原话契约是「只要修改删除，能够原始链接」。
+ * 数据安全下限回归：不可逆删除必须二次确认、未保存编辑必须被拦截、
+ * 深链必须落地（每条对应审查报告里的一个 P0）。
  */
 
 test.describe('数据安全下限', () => {
@@ -56,7 +50,6 @@ test.describe('数据安全下限', () => {
         ]
       })
     );
-    // 直达深链（搜索命中 / 收件箱「打开目标」走的就是它）。
     await page.goto('/#/projects/p2');
     await expect(page.getByTestId('project-editor')).toBeVisible();
     await expect(page.getByTestId('project-name')).toHaveValue('另一个项目');
@@ -146,7 +139,7 @@ test.describe('数据安全下限', () => {
     const stored = (await readState(page)).annotations[0];
     expect(stored.note).toBe('修改后的批注');
 
-    // 返回链接落在批注列表，而不是笔记编辑器。
+    // 返回链接回到批注列表，而不是笔记编辑器。
     await page.getByRole('button', { name: '返回资料库' }).click();
     await expect(page.getByTestId('annotations-list')).toBeVisible();
 
@@ -159,5 +152,43 @@ test.describe('数据安全下限', () => {
     await expect(page.getByTestId('annotations-pane')).toBeVisible();
     await expect(page.getByText('还没有网页批注')).toBeVisible();
     expect((await readState(page)).annotations).toHaveLength(0);
+  });
+
+  test('网站列表批量：多选移动/删除，删除同样要两击', async ({ page }) => {
+    await seedState(
+      page,
+      baseState({
+        categories: ['全部', '技术开发', '常用工具'],
+        sites: [
+          { id: 's1', title: '站点一', url: 'https://s1.example.com', category: '技术开发', visitCount: 1, createdAt: Date.now() },
+          { id: 's2', title: '站点二', url: 'https://s2.example.com', category: '技术开发', visitCount: 1, createdAt: Date.now() },
+          { id: 's3', title: '站点三', url: 'https://s3.example.com', category: '常用工具', visitCount: 1, createdAt: Date.now() }
+        ]
+      })
+    );
+    await gotoTab(page, '快捷导航');
+    // 批量条只在列表视图；网格里没有多选。
+    await page.getByRole('button', { name: '紧凑列表视图' }).click();
+
+    await page.getByTestId('site-select-s1').check();
+    await page.getByTestId('site-select-s2').check();
+    const bar = page.getByTestId('site-batch-bar');
+    await expect(bar).toContainText('已选 2 条');
+
+    // 批量移动：两条一起进「常用工具」。
+    await bar.getByLabel('移动到分组').selectOption('常用工具');
+    const sites = (await readState(page)).sites;
+    expect(sites.filter((s: { category: string }) => s.category === '常用工具')).toHaveLength(3);
+    await expect(bar).toBeHidden();
+
+    // 批量删除：首击武装不删，再击才删。
+    await page.getByTestId('site-select-s1').check();
+    await page.getByTestId('site-select-s2').check();
+    const del = bar.getByRole('button', { name: '删除所选' });
+    await del.click();
+    await expect(del).toHaveAttribute('data-armed', 'true');
+    expect((await readState(page)).sites).toHaveLength(3);
+    await del.click();
+    await expect.poll(async () => (await readState(page)).sites).toHaveLength(1);
   });
 });

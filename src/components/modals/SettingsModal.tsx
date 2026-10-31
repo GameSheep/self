@@ -538,11 +538,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           if (imported) {
             const applied = await Promise.resolve(onRestoreState(imported));
             if (applied === false) {
-              showToastGlobal('数据没有写入本机库，请查看页面顶部的提示后再试', 'danger');
+              showToastGlobal('数据没有写入本机库，请看页面顶部提示', 'danger');
               return;
             }
             setCanRollback(true);
-            showToastGlobal('备份数据已成功恢复（可随时在本面板回滚）', 'ok');
+            showToastGlobal('备份数据已恢复', 'ok');
           } else {
             showToastGlobal('备份文件格式错误或数据校验未通过，恢复中止以保护现有数据', 'danger');
           }
@@ -564,7 +564,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (restored) {
       const applied = await Promise.resolve(onRestoreState(restored));
       if (applied === false) {
-        showToastGlobal('数据没有写入本机库，请查看页面顶部的提示后再试', 'danger');
+        showToastGlobal('数据没有写入本机库，请看页面顶部提示', 'danger');
         return;
       }
       setCanRollback(true);
@@ -1105,7 +1105,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       data-testid="backup-status"
                       role="status"
                     >
-                      云端更新，未覆盖：备份没有写入，本机数据完好。可在下方「立即备份」里强制覆盖。
+                      云端比本机新，未覆盖；要覆盖请在下方强制备份。
                     </div>
                   ) : (
                     <div className="flex flex-wrap items-center gap-2 text-[11px]">

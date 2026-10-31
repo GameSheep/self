@@ -147,13 +147,11 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
   /** 列表分页：1000 篇笔记不该一次画 1000 个 DOM 节点（照抄 AnnotationsPane）。 */
   const [visibleCount, setVisibleCount] = useState(100);
 
-  // 切换笔记 / 新建 / 点文件夹之前都要过这道闸：旧实现直接 setSelectedId，
-  // useEffect 立刻用新笔记覆盖 textarea，正在写的内容在会话内就没了。
-  // 草稿虽然 800ms 后会写本机，但「写了什么」不该靠崩溃恢复来兜底。
+  // 切换 / 新建前先过守卫：旧实现直接换 id，编辑中的内容被静默覆盖。
   const { request: requestLeave, dialog: guardDialog } = useDirtyGuard({
     isDirty: dirty,
     title: '这篇笔记还没有保存',
-    message: '切换会离开当前编辑。内容已自动暂存为草稿，可稍后从顶部横幅恢复；留在本页可先按 Ctrl/⌘ + Enter 保存。'
+    message: '切换将丢弃未保存的修改（草稿仍在本机）；留在本页可按 Ctrl/⌘+Enter 保存。'
   });
 
   /** 换一篇笔记：脏时先过守卫，避免编辑中的内容被静默覆盖。 */
@@ -550,7 +548,7 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
                     setSelectedId('');
                     writeDraft(null);
                   }}
-                  confirmLabel="删除后不可恢复，确认？"
+                  confirmLabel="确认删除？"
                   confirmDetail={selected.title || '未命名笔记'}
                   data-testid="notes-delete-current"
                   className="px-2.5 py-1 rounded-lg border border-sh-line text-[11px] text-sh-danger"

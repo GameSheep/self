@@ -1,17 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { baseState, gotoTab, seedState } from './helpers';
 
-/**
- * 网页批注密度。
- *
- * 和收件箱同一天被指出的问题：每条是一张 `p-3` 卡片 —— 标题行 + 原文块 + 批注块 +
- * 时间，180–260px 一条。批注是"越划越多"的列表，卡片尺寸却是常量，所以同样是
- * 比例失控：翻两屏才看得到五六条，而用户来这一页就是为了快速扫一遍划过什么。
- *
- * 现在一行两行就够：原文（荧光底、单行截断）是主信息，批注至多一行，
- * 页面来源收成右侧的域名小字（长标题截断后反而认不出来），时间在最右，
- * 编辑/删除悬停才浮现。这组用例锁的是密度和"窄屏不把原文挤没"。
- */
+/** 网页批注密度：一条划词一两行，原文荧光底 + 域名小字 + 悬停操作。 */
 function highlights(count: number) {
   const now = Date.now();
   return Array.from({ length: count }, (_, i) => ({

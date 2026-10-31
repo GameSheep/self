@@ -7,7 +7,6 @@ import {
   Check,
   Trash2,
   Code2,
-  CheckCircle2,
   Search,
   Edit3,
   X

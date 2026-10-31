@@ -213,7 +213,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                 <ConfirmButton
                   onConfirm={removeProject}
                   confirmLabel="确认删除？"
-                  confirmDetail={`「${selected.name}」的文本不可恢复`}
+                  confirmDetail={selected.name}
                   data-testid="project-delete"
                   className="p-1.5 rounded-lg border border-sh-line text-sh-danger hover:bg-sh-danger/10"
                   aria-label={`删除项目 ${selected.name}`}

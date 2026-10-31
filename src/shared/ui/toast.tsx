@@ -3,16 +3,9 @@ import clsx from 'clsx';
 import { AlertTriangle, Check, Info, X } from 'lucide-react';
 
 /**
- * 全站唯一的轻提示。
- *
- * 之前收件箱 / 提醒 / 远端笔记各自实现了一套（2500/3000/3200ms、emoji 前缀、
- * 图标恒为绿勾——连警告都打绿勾），同一性质的反馈有三种寿命和两种颜色语义。
- * 这里收敛成一件事：`showToast(message, tone)`，tone 决定图标和颜色，成功
- * 是勾、警告是三角，谁也不再替错误说「一切正常」。
- *
- * 用法：在 App 挂一次 <ToastHost />；任何视图直接调 `showToast('已保存', 'ok')`。
- * 不用 Context，因为调用方大多是深层回调（handlers / confirm 回调），传 props
- * 会把十几个组件串成一条 toast 链。
+ * 全站唯一的轻提示：`showToast(message, tone)`，在 App 挂一次 <ToastHost />。
+ * tone 决定图标和颜色——警告是三角，成功才是勾；不用 Context，因为调用方
+ * 都是深层回调，传 props 会把十几个组件串成 toast 链。
  */
 
 export type ToastTone = 'ok' | 'warn' | 'danger' | 'info';

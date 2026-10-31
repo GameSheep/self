@@ -216,7 +216,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     setNotes('');
     setTargetDateStr('');
     setAutoRollover(true);
-    showToast('✅ 提醒事项已创建');
+    showToast('提醒已创建');
   };
 
   const handleOpenEdit = (item: ReminderItem) => {
@@ -258,7 +258,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
 
     if (onUpdateReminder) {
       onUpdateReminder(updated);
-      showToast('💾 提醒已成功修改更新');
+      showToast('提醒已更新');
     }
     setEditingReminder(null);
   };
@@ -268,11 +268,11 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     const alreadyDone = (item.occurrences || []).some((o) => o.action === 'completed' && o.dueAt === item.targetDate);
     if (onToggleComplete) onToggleComplete(item.id);
     if (item.completed) {
-      showToast(`↩️【${item.title}】已取消完成标记，本次到期仍在列表中`);
+      showToast('已取消完成标记，到期仍在列表中');
     } else if (alreadyDone) {
-      showToast(`【${item.title}】本次已完成过，重复点击不会移动到期日`);
+      showToast('本次已完成过，到期日不变');
     } else {
-      showToast(`✅【${item.title}】已完成本次（到期日保持不变）`);
+      showToast('已完成本次，到期日不变');
     }
   };
 
@@ -281,7 +281,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     const recurring = item.recurring;
     if (!recurring || recurring === 'once') {
       if (onToggleComplete && !item.completed) onToggleComplete(item.id);
-      showToast(`✅【${item.title}】是一次性事项，已标记完成（没有下一期）`);
+      showToast('一次性事项，已标记完成');
       return;
     }
 
@@ -304,9 +304,9 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     }
 
     if (alreadyRenewed) {
-      showToast(`【${item.title}】本次已续期过，到期日未再次顺延`);
+      showToast('本次已续期过，到期日不变');
     } else {
-      showToast(`🎉 已续期到 ${new Date(nextTs).toLocaleDateString()}（到期日已更新）`);
+      showToast(`已续期到 ${new Date(nextTs).toLocaleDateString()}`);
     }
   };
 
@@ -320,16 +320,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
     }
   };
 
-  /**
-   * 提醒是「越攒越多」的列表，所以和收件箱、网页批注同一套口径：一条一行，
-   * 行高是常量、条数是变量。旧版一张 `p-4` 卡片（标题行 + 到期块 + 说明 +
-   * 历史 + 按钮行，200px 上下）一屏三列只放得下六条，翻两屏才扫完一轮。
-   *
-   * 行的主信息是标题；周期锚定规则和备注收进第二行至多一行；右侧依次是
-   * 金额、到期日（`YYYY-MM-DD` 等宽字体，宽度恒定）、状态 pill。完成/续期
-   * 是这个页面的主操作，常显；编辑/删除悬停浮现；续期历史默认折叠，
-   * 但始终在 DOM 里（tests/e2e/reminder-recurrence.spec.ts 按记录数断言）。
-   */
+  /** 一条一行（口径同收件箱/批注）：标题为主，第二行规则+备注，右侧金额/日期/状态；历史折叠但在 DOM 里。 */
   const renderRow = (item: ReminderItem) => {
     const daysLeft = daysLeftOf(item.targetDate);
     const isUrgent = daysLeft <= 7 && !item.completed;

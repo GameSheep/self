@@ -151,7 +151,7 @@ test.describe('备份与恢复', () => {
     // The app must still be usable right after the import. 恢复成功留在本面板
     // （不再强制踢出设置页），用 toast 报告结果，回滚入口就在旁边。
     await expect(page.locator('main')).toBeVisible();
-    await expect(page.getByText('备份数据已成功恢复')).toBeVisible();
+    await expect(page.getByText('备份数据已恢复')).toBeVisible();
     expect(errors).toEqual([]);
 
     // ...and the restored state must be complete (defaults filled in).

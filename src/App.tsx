@@ -1460,8 +1460,7 @@ export function App() {
                 onVisitSite={visitSite}
                 onCapture={captureEntry}
                 onCaptureSite={(raw) => {
-                  // 第二去向：先入收件箱（保留原文与「未整理」状态），再把生成的
-                  // 条目立即转为书签——比静默建站多一层可回溯的痕迹。
+                  // 先入收件箱留原始记录，再立即转为书签。
                   const result = captureEntry(raw, 'home');
                   if (!result.ok || !result.id) return result;
                   // captureEntry 已经 updateState，但本闭包里的 state 还是旧渲染
@@ -1469,7 +1468,7 @@ export function App() {
                   const entry = stateRef.current.inbox?.find((item) => item.id === result.id);
                   if (!entry) return result;
                   const converted = convertToSite(entry);
-                  return converted.ok ? { ok: true, message: '已存为网站（收件箱里留有原始记录）' } : result;
+                  return converted.ok ? { ok: true, message: '已存为网站' } : result;
                 }}
                 onOpenAddModal={(type) => openAddModal(type)}
                 onOpenSearchHit={openSearchHit}
@@ -1980,10 +1979,7 @@ export function App() {
         }}
       />
 
-      {/* The modal variant of settings was retired: settings only exists as the
-          settings PAGE (#/settings/...). The second copy of these 25 props here
-          meant every settings-interface change had to be made twice, and the
-          "in-page shortcuts" it claimed to serve never existed. */}
+      {/* 设置只有页面形态；第二个 SettingsModal（永远打不开）已移除。 */}
       {/* `focusNoteId` is consumed by the library item view; clear it once used. */}
       {focusNoteId && route.name === 'library-item' && <FocusClear onDone={clearFocusNoteId} />}
 
