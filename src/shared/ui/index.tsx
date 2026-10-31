@@ -11,7 +11,6 @@
 import React from 'react';
 import clsx from 'clsx';
 import { AlertTriangle, Check, Info, Loader2, X } from 'lucide-react';
-
 /* -------------------------------------------------------------------------- */
 /* Button                                                                     */
 /* -------------------------------------------------------------------------- */
@@ -355,7 +354,7 @@ export function Section({
   className
 }: {
   title: string;
-  description?: React.ReactNode;
+  description?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
@@ -372,4 +371,168 @@ export function Section({
       {children}
     </section>
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* ConfirmButton                                                              */
+/* -------------------------------------------------------------------------- */
+
+export interface ConfirmButtonProps extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick' | 'children'> {
+  /** Runs on the second click, when the armed state is confirmed. */
+  onConfirm: () => void;
+  /** Label shown in the armed state; defaults to 确认？ */
+  confirmLabel?: string;
+  /** How long the armed state stays before reverting (ms). */
+  revertMs?: number;
+  children?: React.ReactNode;
+  className?: string;
+  /** Extra text appended while armed, e.g. the item name being destroyed. */
+  confirmDetail?: React.ReactNode;
+}
+
+/**
+ * Two-click inline confirmation for destructive actions, replacing both
+ * `window.confirm()` (which is unstyleable, unreadable to tests and steals
+ * focus) and dialogs for low-stakes single-item deletes.
+ *
+ * First click arms the button: it turns red and asks 确认？. Second click runs
+ * `onConfirm`. Escape, blur or `revertMs` (default 3s) disarm it, so a stray
+ * hover-click cannot destroy anything and a changed mind needs no dialog.
+ */
+export function ConfirmButton({
+  onConfirm,
+  confirmLabel = '确认删除？',
+  revertMs = 3000,
+  children,
+  className,
+  confirmDetail,
+  disabled,
+  ...rest
+}: ConfirmButtonProps) {
+  const [armed, setArmed] = React.useState(false);
+  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    if (!armed) return;
+    timer.current = setTimeout(() => setArmed(false), revertMs);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setArmed(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [armed, revertMs]);
+
+  return (
+    <button
+      {...rest}
+      disabled={disabled}
+      data-armed={armed || undefined}
+      aria-label={armed ? confirmLabel : rest['aria-label']}
+      className={clsx(
+        'transition-colors',
+        armed ? 'bg-sh-danger/15 text-sh-danger border border-sh-danger/60 font-semibold' : '',
+        className
+      )}
+      onClick={(e) => {
+        if (disabled) return;
+        e.stopPropagation();
+        if (armed) {
+          setArmed(false);
+          onConfirm();
+        } else {
+          setArmed(true);
+        }
+      }}
+      onBlur={() => setArmed(false)}
+    >
+      {armed ? (
+        <>
+          {confirmLabel}
+          {confirmDetail != null && <span className="ml-1 font-normal">{confirmDetail}</span>}
+        </>
+      ) : (
+        children
+      )}
+    </button>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* useDirtyGuard                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Interception for "this pane has unsaved edits and the user is about to
+ * navigate away from it" — the guard NotesPane lacked when switching notes
+ * silently overwrote the textarea mid-edit.
+ *
+ * ```tsx
+ * const { request, dialog } = useDirtyGuard({ isDirty, message: '…' });
+ * const openNote = (id: string) => {
+ *   request().then((ok) => ok && setSelectedId(id));
+ * };
+ * return (<>{dialog}<button onClick={() => request().then(ok => ok && close())} /></>);
+ * ```
+ *
+ * `request()` resolves `true` when the pane may be left (not dirty, or the user
+ * accepted the discard) and `false` when the action must be aborted. The dialog
+ * is a real ConfirmDialog, so it is stylable, keyboard-closable and assertable
+ * in Playwright — none of which `window.confirm` offers.
+ */
+export function useDirtyGuard(options: {
+  isDirty: boolean;
+  title?: string;
+  message?: React.ReactNode;
+  confirmLabel?: string;
+  cancelLabel?: string;
+}): { request: () => Promise<boolean>; dialog: React.ReactNode } {
+  const { isDirty, title = '有未保存的修改', message, confirmLabel = '放弃修改', cancelLabel = '留在本页' } = options;
+  const [open, setOpen] = React.useState(false);
+  const resolveRef = React.useRef<((ok: boolean) => void) | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    // If the dirty flag clears while the dialog is up (autosave landed), the
+    // guard's premise is gone — answer true instead of trapping the user.
+    if (!isDirty) {
+      setOpen(false);
+      resolveRef.current?.(true);
+      resolveRef.current = null;
+    }
+  }, [open, isDirty]);
+
+  const request = React.useCallback((): Promise<boolean> => {
+    if (!isDirty) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      // A pending request always wins: the older one is answered false so a
+      // double click cannot leave two dialogs fighting over one state.
+      resolveRef.current?.(false);
+      resolveRef.current = resolve;
+      setOpen(true);
+    });
+  }, [isDirty]);
+
+  const settle = (ok: boolean) => {
+    setOpen(false);
+    resolveRef.current?.(ok);
+    resolveRef.current = null;
+  };
+
+  const dialog = (
+    <ConfirmDialog
+      open={open}
+      tone="danger"
+      title={title}
+      description={message ?? '当前内容还没有保存，离开会丢失这次修改（草稿仍保留在本机，刷新后可恢复）。'}
+      confirmLabel={confirmLabel}
+      cancelLabel={cancelLabel}
+      onConfirm={() => settle(true)}
+      onCancel={() => settle(false)}
+    />
+  );
+
+  return { request, dialog };
 }

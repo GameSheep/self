@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileText, Folder, FolderPlus, Save, Trash2, X } from 'lucide-react';
 import type { QuickNote } from '../../types';
-import { EmptyState, PageHeader, inputClass } from '../../shared/ui';
+import { ConfirmButton, EmptyState, PageHeader, inputClass, useDirtyGuard } from '../../shared/ui';
 
 export interface NotesPaneProps {
   notes: QuickNote[];
@@ -143,6 +143,24 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
   const [browsing, setBrowsing] = useState(false);
   const areaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // 切换笔记 / 新建 / 点文件夹之前都要过这道闸：旧实现直接 setSelectedId，
+  // useEffect 立刻用新笔记覆盖 textarea，正在写的内容在会话内就没了。
+  // 草稿虽然 800ms 后会写本机，但「写了什么」不该靠崩溃恢复来兜底。
+  const { request: requestLeave, dialog: guardDialog } = useDirtyGuard({
+    isDirty: dirty,
+    title: '这篇笔记还没有保存',
+    message: '切换会离开当前编辑。内容已自动暂存为草稿，可稍后从顶部横幅恢复；留在本页可先按 Ctrl/⌘ + Enter 保存。'
+  });
+
+  /** 换一篇笔记：脏时先过守卫，避免编辑中的内容被静默覆盖。 */
+  const switchTo = (id: string, after?: () => void) => {
+    requestLeave().then((ok) => {
+      if (!ok) return;
+      setSelectedId(id);
+      after?.();
+    });
+  };
+
   const visibleNotes = useMemo(() => {
     const inFolder = notesIn(sorted, selectedFolder);
     const needle = query.trim().toLowerCase();
@@ -206,11 +224,28 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
   };
 
   const startNew = () => {
-    setBrowsing(false);
-    setSelectedId('');
-    setText('');
-    setDirty(false);
-    setTimeout(() => areaRef.current?.focus(), 0);
+    requestLeave().then((ok) => {
+      if (!ok) return;
+      setBrowsing(false);
+      setSelectedId('');
+      setText('');
+      setDirty(false);
+      setTimeout(() => areaRef.current?.focus(), 0);
+    });
+  };
+
+  const createFolder = () => {
+    const path = (newFolder ?? '').trim().replace(/^\/+|\/+$/g, '');
+    if (!path) return;
+    onAddFolder?.(path);
+    setSelectedFolder(path);
+    setExpanded((prev) => {
+      const next = { ...prev };
+      const parts = path.split('/');
+      for (let i = 1; i <= parts.length; i += 1) next[parts.slice(0, i).join('/')] = true;
+      return next;
+    });
+    setNewFolder('');
   };
 
   const renderTree = (nodes: TreeNode[], depth = 0): React.ReactNode =>
@@ -245,7 +280,7 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
               onClick={() => {
                 setSelectedFolder(node.path);
                 const first = notesIn(sorted, node.path)[0];
-                if (first) setSelectedId(first.id);
+                if (first) switchTo(first.id);
               }}
               data-folder-path={node.path}
               className="flex-1 min-w-0 flex items-center gap-1.5 py-1 text-left text-[11px]"
@@ -275,6 +310,7 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
 
   return (
     <div data-testid="notes-pane">
+      {guardDialog}
       <PageHeader
         title="笔记"
         description="直接写或粘贴内容，第一行是标题。Ctrl/⌘ + Enter 保存。"
@@ -334,25 +370,19 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
             <input
               value={newFolder ?? ''}
               onChange={(e) => setNewFolder(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  createFolder();
+                }
+              }}
               placeholder="新建文件夹（可写 a/b 建多层）"
               aria-label="新建文件夹"
               data-testid="notes-new-folder-input"
               className={`${inputClass} flex-1 min-w-0`}
             />
             <button
-              onClick={() => {
-                const path = (newFolder ?? '').trim().replace(/^\/+|\/+$/g, '');
-                if (!path) return;
-                onAddFolder?.(path);
-                setSelectedFolder(path);
-                setExpanded((prev) => {
-                  const next = { ...prev };
-                  const parts = path.split('/');
-                  for (let i = 1; i <= parts.length; i += 1) next[parts.slice(0, i).join('/')] = true;
-                  return next;
-                });
-                setNewFolder('');
-              }}
+              onClick={createFolder}
               disabled={!(newFolder ?? '').trim()}
               data-testid="notes-new-folder-add"
               aria-label="新建文件夹"
@@ -416,7 +446,7 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
                       aria-hidden
                     />
                     <button
-                      onClick={() => { setSelectedId(note.id); setBrowsing(false); }}
+                      onClick={() => switchTo(note.id, () => setBrowsing(false))}
                       aria-label={note.title || '未命名笔记'}
                       aria-current={selectedNote ? 'true' : undefined}
                       title={note.title || '未命名笔记'}
@@ -431,16 +461,18 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
                         </span>
                       )}
                     </button>
-                    <button
-                      onClick={() => {
+                    <ConfirmButton
+                      onConfirm={() => {
                         onDeleteNote(note.id);
                         if (note.id === selectedId) setSelectedId('');
                       }}
+                      confirmLabel="确认删除？"
                       aria-label={`删除 ${note.title || '未命名笔记'}`}
+                      data-testid={`note-delete-${note.id}`}
                       className="mt-0.5 shrink-0 rounded p-1 text-sh-subtle opacity-100 transition-opacity hover:text-sh-danger lg:opacity-0 lg:group-hover:opacity-100 focus:opacity-100"
                     >
                       <Trash2 className="w-3 h-3" aria-hidden />
-                    </button>
+                    </ConfirmButton>
                   </div>
                 );
               })
@@ -500,15 +532,19 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
             </span>
             <div className="flex items-center gap-2">
               {selected && (
-                <button
-                  onClick={() => {
+                <ConfirmButton
+                  onConfirm={() => {
                     onDeleteNote(selected.id);
                     setSelectedId('');
+                    writeDraft(null);
                   }}
+                  confirmLabel="删除后不可恢复，确认？"
+                  confirmDetail={selected.title || '未命名笔记'}
+                  data-testid="notes-delete-current"
                   className="px-2.5 py-1 rounded-lg border border-sh-line text-[11px] text-sh-danger"
                 >
                   删除这篇
-                </button>
+                </ConfirmButton>
               )}
               <button
                 onClick={save}

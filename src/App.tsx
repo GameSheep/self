@@ -1642,17 +1642,35 @@ export function App() {
                   onDeleteNote={deleteNote}
                   onDeleteHandwriting={deleteHandwriting}
                   onDeleteSite={deleteSite}
+                  /* 批注详情页的编辑/删除：与 AnnotationsPane 同一套写入口。 */
+                  onUpdateAnnotation={(annotation) =>
+                    updateState((prev) => ({
+                      ...prev,
+                      annotations: (prev.annotations ?? []).map((entry) =>
+                        entry.id === annotation.id ? annotation : entry
+                      )
+                    }))
+                  }
+                  onDeleteAnnotation={(id) =>
+                    updateState((prev) => ({
+                      ...prev,
+                      annotations: (prev.annotations ?? []).filter((entry) => entry.id !== id)
+                    }))
+                  }
                 />
               </Suspense>
             )}
 
-            {route.name === 'projects' && (
+            {(route.name === 'projects' || route.name === 'project') && (
               <ProjectsView
                 state={state}
                 onAddProject={addProject}
                 onUpdateProject={updateProject}
                 onDeleteProject={deleteProject}
                 onNavigate={go}
+                /* 搜索命中 / 收件箱跳转的深链（#/projects/:id）以前落在这里 =
+                   整页空白：路由解析出了 name:'project'，App 却只认 'projects'。 */
+                initialSelectedId={route.name === 'project' ? route.params.id : undefined}
               />
             )}
 

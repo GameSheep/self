@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Globe, Plus, Save, Trash2 } from 'lucide-react';
 import type { DomainRecord, HubState } from '../../types';
-import { EmptyState, PageHeader, inputClass } from '../../shared/ui';
+import { ConfirmButton, EmptyState, PageHeader, inputClass } from '../../shared/ui';
 import { createDomain, daysUntilExpiry, normalizeDomainName } from '../../domain/domains';
 
 export interface DomainsViewProps {
@@ -339,14 +339,16 @@ export const DomainsView: React.FC<DomainsViewProps> = ({ state, onAddDomain, on
                         >
                           编辑
                         </button>
-                        <button
-                          onClick={() => onDeleteDomain(domain.id)}
+                        <ConfirmButton
+                          onConfirm={() => onDeleteDomain(domain.id)}
+                          confirmLabel="确认删除？"
+                          confirmDetail={domain.name}
                           data-testid={`domain-delete-${domain.id}`}
                           className="px-2 py-1 rounded border border-sh-line text-sh-danger hover:bg-sh-danger/10"
                           aria-label={`删除 ${domain.name}`}
                         >
                           <Trash2 className="w-3.5 h-3.5" aria-hidden />
-                        </button>
+                        </ConfirmButton>
                       </div>
                     </td>
                   </tr>
