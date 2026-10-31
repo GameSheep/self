@@ -72,6 +72,7 @@ async function libraryCounts(page: any, libraryId?: string): Promise<Record<stri
  * only pressed after the field is filled.
  */
 async function switchToV3(page: any, password = 'test-migration-password') {
+  await page.getByTestId('storage-advanced-toggle').click();
   await page.getByTestId('storage-migration-password').fill(password);
   await page.getByTestId('storage-mode-switch-v3').click();
   await expect(page.getByTestId('storage-mode-current')).toHaveText('v3', { timeout: 20_000 });
@@ -202,6 +203,7 @@ test.describe('P2 存储模式切换', () => {
     await page.goto('/');
     await openStoragePane(page);
 
+    await page.getByTestId('storage-advanced-toggle').click();
     await page.getByTestId('storage-migration-password').fill('double-click-password');
     const switchButton = page.getByTestId('storage-mode-switch-v3');
     // Two clicks in quick succession, without waiting for the first to settle.
@@ -250,6 +252,7 @@ test.describe('P2 存储模式切换', () => {
     await page.goto('/');
     await openStoragePane(page);
 
+    await page.getByTestId('storage-advanced-toggle').click();
     await page.getByTestId('storage-migration-password').fill('fresh-profile-password');
     await page.getByTestId('storage-mode-switch-v3').click();
 
@@ -398,6 +401,7 @@ test.describe('P2 存储模式切换', () => {
 
     // Switching back materialises the payload again.
     await openStoragePane(page);
+    await page.getByTestId('storage-advanced-toggle').click();
     await page.getByTestId('storage-mode-switch-local').click();
     await expect(page.getByTestId('storage-mode-current')).toHaveText('local');
     const notes = await page.evaluate(() => {

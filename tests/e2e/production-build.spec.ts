@@ -52,6 +52,7 @@ test.describe('生产构建冒烟（vite preview）', () => {
     //    runner, sources, mapping and lock are all in the chunk that moved out of the entry).
     await page.goto(`${PREVIEW_URL}/#/settings/storage`);
     await expect(page.getByTestId('storage-mode')).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId('storage-advanced-toggle').click();
     await page.getByTestId('storage-migration-password').fill('production-smoke-password');
     await page.getByTestId('storage-mode-switch-v3').click();
 

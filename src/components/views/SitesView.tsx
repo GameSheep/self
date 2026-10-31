@@ -31,6 +31,7 @@ import { SiteCard } from '../cards/SiteCard';
 import { PasteCapture } from '../../features/navigation/PasteCapture';
 import {
   Button,
+  ConfirmButton,
   ConfirmDialog,
   EmptyState,
   Field,
@@ -128,6 +129,33 @@ export const SitesView: React.FC<SitesViewProps> = ({
     }
   });
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  /** 列表视图的多选：导入 500 书签后「逐个 ⋯ → 移动」是体力活，批量是正解。 */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const toggleSelected = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const batchMove = (category: string) => {
+    let result = sites;
+    for (const id of selectedIds) result = moveSiteToCategory(result, id, category);
+    commit(result);
+    setSelectedIds(new Set());
+  };
+
+  const batchPin = () => {
+    commit(sites.map((site) => (selectedIds.has(site.id) ? { ...site, pinned: true } : site)));
+    setSelectedIds(new Set());
+  };
+
+  const batchDelete = () => {
+    commit(sites.filter((site) => !selectedIds.has(site.id)));
+    setSelectedIds(new Set());
+  };
 
   useEffect(() => {
     try {
@@ -539,7 +567,10 @@ export const SitesView: React.FC<SitesViewProps> = ({
             <div className="flex items-center bg-sh-surface2 p-0.5 rounded-lg border border-sh-line text-xs">
               <button
                 type="button"
-                onClick={() => setViewMode('grid')}
+                onClick={() => {
+                  setViewMode('grid');
+                  setSelectedIds(new Set());
+                }}
                 aria-pressed={viewMode === 'grid'}
                 className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-sh-surface text-sh-fg' : 'text-sh-muted hover:text-sh-fg'}`}
                 title="网格卡片视图"
@@ -806,13 +837,65 @@ export const SitesView: React.FC<SitesViewProps> = ({
                         </div>
                       ) : (
                         <div className="rounded-xl border border-sh-line bg-sh-surface divide-y divide-sh-line">
-                          {groupSites.map(renderCard)}
+                          {groupSites.map((site) => (
+                            <div key={site.id} className="flex items-start gap-1.5 pr-1.5">
+                              <label className="flex items-center self-stretch pl-3 cursor-pointer" title="选择以批量整理">
+                                <input
+                                  type="checkbox"
+                                  aria-label={`选择 ${site.title}`}
+                                  data-testid={`site-select-${site.id}`}
+                                  checked={selectedIds.has(site.id)}
+                                  onChange={() => toggleSelected(site.id)}
+                                />
+                              </label>
+                              <div className="flex-1 min-w-0">{renderCard(site)}</div>
+                            </div>
+                          ))}
                         </div>
                       ))}
                   </div>
                 );
               });
             })()}
+
+          {/* 批量条：列表视图勾选后浮现。移动/置顶走与单个操作同一套 commit，
+              删除是两击确认——批量也一样要有下限防护。 */}
+          {viewMode === 'list' && selectedIds.size > 0 && (
+            <div
+              className="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-sh-line-strong bg-sh-surface2 p-2.5 text-xs shadow-lg"
+              data-testid="site-batch-bar"
+            >
+              <span className="font-medium text-sh-fg">已选 {selectedIds.size} 条</span>
+              <select
+                aria-label="移动到分组"
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) batchMove(e.target.value);
+                }}
+                className="bg-sh-surface border border-sh-line rounded-lg px-2 py-1 text-[11px] text-sh-fg"
+              >
+                <option value="">移动到分组…</option>
+                {tagOptions.map((group) => (
+                  <option key={group} value={group}>
+                    {group}
+                  </option>
+                ))}
+              </select>
+              <Button size="sm" variant="secondary" onClick={batchPin}>
+                置顶所选
+              </Button>
+              <ConfirmButton
+                onConfirm={batchDelete}
+                confirmLabel={`确认删除所选 ${selectedIds.size} 条？`}
+                className="px-2 py-1 rounded-lg border border-sh-line text-[11px] text-sh-danger hover:bg-sh-danger/10"
+              >
+                删除所选
+              </ConfirmButton>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
+                取消选择
+              </Button>
+            </div>
+          )}
 
           {localMatches.length > visibleCount && (
             <div className="flex flex-col items-center gap-2 py-4">

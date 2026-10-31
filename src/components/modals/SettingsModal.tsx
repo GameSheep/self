@@ -266,6 +266,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [storageMigrationError, setStorageMigrationError] = useState<string | null>(null);
   /** True while a switch is in flight: the button must not look idle for seconds. */
   const [storageSwitching, setStorageSwitching] = useState(false);
+  /** 存储迁移折叠态：最危险的操作默认收起，当前模式一行常显。 */
+  const [storageAdvancedOpen, setStorageAdvancedOpen] = useState(false);
   // Page variant: the URL owns which section is open, so a link (or the back
   // button) lands on the right pane instead of always resetting to 概览.
   const activeSection = controlledSection ?? internalTab;
@@ -950,8 +952,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="space-y-2 text-[11px]" data-testid="storage-mode">
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
                       <span className="text-sh-muted">当前模式</span>
-                      <span className="text-sh-fg font-mono" data-testid="storage-mode-current">
-                        {storageMode.mode}
+                      {/* 迁移是最危险、最低频的操作，不该占据首屏第一位：
+                          折叠在「切换存储 / 迁移…」后面，当前模式始终可见。 */}
+                      <span className="flex items-center gap-2">
+                        <span className="text-sh-fg font-mono" data-testid="storage-mode-current">
+                          {storageMode.mode}
+                        </span>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          data-testid="storage-advanced-toggle"
+                          aria-expanded={storageAdvancedOpen}
+                          onClick={() => setStorageAdvancedOpen((open) => !open)}
+                        >
+                          {storageAdvancedOpen ? '收起迁移' : '切换存储 / 迁移…'}
+                        </Button>
                       </span>
                     </div>
                     <p className="text-sh-subtle leading-relaxed">
@@ -960,15 +975,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         : 'v2 负载（localStorage 单一整包）是事实来源；v3 库不参与读写。'}
                       {' '}无论哪种模式，连接密钥都只留在本机，不进入资料库。
                     </p>
-                    {storageMode.mode === 'v3' && storageMode.counts && (
-                      <div className="text-sh-subtle" data-testid="storage-mode-counts">
-                        库内：{describeV3Counts(storageMode.counts)}
-                      </div>
-                    )}
                     {storageMode.error && (
                       <p className="text-sh-warn" data-testid="storage-mode-error">
                         v3 库读取失败，当前仍使用 v2 负载：{storageMode.error}
                       </p>
+                    )}
+                    {storageAdvancedOpen && (
+                      <>
+                    {storageMode.mode === 'v3' && storageMode.counts && (
+                      <div className="text-sh-subtle" data-testid="storage-mode-counts">
+                        库内：{describeV3Counts(storageMode.counts)}
+                      </div>
                     )}
                     <div className="flex flex-wrap items-center gap-2 pt-1">
                       {storageMode.mode === 'v3' ? (
@@ -1049,6 +1066,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           </div>
                         ))}
                       </div>
+                    )}
+                      </>
                     )}
                   </div>
                 </Section>

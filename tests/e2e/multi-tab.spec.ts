@@ -83,6 +83,7 @@ test.describe('多标签页：检测到其它标签页写入', () => {
     // Switch this device onto the v3 library (needs a snapshot password).
     await page.goto('/#/settings/storage');
     await expect(page.getByTestId('storage-mode')).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId('storage-advanced-toggle').click();
     await page.getByTestId('storage-migration-password').fill('multi-tab-password');
     await page.getByTestId('storage-mode-switch-v3').click();
     await expect(page.getByTestId('storage-mode-current')).toHaveText('v3', { timeout: 30_000 });
