@@ -21,6 +21,7 @@
 | 笔记 | 大屏目录与编辑器并排。目录用粗体标题、文件夹与更新时间副行、选中卡片区分每一篇；小于 1024px 时先显示编辑器，用“笔记列表与文件夹”切换；浏览切换不卸载编辑区、不清空正在写的文字。 |
 | 收件箱 | 一条碎片一行：类型图标 + 摘要（单行截断）+ 至多一行次要信息 + 时间，操作在悬停时浮现。旧版一条一张 `p-4` 卡片（200–350px），一屏只放得下两三条，而这个页面每天都在变长。小于 1024px 时操作折到第二行右对齐，不挤占摘要宽度。 |
 | 网页批注 | 一条划词一两行：原文（荧光底色只包住文字本身）+ 至多一行我的批注，页面来源收成右侧的域名小字，时间在最右，编辑/删除悬停浮现。旧版一条一张 `p-3` 卡片（180–260px，标题行 + 原文块 + 批注块 + 时间），一屏四五条。域名而不是标题：长标题截断后反而认不出来，完整标题和链接放在 `title` 上。 |
+| 提醒 | 一条提醒一行：左轨颜色直接标出逾期红 / 临期黄 / 完成绿，标题为主信息，第二行放锚定规则与备注（至多一行），右侧依次是金额、`YYYY-MM-DD` 等宽到期日、状态 pill。完成/续期是这个页面的主操作，常显；编辑/删除悬停浮现；处理记录折叠进「历史」。旧版一张 `p-4` 卡片（约 200px），三列一屏 6 条，扫一轮要翻两屏。 |
 
 ## 实现位置
 
@@ -30,6 +31,7 @@
 - `src/app/navigation.ts`：依据资料库查询参数解析实际页面标题。
 - `src/features/library/LibraryTabs.tsx`、`NotesPane.tsx`：桌面/手机的资料导航与编辑布局。
 - `src/components/views/SitesView.tsx`：按需展开录入及外部搜索。
+- `src/components/views/RemindersView.tsx`：提醒一行一条的列表、悬停操作与折叠的处理记录。
 - `src/App.tsx`：传递首页的新建类型，取消重复页脚。
 
 所有侧栏入口继续由同一导航注册表及现有功能开关过滤。隐藏功能的数据搜索行为、金库加解密、云端连接、导入确认、排序持久化均沿用原有实现。本次没有数据迁移或依赖升级。
@@ -42,7 +44,7 @@
 4. 折叠面板应保留未提交输入。笔记列表切换不得清空编辑草稿。
 5. 简化外观时继续显示保存失败、备份失败、未检测、锁定等真实状态。
 6. 页面宽度变化时先减少列数，避免通过缩小字体塞入更多内容。
-7. 会持续变长的列表（收件箱、网页批注、笔记目录、网站）用行，不用卡片。行高是常量、条数是变量：卡片式排版在条目少时好看，条目一多就把"信息密度"变成"滚动距离"。收件箱和网页批注的这条约束分别由 `tests/e2e/inbox-density.spec.ts` 和 `tests/e2e/annotation-density.spec.ts` 守着（行高 < 60px、1440×900 一屏分别 ≥ 9 / ≥ 12 条、长内容只截断、320px 正文不被挤没）。
+7. 会持续变长的列表（收件箱、网页批注、提醒、笔记目录、网站）用行，不用卡片。行高是常量、条数是变量：卡片式排版在条目少时好看，条目一多就把"信息密度"变成"滚动距离"。收件箱、网页批注和提醒的这条约束分别由 `tests/e2e/inbox-density.spec.ts`、`tests/e2e/annotation-density.spec.ts` 和 `tests/e2e/reminder-density.spec.ts` 守着（行高 < 60px、1440×900 一屏分别 ≥ 9 / ≥ 12 / ≥ 12 条、长内容只截断、320px 正文不被挤没）。提醒的密度用例还锁住一条例外规则：完成/续期常显、处理记录折叠但始终在 DOM 里，续期幂等断言依赖这一点。
 
 ## 验收与复现
 
@@ -52,6 +54,8 @@
 
 新增 `tests/e2e/annotation-density.spec.ts`，用同一套口径锁住网页批注：30 条时行高不超过 60px、1440×900 一屏至少 12 条、超长划词原文只截断、悬停出现编辑/删除时行高不变、320px 下原文仍有 140px 以上宽度。两条断言都实测过"去掉修复就变红"。
 
+新增 `tests/e2e/reminder-density.spec.ts`，把提醒的密度写成同样的断言：30 条时行高不超过 60px、1440×900 一屏至少 12 条、长标题和长备注只截断、悬停出现编辑/删除时行高不变、"历史"展开后能看见处理记录且收起还原行高、320px 下标题区仍有 140px 以上宽度。行高断言实测过把行距撑大就变红。
+
 已有粘贴识别与网络搜索用例增加“展开面板”步骤，保留原有保存、隐私、取消和外部搜索断言。
 
 在项目根目录执行：
@@ -59,7 +63,7 @@
 ```powershell
 npm run typecheck
 npm run build
-npm run test:e2e -- tests/e2e/layout-simplification.spec.ts tests/e2e/home-search.spec.ts tests/e2e/notes-folders.spec.ts tests/e2e/paste-capture.spec.ts tests/e2e/navigation-menu.spec.ts tests/e2e/server-health.spec.ts
+npm run test:e2e -- tests/e2e/layout-simplification.spec.ts tests/e2e/home-search.spec.ts tests/e2e/notes-folders.spec.ts tests/e2e/paste-capture.spec.ts tests/e2e/navigation-menu.spec.ts tests/e2e/server-health.spec.ts tests/e2e/inbox-density.spec.ts tests/e2e/annotation-density.spec.ts tests/e2e/reminder-density.spec.ts
 ```
 
 自动测试使用独立浏览器上下文及测试数据，不应在用户的真实资料中执行测试录入。开发服务端口已占用时，可通过 `E2E_PORT` 和 `E2E_PREVIEW_PORT` 指定测试端口。

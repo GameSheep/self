@@ -81,7 +81,7 @@ test.describe('提醒：月末与闰年续期', () => {
     );
     await page.goto('/#/reminders');
 
-    const card = page.getByTestId('reminder-card-r-31');
+    const card = page.getByTestId('reminder-row-r-31');
     await expect(card).toBeVisible();
     await expect(card).toContainText(localDateKey(seeded));
     // The rule — and *why* the next date is what it is — is visible.
@@ -103,7 +103,7 @@ test.describe('提醒：月末与闰年续期', () => {
     await expect(card).toContainText(secondStep);
     expect(localDateKey((await readState(page)).reminders[0].targetDate)).toBe(secondStep);
 
-    const card2 = page.getByTestId('reminder-card-r-31');
+    const card2 = page.getByTestId('reminder-row-r-31');
     await expect(card2.locator('[data-action="renewed"]')).toHaveCount(2);
     await expect(card2.locator('[data-action="renewed"]').first()).toContainText(`${firstStep} · 已续期 → ${secondStep}`);
   });
@@ -132,7 +132,7 @@ test.describe('提醒：月末与闰年续期', () => {
     );
     await page.goto('/#/reminders');
 
-    const card = page.getByTestId('reminder-card-r-leap');
+    const card = page.getByTestId('reminder-row-r-leap');
     await expect(card).toContainText(localDateKey(seeded));
     await expect(card).toContainText('每年 · 锚定 2 月 29 日');
 
@@ -174,7 +174,7 @@ test.describe('提醒：月末与闰年续期', () => {
     );
     await page.goto('/#/reminders');
 
-    const card = page.getByTestId('reminder-card-r-31');
+    const card = page.getByTestId('reminder-row-r-31');
     const complete = page.getByTestId('reminder-complete-r-31');
     await expect(card).toContainText(localDateKey(seeded));
 
@@ -264,10 +264,10 @@ test.describe('提醒：月末与闰年续期', () => {
     await expect(page.getByTestId('reminder-group-later')).toHaveAttribute('data-count', '1');
 
     // All three groups render at once — upcoming items are not collapsed away.
-    await expect(page.getByTestId('reminder-card-r-over')).toBeVisible();
-    await expect(page.getByTestId('reminder-card-r-today')).toBeVisible();
-    await expect(page.getByTestId('reminder-card-r-soon')).toBeVisible();
-    await expect(page.getByTestId('reminder-card-r-later')).toBeVisible();
+    await expect(page.getByTestId('reminder-row-r-over')).toBeVisible();
+    await expect(page.getByTestId('reminder-row-r-today')).toBeVisible();
+    await expect(page.getByTestId('reminder-row-r-soon')).toBeVisible();
+    await expect(page.getByTestId('reminder-row-r-later')).toBeVisible();
 
     // 完成 and 续期 are separate buttons with different wording.
     await expect(page.getByTestId('reminder-complete-r-today')).toContainText('完成本次');

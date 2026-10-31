@@ -4,18 +4,16 @@ import {
   Plus,
   ExternalLink,
   Trash2,
-  Calendar,
   AlertTriangle,
   CreditCard,
   Server,
   Globe,
   ShieldAlert,
-  CheckCircle2,
-  DollarSign,
-  Edit3,
+  Pencil,
   RefreshCw,
   Check,
-  Bell
+  Bell,
+  History
 } from 'lucide-react';
 import { ReminderItem, ReminderOccurrence } from '../../types';
 import {
@@ -51,6 +49,17 @@ const CATEGORY_LABEL: Record<Category, string> = {
   domain: '域名到期',
   cert: 'Token/证书',
   other: '其他时效'
+};
+
+/**
+ * 行左侧 3px 状态轨的颜色：逾期红、临期黄、完成绿、普通用分隔线灰。
+ * 用 CSS 变量而不是写死的色值，深浅主题各自取色（和荧光笔标注的色轨同一做法）。
+ */
+const TONE_RAIL: Record<'danger' | 'warn' | 'ok' | 'neutral', string> = {
+  danger: 'var(--sh-danger)',
+  warn: 'var(--sh-warn)',
+  ok: 'var(--sh-ok)',
+  neutral: 'var(--sh-line-strong)'
 };
 
 /** Human-readable recurrence rule, including *why* the next date is what it is. */
@@ -102,6 +111,8 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 当前展开「历史」的行：一次只展开一条，折叠着的行高保持常量。 */
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(null);
 
   // Form states (Create)
   const [title, setTitle] = useState('');
@@ -308,155 +319,189 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
 
   const getCategoryIcon = (cat: string) => {
     switch (cat) {
-      case 'subscription': return <CreditCard className="w-4 h-4 text-sh-info" />;
-      case 'server': return <Server className="w-4 h-4 text-sh-ok" />;
-      case 'domain': return <Globe className="w-4 h-4 text-sh-info" />;
-      case 'cert': return <ShieldAlert className="w-4 h-4 text-sh-warn" />;
-      default: return <Clock className="w-4 h-4 text-sh-muted" />;
+      case 'subscription': return <CreditCard className="w-3.5 h-3.5 text-sh-info" />;
+      case 'server': return <Server className="w-3.5 h-3.5 text-sh-ok" />;
+      case 'domain': return <Globe className="w-3.5 h-3.5 text-sh-info" />;
+      case 'cert': return <ShieldAlert className="w-3.5 h-3.5 text-sh-warn" />;
+      default: return <Clock className="w-3.5 h-3.5 text-sh-muted" />;
     }
   };
 
-  const renderCard = (item: ReminderItem) => {
+  /**
+   * 提醒是「越攒越多」的列表，所以和收件箱、网页批注同一套口径：一条一行，
+   * 行高是常量、条数是变量。旧版一张 `p-4` 卡片（标题行 + 到期块 + 说明 +
+   * 历史 + 按钮行，200px 上下）一屏三列只放得下六条，翻两屏才扫完一轮。
+   *
+   * 行的主信息是标题；周期锚定规则和备注收进第二行至多一行；右侧依次是
+   * 金额、到期日（`YYYY-MM-DD` 等宽字体，宽度恒定）、状态 pill。完成/续期
+   * 是这个页面的主操作，常显；编辑/删除悬停浮现；续期历史默认折叠，
+   * 但始终在 DOM 里（tests/e2e/reminder-recurrence.spec.ts 按记录数断言）。
+   */
+  const renderRow = (item: ReminderItem) => {
     const daysLeft = daysLeftOf(item.targetDate);
     const isUrgent = daysLeft <= 7 && !item.completed;
     const hint = recurrenceHint(item);
     const occurrences = (item.occurrences || []).slice(0, 3);
+    const tone = item.completed ? 'ok' : daysLeft < 0 ? 'danger' : isUrgent ? 'warn' : 'neutral';
+    const statusLabel = item.completed
+      ? '本次已完成'
+      : daysLeft < 0
+        ? `已逾期 ${Math.abs(daysLeft)} 天`
+        : daysLeft === 0
+          ? '今天到期'
+          : `${daysLeft} 天后到期`;
+    const expanded = expandedHistoryId === item.id;
 
     return (
-      <div
+      <li
         key={item.id}
-        data-testid={`reminder-card-${item.id}`}
+        data-testid={`reminder-row-${item.id}`}
         data-group={item.completed ? 'done' : daysLeft < 0 ? 'overdue' : daysLeft <= 7 ? 'within7' : 'later'}
-        className={`p-4 rounded-xl bg-sh-surface border transition-all flex flex-col justify-between sh-tap ${
-          isUrgent ? 'border-sh-danger/60' : 'border-sh-line hover:border-sh-line-strong'
-        }`}
+        className="group flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 pr-3 transition-colors hover:bg-sh-surface2/50"
+        style={{ borderLeft: `3px solid ${TONE_RAIL[tone]}`, paddingLeft: 10 }}
       >
-        <div>
-          <div className="flex items-start justify-between gap-2 mb-2">
-            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-              <div className="w-8 h-8 rounded-lg bg-sh-surface2 border border-sh-line flex items-center justify-center shrink-0">
-                {getCategoryIcon(item.category)}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <h3 className="text-xs sm:text-sm font-semibold text-sh-fg truncate">{item.title}</h3>
-                  <StatusPill tone="neutral" label={CATEGORY_LABEL[item.category]} />
-                  {item.autoRollover && <StatusPill tone="info" label="自动顺延" />}
-                </div>
-                <span className="text-[11px] font-mono text-sh-muted flex items-center gap-1 mt-1 flex-wrap">
-                  <span>{describeRecurrence(item)}</span>
-                  {item.cost && (
-                    <span className="flex items-center gap-0.5">
-                      <DollarSign className="w-3 h-3 text-sh-ok" />
-                      {item.cost}
-                    </span>
-                  )}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                onClick={() => handleOpenEdit(item)}
-                className="p-1 rounded hover:bg-sh-surface2 text-sh-muted hover:text-sh-fg transition-colors"
-                title="编辑修改提醒"
-                aria-label={`编辑提醒 ${item.title}`}
-              >
-                <Edit3 className="w-3.5 h-3.5" aria-hidden />
-              </button>
-              <button
-                onClick={() => {
-                  if (confirm(`确定删除提醒 ${item.title} 吗？`)) onDeleteReminder(item.id);
-                }}
-                className="p-1 rounded hover:bg-sh-surface2 text-sh-muted hover:text-sh-danger transition-colors"
-                title="删除"
-                aria-label={`删除提醒 ${item.title}`}
-              >
-                <Trash2 className="w-3.5 h-3.5" aria-hidden />
-              </button>
-            </div>
-          </div>
-
-          <div className="my-3 p-3 rounded-xl bg-sh-surface2 border border-sh-line flex items-center justify-between gap-2">
-            <div className="text-[11px] text-sh-muted font-mono flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5" />
-              <span>到期日: {toDateInputValue(item.targetDate)}</span>
-            </div>
-
-            {item.completed ? (
-              <StatusPill tone="ok" label="本次已完成" />
-            ) : daysLeft < 0 ? (
-              <StatusPill tone="danger" label={`已逾期 ${Math.abs(daysLeft)} 天`} />
-            ) : daysLeft === 0 ? (
-              <StatusPill tone="danger" label="今天到期" />
-            ) : isUrgent ? (
-              <StatusPill tone="warn" label={`${daysLeft} 天后到期`} />
-            ) : (
-              <StatusPill tone="neutral" label={`${daysLeft} 天后到期`} />
+        <div className="min-w-0 flex-1 basis-48" data-testid={`reminder-row-text-${item.id}`}>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="shrink-0" title={CATEGORY_LABEL[item.category]}>
+              {getCategoryIcon(item.category)}
+            </span>
+            <span
+              className={`truncate text-xs font-medium ${item.completed ? 'text-sh-subtle line-through' : 'text-sh-fg'}`}
+              title={item.title}
+            >
+              {item.title}
+            </span>
+            {item.autoRollover && !item.completed && (
+              <span className="shrink-0 text-[10px] text-sh-info" title="过期后自动把到期日推进到下一期">
+                自动顺延
+              </span>
             )}
           </div>
 
-          {hint && <p className="text-[11px] text-sh-subtle leading-relaxed mb-2">{hint}</p>}
-          {item.notes && <p className="text-[11px] text-sh-muted leading-relaxed mb-2 line-clamp-2">{item.notes}</p>}
-
-          {occurrences.length > 0 && (
-            <ul className="mb-2 space-y-0.5" data-testid={`reminder-occurrences-${item.id}`}>
-              {occurrences.map((o) => (
-                <li
-                  key={`${o.at}-${o.dueAt}`}
-                  data-occurrence={o.dueAt}
-                  data-action={o.action}
-                  className="text-[10px] text-sh-subtle font-mono"
-                >
-                  {toDateInputValue(o.dueAt)} · {actionLabel(o)}
-                  {o.action === 'renewed' && o.nextDueAt ? ` → ${toDateInputValue(o.nextDueAt)}` : ''}
-                </li>
-              ))}
-            </ul>
-          )}
+          {/* 第二行至多一行：锚定规则（钉死不截断，规则是短的）+ 备注（截断）。
+              月末顺延的完整解释挂在 title 上，展开时不用占行。 */}
+          <div className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-[10px] leading-4 text-sh-subtle">
+            <span className="shrink-0" title={hint ?? undefined}>{describeRecurrence(item)}</span>
+            {item.notes && (
+              <span className="truncate" title={item.notes}>{item.notes}</span>
+            )}
+          </div>
         </div>
 
-        <div className="pt-2.5 border-t border-sh-line mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-          <Button
-            size="sm"
-            variant={item.completed ? 'ghost' : 'primary'}
+        {item.cost && (
+          <span className="hidden shrink-0 self-center font-mono text-[10px] tabular-nums text-sh-subtle sm:block" title="续费金额">
+            {item.cost}
+          </span>
+        )}
+
+        <span
+          className="shrink-0 self-center font-mono text-[11px] tabular-nums text-sh-muted"
+          title={`到期日 ${toDateInputValue(item.targetDate)}${hint ? `（${hint}）` : ''}`}
+        >
+          {toDateInputValue(item.targetDate)}
+        </span>
+
+        <StatusPill tone={tone} label={statusLabel} className="self-center" />
+
+        <div
+          data-testid="reminder-row-actions"
+          className="flex w-full shrink-0 flex-wrap items-center justify-end gap-1 lg:w-auto"
+        >
+          <button
             data-testid={`reminder-complete-${item.id}`}
             onClick={() => handleComplete(item)}
-            icon={<CheckCircle2 className="w-3 h-3" />}
             title="记录本次已处理，到期日保持不变"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-sh-muted transition-colors hover:bg-sh-surface2 hover:text-sh-fg"
           >
+            <Check className="w-3 h-3" aria-hidden />
             {item.completed ? '已完成本次' : '完成本次'}
-          </Button>
+          </button>
 
-          <Button
-            size="sm"
-            variant="secondary"
+          <button
             data-testid={`reminder-renew-${item.id}`}
             onClick={() => handleRenew(item)}
-            icon={<RefreshCw className="w-3 h-3" />}
             title="标记已续费并把到期日推进到下一期"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-sh-muted transition-colors hover:bg-sh-surface2 hover:text-sh-fg"
           >
+            <RefreshCw className="w-3 h-3" aria-hidden />
             续期到下期
-          </Button>
+          </button>
 
           {item.url && (
             <a
               href={item.url}
               target="_blank"
               rel="noreferrer"
-              className="text-sh-info hover:underline flex items-center gap-1 text-[11px] font-medium ml-auto"
+              title={`打开官方控制台：${item.url}`}
+              aria-label={`打开 ${item.title} 的官方控制台`}
+              className="rounded p-1 text-sh-info transition-colors hover:text-sh-fg"
             >
-              <span>官方控制台</span>
-              <ExternalLink className="w-3 h-3" />
+              <ExternalLink className="w-3 h-3" aria-hidden />
             </a>
           )}
+
+          {occurrences.length > 0 && (
+            <button
+              data-testid={`reminder-history-${item.id}`}
+              onClick={() => setExpandedHistoryId(expanded ? null : item.id)}
+              aria-expanded={expanded}
+              title="展开或收起这条提醒的处理记录"
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] text-sh-subtle transition-colors hover:bg-sh-surface2 hover:text-sh-fg"
+            >
+              <History className="w-3 h-3" aria-hidden />
+              {occurrences.length}
+            </button>
+          )}
+
+          {/* 编辑/删除低频且危险，悬停才浮现；`lg:` 以下常显，否则触屏没有悬停。 */}
+          <button
+            data-testid={`reminder-edit-${item.id}`}
+            onClick={() => handleOpenEdit(item)}
+            title="编辑修改提醒"
+            aria-label={`编辑提醒 ${item.title}`}
+            className="rounded p-1 text-sh-muted transition-colors transition-opacity hover:bg-sh-surface2 hover:text-sh-fg max-lg:opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100"
+          >
+            <Pencil className="w-3 h-3" aria-hidden />
+          </button>
+          <button
+            data-testid={`reminder-delete-${item.id}`}
+            onClick={() => {
+              if (confirm(`确定删除提醒 ${item.title} 吗？`)) onDeleteReminder(item.id);
+            }}
+            title="删除"
+            aria-label={`删除提醒 ${item.title}`}
+            className="rounded p-1 text-sh-muted transition-colors transition-opacity hover:bg-sh-surface2 hover:text-sh-danger max-lg:opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100"
+          >
+            <Trash2 className="w-3 h-3" aria-hidden />
+          </button>
         </div>
-      </div>
+
+        {/* 处理记录：默认折叠（行高才是常量），点「历史」展开。始终渲染，
+            因为 reminder-recurrence.spec 按出现的记录条数断言幂等行为。 */}
+        {occurrences.length > 0 && (
+          <ul
+            data-testid={`reminder-occurrences-${item.id}`}
+            className={`w-full basis-full space-y-0.5 pl-[9px] ${expanded ? '' : 'hidden'}`}
+          >
+            {occurrences.map((o) => (
+              <li
+                key={`${o.at}-${o.dueAt}`}
+                data-occurrence={o.dueAt}
+                data-action={o.action}
+                className="text-[10px] text-sh-subtle font-mono"
+              >
+                {toDateInputValue(o.dueAt)} · {actionLabel(o)}
+                {o.action === 'renewed' && o.nextDueAt ? ` → ${toDateInputValue(o.nextDueAt)}` : ''}
+              </li>
+            ))}
+          </ul>
+        )}
+      </li>
     );
   };
 
   const renderGroup = (testId: string, heading: string, count: number, items: ReminderItem[], tone: 'danger' | 'warn' | 'neutral' | 'ok') => (
-    <section data-testid={testId} data-count={count} className="space-y-2.5">
+    <section data-testid={testId} data-count={count} className="space-y-2">
       <div className="flex items-center gap-2">
         <h3 className="text-xs font-semibold text-sh-fg">{heading}</h3>
         <StatusPill tone={tone} label={`${count} 项`} />
@@ -464,7 +509,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
       {items.length === 0 ? (
         <p className="text-[11px] text-sh-subtle px-1">暂无</p>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">{items.map(renderCard)}</div>
+        <ul className="divide-y divide-sh-line border-y border-sh-line">{items.map(renderRow)}</ul>
       )}
     </section>
   );
@@ -661,7 +706,7 @@ export const RemindersView: React.FC<RemindersViewProps> = ({
           >
             <div className="flex items-center justify-between pb-3 border-b border-sh-line">
               <h3 className="text-sm font-semibold text-sh-fg flex items-center gap-2">
-                <Edit3 className="w-4 h-4 text-sh-ok" />
+                <Pencil className="w-4 h-4 text-sh-ok" />
                 编辑提醒
               </h3>
               <button onClick={() => setEditingReminder(null)} className="text-sh-muted hover:text-sh-fg text-xs">
