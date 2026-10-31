@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, ExternalLink, Highlighter, Pencil, Search, Trash2 } from 'lucide-react';
+import { Download, Highlighter, Pencil, Search, Trash2 } from 'lucide-react';
 import type { WebPageAnnotation } from '../../types';
 import { EmptyState, PageHeader, inputClass } from '../../shared/ui';
 import { isExtensionContext, type AnnotationSyncResult } from '../../lib/extensionBridge';
@@ -36,7 +36,34 @@ const ANNOTATION_COLORS: Record<WebPageAnnotation['color'], string> = {
 };
 
 /** Small section label distinguishing 划词原文 from 我的批注. */
-const chipClass = 'text-[10px] font-medium text-sh-subtle tracking-wide';
+const chipClass = 'text-[10px] font-medium text-sh-subtle tracking-wide shrink-0';
+
+/**
+ * 页面标识用域名而不是标题：标题经常很长（「XX - 知乎」「Untitled」），
+ * 截断后反而认不出来；域名短、稳定，一眼能分辨来源站。完整标题和链接放在
+ * `title` 上，鼠标停一下就全都有。
+ */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url.replace(/^https?:\/\//, '').split('/')[0] || url;
+  }
+}
+
+/**
+ * 列表里的时间只用来排序定位，不承担"几点几分"的精确性 —— 今天给时间、
+ * 今年给月日、更早给年月，宽度基本恒定，列不会因为日期长短而跳动。
+ */
+function timeLabel(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}`;
+  return `${d.getFullYear()}/${d.getMonth() + 1}`;
+}
 
 /**
  * 网页批注 (3.3) — a viewing window, not an editor.
@@ -171,33 +198,103 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
       ) : visible.length === 0 ? (
         <EmptyState title="没有匹配的批注" description="换个关键字试试。" />
       ) : (
-        <ul className="space-y-2" data-testid="annotations-list">
-          {page.map((item) => (
-            <li
-              key={item.id}
-              data-annotation-id={item.id}
-              className="rounded-xl border border-sh-line bg-sh-surface p-3 space-y-2 overflow-hidden"
-              style={{ borderLeft: `3px solid ${ANNOTATION_COLORS[item.color] ?? ANNOTATION_COLORS.yellow}` }}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h3 className="text-xs font-semibold text-sh-fg truncate" title={item.pageTitle}>
-                    {item.pageTitle || item.pageUrl}
-                  </h3>
-                  {item.pageUrl && (
-                    <a
-                      href={item.pageUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      data-testid={`annotation-link-${item.id}`}
-                      className="inline-flex items-center gap-1 text-[11px] text-sh-info hover:underline truncate max-w-full"
+        <ul className="divide-y divide-sh-line border-y border-sh-line" data-testid="annotations-list">
+          {page.map((item) => {
+            const tint = ANNOTATION_COLORS[item.color] ?? ANNOTATION_COLORS.yellow;
+            const editing = editingId === item.id;
+            return (
+              <li
+                key={item.id}
+                data-annotation-id={item.id}
+                data-testid="annotation-row"
+                className="group flex flex-wrap items-start gap-x-3 gap-y-1 py-1.5 pr-3 transition-colors hover:bg-sh-surface2/50"
+                style={{ borderLeft: `3px solid ${tint}`, paddingLeft: 10 }}
+              >
+                {/* 原文是这一行的主信息，所以只有它带荧光底色；页面来源退到右侧
+                    的小字域名 —— 长标题会把半行吃掉，而且截断后反而认不出来。 */}
+                <div className="min-w-0 flex-1 basis-40" data-testid="annotation-row-text">
+                  {/* `w-fit` 而不是铺满：底色只包住文字本身，短句不会拖出一条横贯整行的
+                      色带 —— 看着才像网页上的荧光笔，而不是表格斑马纹。用 `block w-fit`
+                      而非 `inline-block`：行内块会多出一个行盒的下沉空间，每行白长 4px。 */}
+                  <p
+                    className="block w-fit max-w-full truncate rounded-sm px-1.5 text-xs leading-5 text-sh-fg"
+                    style={{ backgroundColor: `${tint}1f` }}
+                    title={item.text}
+                  >
+                    {item.text}
+                  </p>
+
+                  {editing ? (
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        onUpdate({ ...item, note: draftNote, updatedAt: Date.now() });
+                        setEditingId(null);
+                      }}
+                      className="mt-1 space-y-1"
+                      data-testid={`annotation-editor-${item.id}`}
                     >
-                      <ExternalLink className="w-3 h-3 shrink-0" aria-hidden />
-                      {item.pageUrl}
-                    </a>
+                      <textarea
+                        value={draftNote}
+                        onChange={(e) => setDraftNote(e.target.value)}
+                        rows={2}
+                        autoFocus
+                        aria-label="我的批注"
+                        className="w-full bg-sh-surface2 border border-sh-line rounded-lg px-2 py-1.5 text-[11px] text-sh-fg"
+                      />
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="submit"
+                          className="px-2 py-1 rounded bg-sh-accent text-sh-accent-fg text-[11px] font-semibold"
+                        >
+                          保存
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingId(null)}
+                          className="px-2 py-1 rounded border border-sh-line text-[11px]"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    item.note && (
+                      <div className="mt-0.5 flex min-w-0 items-baseline gap-1.5">
+                        <span className={chipClass}>批注</span>
+                        <span className="truncate text-[11px] leading-4 text-sh-muted" title={item.note}>
+                          {item.note}
+                        </span>
+                      </div>
+                    )
                   )}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+
+                {item.pageUrl && (
+                  <a
+                    href={item.pageUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-testid={`annotation-link-${item.id}`}
+                    title={item.pageTitle ? `${item.pageTitle}\n${item.pageUrl}` : item.pageUrl}
+                    className="max-w-[9rem] shrink-0 self-center truncate text-[10px] font-mono text-sh-subtle hover:text-sh-info hover:underline"
+                  >
+                    {hostOf(item.pageUrl)}
+                  </a>
+                )}
+
+                <span
+                  className="shrink-0 self-center text-[10px] font-mono tabular-nums text-sh-subtle"
+                  title={new Date(item.updatedAt || item.createdAt || Date.now()).toLocaleString()}
+                >
+                  {timeLabel(item.updatedAt || item.createdAt || Date.now())}
+                </span>
+
+                {/* 悬停才浮现；`lg:` 以下常显并折到下一行，否则窄屏上会把原文压成两三个字。 */}
+                <div
+                  data-testid="annotation-row-actions"
+                  className="flex w-full shrink-0 items-center justify-end gap-1 transition-opacity max-lg:opacity-100 lg:w-auto lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100"
+                >
                   <button
                     onClick={() => {
                       setEditingId(item.id);
@@ -205,7 +302,8 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
                     }}
                     data-testid={`annotation-edit-${item.id}`}
                     aria-label="编辑批注"
-                    className="p-1.5 rounded-lg border border-sh-line text-sh-muted hover:text-sh-fg"
+                    title="编辑我的批注"
+                    className="p-1 rounded-lg border border-sh-line text-sh-muted hover:text-sh-fg"
                   >
                     <Pencil className="w-3.5 h-3.5" aria-hidden />
                   </button>
@@ -213,70 +311,15 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
                     onClick={() => onDelete(item.id)}
                     data-testid={`annotation-delete-${item.id}`}
                     aria-label="删除批注"
-                    className="p-1.5 rounded-lg border border-sh-line text-sh-danger hover:bg-sh-danger/10"
+                    title="删除这条批注"
+                    className="p-1 rounded-lg border border-sh-line text-sh-danger hover:bg-sh-danger/10"
                   >
                     <Trash2 className="w-3.5 h-3.5" aria-hidden />
                   </button>
                 </div>
-              </div>
-
-              {/* 划词原文：荧光笔样式——左色条 + 同色浅底 + 正文字号，和网页上的高亮一致。 */}
-              <div>
-                <span className={`${chipClass} block mb-0.5`}>原文</span>
-                <blockquote
-                  className="rounded-r-md px-2.5 py-1.5 text-xs text-sh-fg leading-relaxed break-words"
-                  style={{
-                    backgroundColor: `${ANNOTATION_COLORS[item.color] ?? ANNOTATION_COLORS.yellow}1f`,
-                    borderLeft: `2px solid ${ANNOTATION_COLORS[item.color] ?? ANNOTATION_COLORS.yellow}`
-                  }}
-                >
-                  {item.text}
-                </blockquote>
-              </div>
-
-              {editingId === item.id ? (
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    onUpdate({ ...item, note: draftNote, updatedAt: Date.now() });
-                    setEditingId(null);
-                  }}
-                  className="space-y-1.5"
-                  data-testid={`annotation-editor-${item.id}`}
-                >
-                  <textarea
-                    value={draftNote}
-                    onChange={(e) => setDraftNote(e.target.value)}
-                    rows={2}
-                    aria-label="我的批注"
-                    className="w-full bg-sh-surface2 border border-sh-line rounded-lg px-2 py-1.5 text-[11px] text-sh-fg"
-                  />
-                  <div className="flex items-center gap-1.5">
-                    <button type="submit" className="px-2 py-1 rounded bg-sh-accent text-sh-accent-fg text-[11px] font-semibold">
-                      保存
-                    </button>
-                    <button type="button" onClick={() => setEditingId(null)} className="px-2 py-1 rounded border border-sh-line text-[11px]">
-                      取消
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                item.note && (
-                  /* 我的批注：独立底色块 + 标签，与荧光原文一眼可分。 */
-                  <div>
-                    <span className={`${chipClass} block mb-0.5`}>我的批注</span>
-                    <div className="rounded-lg bg-sh-surface2 border border-sh-line px-2.5 py-1.5 text-xs text-sh-fg leading-relaxed whitespace-pre-wrap break-words">
-                      {item.note}
-                    </div>
-                  </div>
-                )
-              )}
-
-              <p className="text-[10px] text-sh-subtle">
-                {new Date(item.updatedAt || item.createdAt || Date.now()).toLocaleString()}
-              </p>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
 

@@ -95,6 +95,7 @@ export const TAB_ROUTES: Record<string, string> = {
   凭证金库: '/#/resources/vault',
   签到: '/#/tools/checkins',
   手绘: '/#/tools/drawing/new',
+  网页批注: '/#/library?type=webpage',
   设置: '/#/settings/overview'
 };
 
