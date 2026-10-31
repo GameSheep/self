@@ -1,11 +1,7 @@
 /**
  * Inbox capture rules (P1-03).
- *
  * "Record something" is the first path a new user takes, so it must never
  * require a type, a project, or a configured cloud service. This module owns the
- * two decisions that path needs — is this text or a URL, and have we already
- * stored this exact submission — so the home page and the inbox button cannot
- * disagree about them.
  */
 import type { InboxItem } from '../types';
 
@@ -79,12 +75,9 @@ export function captureIntoInbox(
 
 /**
  * Merge captures that came from the extension into the local inbox.
- *
  * Idempotent by `operationId`: the extension's inbox is append-only from the
  * app's point of view, and the new-tab quick note stays in chrome.storage until it
- * is acknowledged, so the same text can be observed more than once. Only
- * genuinely new entries are appended, and the caller is told whether the quick
- * note can now be cleared.
+ * · is acknowledged, so the same text can be observed more than once. Only
  */
 export function mergeExtensionCaptures(
   inbox: InboxItem[] | undefined,

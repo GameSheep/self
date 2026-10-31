@@ -1609,16 +1609,6 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                   <span>{isRefreshingOss ? '拉取中…' : '刷新列表'}</span>
                 </button>
                 <button
-                  onClick={handleTestOss}
-                  disabled={isTestingOss}
-                  className="px-2 py-1 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-sh-fg text-[11px] font-mono flex items-center gap-1 whitespace-nowrap shrink-0 disabled:opacity-50"
-                  title="发一次签名请求，检查连通、CORS 与签名（不修改任何数据）"
-                  data-testid="oss-self-check"
-                >
-                  <Activity className={`w-3 h-3 ${isTestingOss ? 'animate-pulse' : ''}`} />
-                  <span>{isTestingOss ? '自检中…' : '测连通'}</span>
-                </button>
-                <button
                   onClick={() => openPathModal('newFolder')}
                   className="p-1 rounded-lg bg-sh-surface2 border border-sh-line text-sh-muted hover:text-sh-warn"
                   title="新建目录"
@@ -1645,6 +1635,28 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 />
               </div>
             </div>
+
+            {/* 连接诊断：默认折叠（summary 常显桶名与上次自检结论），正文只留树+搜索。
+                这是「五角色」收敛的一步——诊断是低频动作，不该常驻第一屏。 */}
+            <details className="mt-2.5 rounded-xl border border-sh-line bg-sh-surface2/40" data-testid="oss-diagnostics">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-[11px] text-sh-muted select-none [&::-webkit-details-marker]:hidden">
+                <Activity className={`w-3.5 h-3.5 ${isTestingOss ? 'animate-pulse text-sh-info' : ossTestResult ? (ossTestResult.success && ossTestResult.isRealOss ? 'text-sh-ok' : 'text-sh-warn') : 'text-sh-subtle'}`} />
+                <span className="font-medium text-sh-fg">连接诊断</span>
+                <span className="truncate font-mono">
+                  {ossTestResult ? `${obsidianConfig.bucket || '未配置'} · ${ossTestResult.success && ossTestResult.isRealOss ? '连通' : '有异常'}` : `${obsidianConfig.bucket || '未配置'} · 未自检`}
+                </span>
+              </summary>
+              <div className="px-2.5 pb-2.5 space-y-2.5">
+                <button
+                  onClick={handleTestOss}
+                  disabled={isTestingOss}
+                  className="px-2 py-1 rounded-lg bg-sh-surface border border-sh-line text-sh-muted hover:text-sh-fg text-[11px] font-mono flex items-center gap-1 disabled:opacity-50"
+                  title="发一次签名请求，检查连通、CORS 与签名（不修改任何数据）"
+                  data-testid="oss-self-check"
+                >
+                  <Activity className={`w-3 h-3 ${isTestingOss ? 'animate-pulse' : ''}`} />
+                  <span>{isTestingOss ? '自检中…' : '测连通'}</span>
+                </button>
 
             {/* Self-check result. It answers "can this page reach the bucket", which is a
                 different question from the settings card's 测试连接 (is the saved config usable). */}
@@ -1694,6 +1706,8 @@ export const DataInteropView: React.FC<DataInteropViewProps> = ({
                 </div>
               </div>
             )}
+              </div>
+            </details>
 
             <div className="relative mt-3">
               <Search className="w-3.5 h-3.5 text-sh-subtle absolute left-3 top-2.5" />

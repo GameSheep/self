@@ -48,14 +48,9 @@ function BackLink({ to, onNavigate }: { to: string; onNavigate: (path: string) =
 
 /**
  * Library item detail (P1-05).
- *
  * Each kind keeps its own presentation, and each one is explicit about what is
  * *not* known:
- * - a note opens the existing Markdown workspace (draft, outline, preview),
- * - an annotation shows the quoted原文 next to the user's own comment, and says
- *   whether a text anchor was recorded at all. An annotation whose anchor cannot
- *   be matched is shown as text rather than being pushed onto a guessed position,
- * - a remote file never renders an empty body as if it had loaded.
+ * · - a remote file never renders an empty body as if it had loaded.
  */
 export const LibraryItemView: React.FC<LibraryItemViewProps> = ({
   state,

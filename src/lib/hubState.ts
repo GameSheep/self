@@ -1,14 +1,7 @@
 /**
  * HubState shape and normalisation — the neutral half of `lib/storage`.
- *
  * Split out for a build reason worth writing down: `lib/crypto` needs
  * `normalizeHubState` (a decrypted backup has to be coerced into a complete state before
- * anything can read it), and `lib/crypto` is reachable from the **lazy** v3/migration
- * stack. While this function lived in `lib/storage.ts` — a module the entry statically
- * imports — Rollup co-located the whole migration stack with the eager payload module and
- * the first load paid ~10 KB gzip for code that cannot run until a user switches storage
- * mode. Nothing here touches `localStorage`, so both sides can depend on it without a
- * cycle.
  */
 import { HubState, WucaiConfig, YoudaoConfig, GoTabPreferences } from '../types';
 import { normalizeFeatures } from './features';

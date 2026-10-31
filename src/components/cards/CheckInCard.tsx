@@ -15,12 +15,9 @@ interface CheckInCardProps {
 
 /**
  * Check-in site card — a plain list entry, not an automation control.
- *
  * The automatic paths (HTTP request, userscript, enable toggle) were removed:
  * the app's job is to hold the list, open the site and remember what happened —
- * the checking itself is the user's gesture on the target site. The card keeps
- * the honest 14-day record: green = you marked it done, amber = you only opened
- * the page, red = URL failed to open.
+ * · the honest 14-day record: green = you marked it done, amber = you only opened
  */
 export const CheckInCard: React.FC<CheckInCardProps> = ({ task, onRun, onDelete }) => {
   const cells = recentDays(task.history || [], 14);

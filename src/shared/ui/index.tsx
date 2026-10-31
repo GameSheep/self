@@ -1,12 +1,8 @@
 /**
  * Shared UI primitives (P1-02).
- *
  * Before this, every view invented its own button, its own empty state and its
  * own "saving / saved / failed" text — so "did that save?" looked different in
- * each module, and the same success colour could mean two different things.
- * These primitives are deliberately small: no state, no context, no theming
- * engine. They only fix the vocabulary (tone, size, feedback state) so that a
- * status means the same thing on every page.
+ * · engine. They only fix the vocabulary (tone, size, feedback state) so that a
  */
 import React from 'react';
 import clsx from 'clsx';

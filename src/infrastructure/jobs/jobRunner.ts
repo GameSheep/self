@@ -1,25 +1,8 @@
 /**
  * Durable job runner (P2-05).
- *
  * The queue (`jobQueue.ts`) is the storage layer; this is the part that actually
  * runs work. It exists as a separate module because of one requirement that is
- * easy to violate: **the runner must be reconstructible**. A web page reloads, an
- * MV3 service worker is terminated, the user closes the tab — none of those may
- * lose a queued task or leave one `running` forever. So:
- *
- * - The runner holds no state that matters. Every fact is in `jobs_v3`; a fresh
- *   runner instance picks up whatever the previous one left behind.
- * - Handlers are registered by `kind`; an unknown kind is a permanent block with
- *   a readable reason, not a silent no-op.
- * - Failures are mapped from the shared error vocabulary (§7.1) to a job state:
- *   network → retry with backoff, auth/permission/validation → blocked, locked
- *   credential store → `waiting-unlock`, remote revision clash → `conflict`.
- * - Progress and log text go through the queue, which scrubs them.
- * - **Nothing here writes content stores.** The trigger for automatic backup is
- *   the library's content revision, so a runner that bumped it while updating a
- *   job's status would re-trigger itself: the §15.1 "任务状态更新不触发备份无限
- *   循环" acceptance item, enforced by this module simply not having a repository
- *   reference at all.
+ * · easy to violate: **the runner must be reconstructible**. A web page reloads, an
  */
 import { appError, toAppError, type AppError } from '../../repositories/errors';
 import { JobQueue, type JobRecord } from './jobQueue';

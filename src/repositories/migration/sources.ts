@@ -1,17 +1,8 @@
 /**
  * Migration source readers (P2-02).
- *
  * docs/SELF_HUB_DEVELOPMENT.md §13.1 lists every place v2 data can live. This
  * module reads them **without writing anything**, and records for each source:
- * what it contained, how many records per collection, a content hash, and which
- * fields this build does not model.
- *
- * Three rules from §13.1 that shape the code:
- * - Read *every* collection, not just notes/sites.
- * - Never assume the async IndexedDB mirror is newer than the localStorage
- *   payload; the migration resolves that with a conflict report, not a guess.
- * - Only touch our own keys. `chrome.storage` in particular may hold other
- *   applications' data, so the reader whitelists the exact keys it knows.
+ * · - Never assume the async IndexedDB mirror is newer than the localStorage
  */
 import { STORAGE_KEY_SELF_HUB } from './types';
 
@@ -314,20 +305,12 @@ export async function readChromeStorageSource(): Promise<{ snapshot: SourceSnaps
 
 export async function readAllSources(options: {
   includeChromeStorage?: boolean;
-  /**
-   * Treat the live payload as authoritative and use the v1 mirror only to fill gaps.
-   *
-   * The default (`false`) is the archival reading: collect everything from every source,
-   * with namespaced ids, so nothing that exists anywhere is lost. That is right when the
-   * migration *is* the recovery.
-   *
-   * It is wrong when the migration is used to **switch** the app onto v3: the app mirrors
-   * every save into the IndexedDB mirror, so the same note arrives from both sources under
-   * two namespaced ids and a switched library would show every record twice. With
-   * `preferPayload` the payload wins per collection and the mirror is used only for
-   * collections the payload has no rows for — so a damaged or emptied payload still
-   * recovers what the mirror holds, which is the reason the mirror exists.
-   */
+/**
+ * Treat the live payload as authoritative and use the v1 mirror only to fill gaps.
+ * The default (`false`) is the archival reading: collect everything from every source,
+ * with namespaced ids, so nothing that exists anywhere is lost. That is right when the
+ * · `preferPayload` the payload wins per collection and the mirror is used only for
+ */
   preferPayload?: boolean;
 } = {}): Promise<MigrationSources> {
   const snapshots: SourceSnapshot[] = [];

@@ -1,18 +1,8 @@
 /**
  * Chrome-extension bridge.
- *
  * The web app stores everything in `localStorage['self_hub_data_v2']`, while the
  * bundled extension reads `chrome.storage.local` (`selfhub_sites`,
- * `selfhub_annotations`, `selfhub_inbox`). When the app is opened from inside the
- * extension (`chrome-extension://<id>/app/index.html`) the two live on different
- * origins, so nothing ever flowed between them: the extension's new-tab grid could
- * only show its hardcoded defaults.
- *
- * This mirrors the bookmarks and annotations one way (app -> extension) on every
- * persisted change, and is a no-op in a normal browser tab.
- *
- * It also hands reminders to the background worker, which schedules alarms so
- * due reminders notify even when no app tab is open.
+ * · only show its hardcoded defaults.
  */
 import { HubState, ReminderItem } from '../types';
 import { checkWritable } from './schemaGeneration';
@@ -65,12 +55,9 @@ function newRequestId(): string {
 
 /**
  * Send one command to the extension background.
- *
  * P2-04: this is the only way the app writes extension data. The previous
  * implementation mirrored whole collections into `chrome.storage.local` on every
- * persisted change, from a different origin, without waiting for an answer — so a
- * capture made in the new-tab page while the app was open could be overwritten by
- * whichever writer ran last, and the app never learned that it happened.
+ * · whichever writer ran last, and the app never learned that it happened.
  */
 export function sendExtensionCommand<T = unknown>(
   command: string,
@@ -151,14 +138,8 @@ export function syncBookmarksToExtension(state: HubState): void {
 
 /**
  * Import annotations the extension collected, without overwriting anything.
- *
  * Returns only the records the app does not already have (`rows`), plus how many
  * annotations the extension holds in total (`totalCount`). `totalCount === -1`
- * means the extension did not answer — the caller can tell "nothing saved yet"
- * apart from "the extension is an old build or not reloaded", which a bare
- * empty-array return conflated. The caller decides what to store; nothing is
- * deleted on either side, which is the difference between an import and the old
- * whole-collection mirror.
  */
 export interface ExtensionAnnotationImport {
   rows: Array<{ id: string; pageUrl: string; pageTitle?: string; text: string; note?: string; color?: string; anchor?: unknown; createdAt?: number; updatedAt?: number }>;
@@ -269,15 +250,9 @@ export function publishRemindersToExtension(reminders: ReminderItem[]): boolean 
 
 /**
  * One row of the extension's unified inbox (`selfhub_extension` → `inbox`).
- *
  * Everything the extension collects by itself lands here: the new-tab
  * 「记一笔」 module, the toolbar popup and the right-click 「保存至统一收件箱」
- * all send `CAPTURE_ENTRY`, and the background writes this store.
- *
- * It is a *different* database from the app's (`selfhub_extension` vs
- * `self_hub_idb`), which is why the app has to ask for the rows instead of
- * reading them: a capture used to stop at the extension and never reach the
- * workbench at all.
+ * · reading them: a capture used to stop at the extension and never reach the
  */
 export interface ExtensionInboxRecord {
   id: string;
@@ -331,16 +306,8 @@ export async function readExtensionInbox(): Promise<ExtensionInboxRecord[]> {
 
 /**
  * Mark extension-inbox rows as taken.
- *
  * Without this the import is only *idempotent*, not *one-shot*: the app copies a
  * capture into its own inbox, the user turns it into a note (which removes the
- * row here), and the next boot finds the original still sitting in the extension
- * and copies it in again — the inbox refills with work the user already did.
- *
- * `imported` is a tombstone, not a delete: the side panel still lists the row
- * (`QUERY_INBOX` without a status returns everything), so nothing disappears
- * from under the user. The operation id is derived from the row id so a retry
- * replays instead of writing twice.
  */
 export async function markExtensionInboxImported(ids: string[]): Promise<void> {
   if (!ids.length) return;
@@ -382,18 +349,8 @@ interface ExtensionCapturePayload {
 
 /**
  * Read what the extension captured on its own.
- *
  * Two sources, because the extension has two generations of capture storage:
- *
  * 1. **The v3 inbox** (`QUERY_INBOX`) — where 记一笔 / popup / 右键菜单 write today.
- *    This is the one that matters; a capture made on the new tab used to land
- *    here and stop, because nothing on the app side ever asked for these rows.
- * 2. **The legacy `chrome.storage.local` keys** (`selfhub_quicknote`,
- *    `selfhub_inbox`) — written by older builds, kept so an upgrade does not
- *    strand whatever was captured before the store moved.
- *
- * `inboxIds` comes back alongside the captures so the caller can mark those rows
- * as taken once they are safely in the app's state.
  */
 export async function readExtensionCaptures(): Promise<ExtensionCaptureBatch> {
   const [legacy, inbox] = await Promise.all([readLegacyCaptures(), readExtensionInbox()]);

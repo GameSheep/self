@@ -1,27 +1,8 @@
 /**
  * HubState ⇄ v3 library adapter (P2 切库 phase 1).
- *
  * The app's fact source is still the v2 `HubState` payload in localStorage. Everything
  * P2 built — the v3 schema, the migration, v3 backups, restore, migration packages —
- * sits *beside* it. This file is the seam that makes switching possible: it can write a
- * whole `HubState` into the v3 stores in one transaction and read it back.
- *
- * Three deliberate decisions:
- *
- * 1. **Connections stay device-local.** §9.1/§10.4.7: OSS/WebDAV/AI credentials are
- *    per-device and must be re-entered and re-tested on a new machine. The adapter
- *    therefore moves *business data* + preferences into the library and leaves the
- *    connection config objects where they are. That is not a shortcut; putting a
- *    device's keys into a shared library is exactly what the design forbids.
- * 2. **Lossless, including fields v3 does not model yet.** Every record carries a
- *    `legacy` snapshot of the v2 row it came from. The v3 fields are still written and
- *    queryable; `legacy` guarantees that flipping the switch cannot quietly drop a
- *    field that the model has not caught up with (and `readBack` prefers it for the
- *    v2-only parts). It is marked transitional and should be dropped once the switch
- *    has been validated against real data.
- * 3. **Dangling references are reported, not fabricated.** Old data contains links to
- *    deleted rows; the app already shows those as "失效引用". The adapter skips them
- *    and counts them — it never invents a placeholder entity (§13.2).
+ * · per-device and must be re-entered and re-tested on a new machine. The adapter
  */
 import type { HubState } from '../types';
 import type {
@@ -72,15 +53,9 @@ const LIBRARY_STORES = Object.values(STORES);
 
 /**
  * Per-library, per-store hash of the record set this adapter last wrote successfully.
- *
  * Lets a save skip the read+compare for stores whose input did not change — the difference
  * between ~500 ms and a few ms on a 6,600-record library (measured, see
- * `tests/e2e/performance.spec.ts`). Cleared for a library after a failed write (its records
- * may not match what we think) and never shared across libraries.
- *
- * It relies on the adapter being the only writer of that library: migrations create a *new*
- * library id, and the extension keeps its own database. A second tab writing the same
- * library would be missed — the app treats that case as "reload" and says so.
+ * · may not match what we think) and never shared across libraries.
  */
 const writtenHashes = new Map<string, Map<string, string>>();
 
@@ -135,12 +110,8 @@ function strArray(value: unknown): string[] {
 
 /**
  * Deterministic row base.
- *
  * The fallback timestamps must **not** be `Date.now()`: a missing `createdAt` would then
  * differ on every call, so a record would look "changed" on every save and the
- * incremental write would rewrite the whole library — the very thing it exists to avoid
- * (and the first version of this adapter did exactly that, caught by the incremental
- * test). Missing times fall back to the row's own `updatedAt`, then to 0.
  */
 function baseRow(libraryId: string, id: string, source: Record<string, unknown>, _now: number) {
   const updatedAt = nowOf(source.updatedAt, nowOf(source.createdAt, 0));
@@ -617,30 +588,17 @@ export async function writeLibrary(
         }
         if (!keyPath) continue;
 
-        /**
-         * Skip stores whose input cannot have changed since our last successful write.
-         *
-         * The read+compare below is what a save costs, and it is not free: on a 6,600-record
-         * library a no-op save measured ~500 ms, almost all of it reading every row back and
-         * serialising it for comparison. A debounced save therefore blocked the main thread
-         * for half a second on every burst of typing.
-         *
-         * The adapter is the only writer of a v3 library (migrations create a *new* library,
-         * and the extension has its own database), so an unchanged input means the stored
-         * records are already what we would write. The assumption is stated rather than
-         * hidden: a second tab writing the same library would be missed — the app already
-         * warns about that case (`another tab changed the data`) and treats it as "reload".
-         */
-        /**
-         * `JSON.stringify` here, not `stableJson`.
-         *
-         * Both are safe for this decision, in opposite ways: a *false* "different" only costs
-         * one store's read, while a false "same" is impossible — different content cannot
-         * produce the same string, and our own records are built with a fixed key order, so
-         * identical content always produces the same one. Native stringify on 6,600 records
-         * is several times faster than the recursive comparator, and this is the call that
-         * runs on every save.
-         */
+/**
+ * Skip stores whose input cannot have changed since our last successful write.
+ * The read+compare below is what a save costs, and it is not free: on a 6,600-record
+ * library a no-op save measured ~500 ms, almost all of it reading every row back and
+ * · The adapter is the only writer of a v3 library (migrations create a *new* library,
+ */
+/**
+ * `JSON.stringify` here, not `stableJson`.
+ * Both are safe for this decision, in opposite ways: a *false* "different" only costs
+ * one store's read, while a false "same" is impossible — different content cannot
+ */
         const inputHash = JSON.stringify(nextRows);
         hashes[store] = inputHash;
         if (writtenHashes.get(libraryId)?.get(store) === inputHash) {
@@ -649,15 +607,12 @@ export async function writeLibrary(
           continue;
         }
 
-        /**
-         * Incremental write.
-         *
-         * Replacing the whole library on every save (the first version) means a one-note
-         * edit rewrites thousands of records: slow on a real library, and it makes every
-         * save look like a bulk operation to anything watching revision numbers. Here only
-         * records whose content actually changed are put, and only records that no longer
-         * exist are deleted — in the same transaction, so the two views cannot disagree.
-         */
+/**
+ * Incremental write.
+ * Replacing the whole library on every save (the first version) means a one-note
+ * edit rewrites thousands of records: slow on a real library, and it makes every
+ * · save look like a bulk operation to anything watching revision numbers. Here only
+ */
         const range = IDBKeyRange.bound([libraryId], [libraryId, []]);
         const [existingKeys, existingValues] = await Promise.all([
           requestToPromise(objectStore.getAllKeys(range) as IDBRequest<IDBValidKey[]>),
@@ -757,16 +712,12 @@ export async function readLibrary(libraryId: string): Promise<Result<AdapterRead
     const libraryRows = <T extends { libraryId?: string }>(rows: T[]) => rows.filter((row) => row.libraryId === libraryId);
     const counts: Record<string, number> = {};
 
-    /**
-     * Prefer the preserved v2 row.
-     *
-     * The adapter writes both the v3 fields *and* the original row (`legacy`). Reading
-     * back the original when it exists is what makes the round trip exact: synthesising
-     * from v3 fields would add defaults the user never had (`tags: []` on a note that
-     * had no tags) and the comparison would flag them as differences — noise that hides
-     * a real loss. Records written by other paths (migration) have no `legacy`, so they
-     * are synthesised from the v3 fields instead.
-     */
+/**
+ * Prefer the preserved v2 row.
+ * The adapter writes both the v3 fields *and* the original row (`legacy`). Reading
+ * back the original when it exists is what makes the round trip exact: synthesising
+ * · from v3 fields would add defaults the user never had (`tags: []` on a note that
+ */
     const preserved = <T>(legacy: unknown, fallback: T): T => {
       if (legacy && typeof legacy === 'object' && Object.keys(legacy as Record<string, unknown>).length > 0) {
         return legacy as T;

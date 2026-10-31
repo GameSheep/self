@@ -1,22 +1,8 @@
 /**
  * Integration registry — the single source of truth for every external connection.
- *
  * Before this file, each integration had its own bespoke settings block, its own
  * mutable state in the modal, and its own "is it configured?" logic copy-pasted
- * into the overview. Adding one connection meant touching four places, which is
- * how the settings ended up scattered.
- *
- * P1-08 changed what this registry is allowed to claim. It used to derive
- * `enabled` from field presence (`enabled: filled(bucket) && filled(key)`), so
- * typing a URL switched a connection on — and on WebDAV, half a URL and a
- * username were enough to set `enabled: true` while the required-password check
- * said "not configured". `write()` now only ever stores an enable flag the user
- * explicitly set; filling a field changes nothing but the field.
- *
- * Each entry also declares what the connection can *do* (`capabilities`), which
- * purpose it feeds (`purpose`), and — separate again — what a 测试连接 probe is
- * allowed to prove (`testCapabilities`). The four facts stay four facts; see
- * src/lib/connectionState.ts.
+ * · said "not configured". `write()` now only ever stores an enable flag the user
  */
 import { HubState, ObsidianConfig } from '../types';
 
@@ -346,13 +332,8 @@ export function integrationById(id: IntegrationId): IntegrationDef | undefined {
 
 /**
  * One card per configured OSS bucket.
- *
  * The user's model: the connections pane holds 「阿里云 OSS」 cards, one per bucket, each with a
  * custom name; 远端笔记 then picks from the buckets already configured there. So the card has to
- * read and write **its own** entry in `obsidianConnections`, not the shared active config.
- *
- * The first card keeps the historical id `oss`, which is what existing deep links, tests and the
- * single-bucket case already use.
  */
 export function buildOssConnectionDef(connection: ObsidianConfig, index: number): IntegrationDef {
   const id: IntegrationId = index === 0 ? 'oss' : `oss:${connection.id ?? String(index)}`;

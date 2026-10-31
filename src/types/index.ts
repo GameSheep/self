@@ -509,17 +509,12 @@ export interface HubState {
    * hiding a block never disables the feature behind it.
    */
   homeBlocks?: HomeBlockPreference[];
-  /**
-   * New-tab page preferences: the module dashboard's layout and the sites the user
-   * starred there.
-   *
-   * These two live in `chrome.storage.local` because the new tab is a separate
-   * extension page and is their only writer — the workbench never authors them.
-   * They are mirrored into the hub state purely so that a backup carries them:
-   * a file export or a v3 batch serialises the whole state, and a restore writes
-   * this object back to `chrome.storage.local`. Treat `layout` as opaque; the
-   * dashboard engine owns its shape.
-   */
+/**
+ * New-tab page preferences: the module dashboard's layout and the sites the user
+ * starred there.
+ * These two live in `chrome.storage.local` because the new tab is a separate
+ * · extension page and is their only writer — the workbench never authors them.
+ */
   newtabPreferences?: NewtabPreferences;
   /**
    * Last connection test per integration id, bound to the tested config version.

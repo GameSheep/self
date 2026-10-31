@@ -1,24 +1,7 @@
 /**
  * Migration runner (P2-02).
- *
  * Implements §13.3's state machine:
- *
- *   discover → encrypted snapshot → read-only preflight → batched writes into a
- *   staging library → count/reference verification → atomic switch → observe
- *
- * Three properties the acceptance criteria are stated in terms of:
- *
- * 1. **Nothing is written before the encrypted snapshot exists.** If the snapshot
- *    cannot be produced, the migration refuses to run rather than proceeding
- *    without a way back.
- * 2. **Interrupt and resume.** Each batch commits on its own and advances a
- *    checkpoint holding the source hashes. A re-run after an interruption resumes
- *    at the next batch; a re-run after the *sources changed* refuses to resume and
- *    asks for a fresh read, because a half-migrated library built from two
- *    different inputs is not something to paper over.
- * 3. **The live library is untouched until the switch.** All writes target the
- *    staging library id, and verification runs against it. A failure leaves the
- *    live library exactly as it was.
+ * discover → encrypted snapshot → read-only preflight → batched writes into a
  */
 import type { MigrationCheckpoint, MigrateOptions, MigrateOutcome, MigrationReport, SourceHashRecord } from './types';
 import { SNAPSHOT_KEY_PREFIX, STAGING_LIBRARY_PREFIX } from './types';
@@ -91,13 +74,8 @@ export function clearCheckpoint(stagingLibraryId: string): void {
 
 /**
  * Save the immutable, encrypted pre-migration copy of every raw source.
- *
  * Stored in **IndexedDB**, not `localStorage`. The snapshot is roughly the size of the
  * sources it copies, and the whole point of migrating is that the library outgrew
- * `localStorage`'s ~5 MB — so keeping the snapshot there made the migration fail exactly
- * when it was needed (the encrypted copy plus the live payload did not fit, and the user
- * was told "无法保存加密快照"). Same database as everything else, own store, so it is not
- * cleared by library writes.
  */
 async function saveSnapshot(
   migrationId: string,
@@ -117,15 +95,12 @@ async function saveSnapshot(
     await runV3Transaction([SNAPSHOT_STORE], 'readwrite', async (ctx) => {
       const store = ctx.store(SNAPSHOT_STORE);
       store.put({ id: migrationId, ciphertext: stored, hash, createdAt: Date.now() });
-      /**
-       * Keep only the newest snapshot.
-       *
-       * Each snapshot is roughly the size of the sources it copies, so keeping every one of
-       * them grows without bound on a device whose owner migrates more than once. One is
-       * enough for the safety net it provides: the pre-switch state of the *last* migration
-       * — which is the only one a "I switched and something is missing" rollback can mean.
-       * Deletion happens in the same transaction as the write, so a reader never sees zero.
-       */
+/**
+ * Keep only the newest snapshot.
+ * Each snapshot is roughly the size of the sources it copies, so keeping every one of
+ * them grows without bound on a device whose owner migrates more than once. One is
+ * · — which is the only one a "I switched and something is missing" rollback can mean.
+ */
       const existing = await requestToPromise(
         store.getAllKeys() as IDBRequest<IDBValidKey[]>
       );
@@ -324,12 +299,9 @@ export async function preflightMigration(options: {
 
 /**
  * Run the migration.
- *
  * `skipSwitch` exists so the whole pipeline can be verified *without* changing
  * which library the app reads. The default in this build is `true` (see
- * `MIGRATION_SWITCH_ENABLED`): P2-02 ships verified staging, and turning the
- * app over to v3 is a deliberate follow-up so that an in-progress migration can
- * never leave a user with an app that reads a half-filled library.
+ * · never leave a user with an app that reads a half-filled library.
  */
 export const MIGRATION_SWITCH_ENABLED = false;
 

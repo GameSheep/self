@@ -1,16 +1,8 @@
 /**
  * Snapshot collection and scope reporting (P2-05).
- *
  * §10.3's last paragraph is the requirement that shapes this file: "所谓'全量'必须
  * 说明范围……未下载的远端对象只备份引用时，报告为'引用备份'，不能显示为完整离线
- * 备份". Producing the bytes is the easy half; the other half is saying honestly what
- * those bytes do and do not contain.
- *
- * Credentials are removed before anything is encrypted. Encrypting the package is
- * not a reason to ship a connection key inside it: the backup password and the OSS
- * secret are different secrets, kept by different people in different places, and
- * the vault ciphertext (`secrets[]`) is included only because it is useless
- * without the master password that never leaves the browser.
+ * · the vault ciphertext (`secrets[]`) is included only because it is useless
  */
 import type { HubState } from '../../types';
 import { stripCredentials } from '../../lib/stateBackup';

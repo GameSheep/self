@@ -1,17 +1,8 @@
 /**
  * Home page rules (P1-03).
- *
  * The home page is the first thing a user sees, and the old dashboard filled it
  * with empty operations cards that demanded configuration before they said
- * anything. Two ideas fix that, and both live here rather than in the component:
- *
- * 1. **Block preferences.** Order, collapse and hide are user preferences; the
- *    feature is still reachable from navigation when a block is hidden. These
- *    are the only home settings, and they never change whether a background
- *    task runs.
- * 2. **"Actionable" is defined once.** Inbox backlog, reminders inside the next
- *    7 days and failed check-ins count as待处理. Everything else is information,
- *    not a task, and must not inflate the list.
+ * · are the only home settings, and they never change whether a background
  */
 import type { CheckInTask, HubState, NavSite, ReminderItem } from '../types';
 import { daysUntil } from '../lib/dates';

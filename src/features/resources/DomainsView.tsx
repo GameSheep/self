@@ -41,13 +41,8 @@ const EMPTY_DRAFT: Draft = { name: '', start: '', expire: '', registrar: '', dns
 
 /**
  * 域名 (6.2).
- *
  * This page lists domains, and only domains: name, start, expiry, registrar, nameservers.
  * It no longer sends the user to the reminders page — that behaviour was the bug, because the
- * reminder is a different thing (it is *about* a date) and it has nowhere to put a registrar.
- *
- * 「域名到期」 reminders still exist and still drive 「今天要处理」; domain records that came from
- * them are marked 「由提醒迁移而来」 so the two can be told apart.
  */
 export const DomainsView: React.FC<DomainsViewProps> = ({ state, onAddDomain, onUpdateDomain, onDeleteDomain }) => {
   const domains = useMemo(

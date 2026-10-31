@@ -1,17 +1,8 @@
 /**
  * Bookmark import with a real preview (P1-04).
- *
  * The old flow ran `alert('成功导入 N 个网址')` *after* writing, with no way to
  * see what was about to happen and no way to take it back. This dialog:
- *
- * 1. parses the exported Chrome / Edge / GoTab bookmarks HTML,
- * 2. reports the numbers the user needs *before* importing — how many were
- *    found, how many already exist, how many have unknown/missing fields and
- *    which groups would be created,
- * 3. imports as one batch whose exact ids are handed back to the caller, so
- *    "撤销" removes precisely that batch and nothing else,
- * 4. never overwrites an existing site: duplicates are skipped by default, with
- *    an explicit opt-in to import them as copies.
+ * · 4. never overwrites an existing site: duplicates are skipped by default, with
  */
 import React, { useMemo, useState } from 'react';
 import { AlertTriangle, Check, FileText, FolderPlus, Undo2, Upload } from 'lucide-react';

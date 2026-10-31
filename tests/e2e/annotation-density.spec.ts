@@ -101,6 +101,34 @@ test.describe('网页批注密度：一条划词一行', () => {
     expect(Math.abs(heightAfter - heightBefore)).toBeLessThan(1);
   });
 
+  test('域名 facet 一键只看某个站', async ({ page }) => {
+    const now = Date.now();
+    const mk = (id: string, host: string) => ({
+      id,
+      pageUrl: `https://${host}/p`,
+      pageTitle: host,
+      text: `${host} 的划词`,
+      color: 'yellow' as const,
+      createdAt: now,
+      updatedAt: now
+    });
+    await seedState(
+      page,
+      baseState({
+        annotations: [mk('a1', 'a.example.com'), mk('a2', 'a.example.com'), mk('a3', 'a.example.com'), mk('b1', 'b.example.com')]
+      })
+    );
+    await gotoTab(page, '网页批注');
+
+    await page.getByTestId('annotations-domain-chip-a.example.com').click();
+    await expect(page.getByTestId('annotation-row')).toHaveCount(3);
+    await expect(page.getByTestId('annotations-count')).toContainText('共 4 条');
+
+    // 回到「全部」。
+    await page.getByTestId('annotations-domain-chip-all').click();
+    await expect(page.getByTestId('annotation-row')).toHaveCount(4);
+  });
+
   test('320px 下原文仍然可读，操作行折到第二行而不是挤掉原文', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 720 });
     await seedState(page, baseState({ annotations: highlights(8) }));

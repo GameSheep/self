@@ -1,27 +1,8 @@
 /**
  * Connection, credential and purpose storage (P2-03).
- *
  * Everything here follows from one sentence in §8.2: "不要把三套状态压进一个
  * `configured: boolean`". A connection therefore carries four *separate* facts,
- * and this module keeps them separate in storage as well as in the UI:
- *
- *   1. fields are filled      → `publicConfig` completeness (derived, not stored)
- *   2. a test passed          → `verification`, bound to `configVersion`
- *   3. a purpose is enabled   → a `bindings_v3` row
- *   4. a task is running      → job state (P2-05); here only its *readiness*
- *
- * Consequences that are enforced in code rather than in a promise:
- *
- * - Saving a connection **never** enables a purpose. Enabling is a separate call
- *   with its own result.
- * - Editing the configuration **bumps `configVersion`**, which makes any stored
- *   verification stale on the next read. A green tick cannot survive a key change.
- * - A secret can only be stored with an unlocked master password. Without one the
- *   call fails with `LOCKED` and writes nothing — credentials are never kept in
- *   plain text to keep the flow "simple" (§12.1).
- * - Deleting a connection first reports which purposes reference it and disables
- *   them; it never deletes remote business files, because it never touches the
- *   network at all.
+ * · 4. a task is running      → job state (P2-05); here only its *readiness*
  */
 import type { Connection, ConnectionCredential, PurposeBinding, PurposeId } from '../domain/model';
 import { runV3Transaction, requestToPromise } from '../infrastructure/storage/idbV3';

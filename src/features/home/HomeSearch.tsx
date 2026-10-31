@@ -11,14 +11,8 @@ export interface HomeSearchProps {
 
 /**
  * 首页搜索 (1): one box, everything.
- *
  * It sits at the top of the home page and searches notes, annotations, drawings, bookmarks,
  * servers, reminders, projects, inbox entries and vault names in one go. It is deliberately
- * **not** filtered by the module switches: a hidden module's data should still be findable,
- * otherwise turning a switch off means losing the ability to find what is in it.
- *
- * Results are grouped by kind with the real total per group, so "3 条笔记" is a fact, not a
- * guess from the visible rows.
  */
 export const HomeSearch: React.FC<HomeSearchProps> = ({ state, onOpenHit }) => {
   const [query, setQuery] = useState('');

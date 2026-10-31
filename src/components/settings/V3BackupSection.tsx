@@ -6,17 +6,8 @@ import type { ConflictStrategy } from '../../infrastructure/backup/restoreServic
 
 /**
  * "v3 加密备份" panel (P2-05).
- *
  * Everything here is a statement the app can back up with storage facts:
- *
  * - which format the automatic task writes **right now**,
- * - what the destination actually holds (batches, completeness, scope),
- * - whether this session holds the backup password, and therefore whether an
- *   automatic run would happen at all.
- *
- * The last one is why the panel exists rather than a silent toggle: §10.2 requires
- * the app to wait for an unlock instead of uploading something weaker, so "it will
- * not run, and here is why" is the honest state to show.
  */
 export interface V3BackupSectionProps {
   panel: V3BackupPanelState;

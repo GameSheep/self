@@ -1,16 +1,7 @@
 /**
  * Site (bookmark) actions.
- *
  * Extracted from App, which had accumulated every domain's CRUD callbacks in one
  * 900-line component. Each hook owns one domain and receives only the state
- * updater, so a change here cannot reach into unrelated features.
- *
- * P1-04 added `updateSite` and `updateSites`. `importBookmarks` keeps its name
- * and signature (App still calls it as `(newSites) => void`) but now *replaces*
- * the sites collection with the array it is handed instead of prepending to it:
- * reordering, pinning and moving between groups all have to write a complete,
- * explicitly ordered list, and a prepend would have duplicated every record.
- * It still merges the incoming categories, so a batch can introduce new groups.
  */
 import { useCallback } from 'react';
 import { HubState, NavSite } from '../types';

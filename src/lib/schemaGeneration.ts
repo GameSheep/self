@@ -1,22 +1,8 @@
 /**
  * Write-generation guard (P0-03).
- *
  * The P2 migration will move the local fact source from a single `localStorage`
  * blob (schema v2) to versioned transaction stores (schema v3). The dangerous
- * window is not the migration itself: it is a **stale client**. An app tab that
- * was open before the upgrade, or an older bundle served from cache, still holds
- * the whole v2 payload in memory and will happily `setItem()` it back seconds
- * later — silently reverting everything the migration wrote.
- *
- * There is no way to make an already-shipped bundle check a flag it does not
- * know about, so the check has to be present *before* the generation changes.
- * That is what this module is: a durable marker plus a cheap pre-write test that
- * every writer must pass. From P1 onward a client that only understands
- * generation N refuses to write once generation N+1 is active.
- *
- * The marker lives in `localStorage` next to the payload because both the app
- * and the extension's bundled app share one origin, and because the check has to
- * work synchronously on the write path.
+ * · every writer must pass. From P1 onward a client that only understands
  */
 
 /** Payload generation this build can read and write. */

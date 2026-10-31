@@ -1,14 +1,7 @@
 /**
  * Minimal WebDAV client (Basic auth).
- *
  * Used as an alternative to OSS for whole-state backup. Two real-world caveats
  * are surfaced honestly instead of being hidden behind a generic "failed":
- *
- * 1. Authentication: InfiniCLOUD/TeraCloud require the *app password* (not the
- *    login password) and the "外部アプリ接続" switch to be enabled.
- * 2. CORS: most WebDAV servers send no `Access-Control-Allow-Origin`, so a normal
- *    web tab cannot call them at all. Extension pages (with host permissions) are
- *    exempt, which is why the diagnostic message mentions the environment.
  */
 
 export interface WebdavConfig {

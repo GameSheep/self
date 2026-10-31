@@ -1,19 +1,8 @@
 /**
  * Pure ordering helpers for the quick-navigation grid (P1-04).
- *
  * Why a separate module: drag-and-drop and the keyboard/button alternative
  * (上移 / 下移 / 移动到…) must produce *identical* results. The only way to
- * guarantee that is to make both call the same pure functions instead of each
- * carrying its own index arithmetic.
- *
- * Contract for `order`:
- * - A site with a numeric `order` sorts before any site without one.
- *   `undefined` means "never reordered" and keeps the array position it already
- *   had, which is exactly the pre-P1-04 behaviour.
- * - Ties (same `order`, or both missing) fall back to `createdAt` and then `id`,
- *   so a render never reshuffles the grid by accident.
- * - Any mutation writes *contiguous* numbers via `renumberCategory`, so one move
- *   cannot leave gaps or duplicate `order` values behind.
+ * · `undefined` means "never reordered" and keeps the array position it already
  */
 import { NavSite } from '../../types';
 

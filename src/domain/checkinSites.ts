@@ -2,15 +2,9 @@ import type { CheckInTask } from '../types';
 
 /**
  * Supported check-in sites (7.1).
- *
  * These are the sites the common签到脚本 collections cover. The rule the user asked for is the
  * important part: **a supported site that the user has not configured is not shown in the task
- * list**. This catalogue only offers them as one-click templates; the list stays "what you set
- * up", never "everything we could do".
- *
- * Only `type: 'redirect'` (open the page) templates are listed by default. A real HTTP check-in
- * needs the site's own API shape, which differs per site and would be dishonest to fake — those
- * stay user-defined, with the template as a starting point.
+ * · list**. This catalogue only offers them as one-click templates; the list stays "what you set
  */
 
 export interface SupportedCheckInSite {

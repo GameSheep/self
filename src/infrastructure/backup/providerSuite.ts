@@ -1,14 +1,7 @@
 /**
  * End-to-end round trip through a real provider transport (P2-05).
- *
  * `backupSuite.ts` proves the format against an in-memory transport. This suite
  * proves the same protocol survives an actual `BackupTransport` implementation —
- * signing, PROPFIND, MKCOL, DELETE, error mapping — which is where the P1 clients
- * live and where "works with a mock" stops being evidence.
- *
- * Provider-agnostic on purpose: the same steps run for OSS and WebDAV, so a
- * difference between them shows up as a failing step rather than as two
- * hand-written test files that slowly drift apart.
  */
 import type { BackupTransport } from './transport';
 import { collectSnapshot } from './snapshot';

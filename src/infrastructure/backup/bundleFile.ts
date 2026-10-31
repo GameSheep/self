@@ -1,27 +1,7 @@
 /**
  * Single-file encrypted bundles (P2-06, §9.1).
- *
  * The web app and the packaged extension live on **different origins**, so they
  * cannot share a local database: §9.1 says to exchange an encrypted migration
- * package with a count preview rather than pretend the data is shared. A remote
- * generation (the backup path) is not usable for that — there may be no cloud
- * connection at all, and the whole point is moving data *between environments*.
- *
- * So this is the same format as a remote generation, assembled into one file:
- *
- *   { format, formatVersion, purpose, createdAt, libraryId, deviceId,
- *     crypto: { …, salt }, manifest: <encrypted envelope>,
- *     objects: { '<path>': <encrypted envelope>, … },
- *     completion: { at, manifestHash, objectCount } }
- *
- * The manifest and every object are encrypted with one PBKDF2-derived key and a
- * fresh IV each, exactly like a remote generation; `completion` plays the role the
- * separate marker plays remotely (a file is atomic, so the unit itself is complete —
- * but the hash is still verified so a hand-edited or truncated file is rejected).
- *
- * Import goes through the same preview/apply path as a remote batch, which is what
- * keeps the baseline check, the conflict rules and the credential rules identical
- * for both.
  */
 import { appError, fail, ok, type Result } from '../../repositories/errors';
 import type { HubState } from '../../types';

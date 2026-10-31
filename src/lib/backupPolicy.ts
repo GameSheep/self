@@ -1,22 +1,8 @@
 /**
  * Backup target resolution (P1-09).
- *
  * The bug this file exists to kill: the manual "立即备份" button resolved its
  * destination inside `useCloudBackup`, and the *automatic* trigger had a second,
- * different condition hard-coded into an effect. The effect only looked at the
- * OSS config:
- *
- *     if (!cfg?.enabled || !cfg.bucket || !cfg.accessKeyId) return;   // OSS only
- *
- * so a user who configured **only** WebDAV got a working manual backup and a
- * silently dead automatic one. Two copies of "where does the backup go" is the
- * whole defect; there is now one function and every caller — manual, automatic,
- * settings preview, "上次备份" status — goes through it.
- *
- * This also separates three things the old UI blurred together:
- *   - fields are filled        (`configured`)
- *   - the user wants it to run (`enabled`)
- *   - a test has passed        (`verification`, kept by the settings layer)
+ * · different condition hard-coded into an effect. The effect only looked at the
  */
 import type { HubState, ObsidianConfig, WebdavSyncConfig } from '../types';
 import { hasRealOssKeys } from './s3Client';
@@ -111,15 +97,9 @@ export function describeWebdavDestination(config: WebdavSyncConfig): string {
 
 /**
  * Single source of truth for "where does the whole-state backup go".
- *
  * Reads the policy out of the state so manual and automatic callers cannot
  * diverge. An absent policy behaves exactly like the pre-P1 build (WebDAV
- * preferred, auto-run whenever a target is configured) so upgrading does not
- * turn an existing backup off.
- *
- * `storageMode` defaults to this device's preference (see `lib/storageMode.ts`), because
- * the mode is device-level data rather than part of the payload — but the *policy* has to
- * know it: in v3 mode a legacy backup writes an emptied payload.
+ * · preferred, auto-run whenever a target is configured) so upgrading does not
  */
 export function resolveBackupTarget(
   state: HubState,

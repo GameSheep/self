@@ -1,31 +1,8 @@
 /**
  * Repository contract (P2-01).
- *
  * The point of this interface is that **the same suite validates both
  * implementations** — the P1 legacy `localStorage` payload and the v3
- * IndexedDB store. That is what makes P2-02 a switch rather than a rewrite: use
- * cases never learn which one they are talking to.
- *
- * The contract is stated in **use-case terms** (save a note, capture an inbox
- * entry, convert it) rather than raw store terms. A raw `transact(store, …)`
- * surface could not be honoured by the v2 payload, because v2 has no `_v3`
- * stores to write into — the projection between them is exactly what P2-02 will
- * build. Use-case terms are satisfiable by both today, which is what the plan
- * asks for.
- *
- * Two guarantees the contract has to make, because the acceptance criteria are
- * stated in terms of them:
- *
- * 1. **Atomic across collections.** A rejected write leaves nothing behind — not
- *    the item, not the body, not the link. Implementations validate and abort;
- *    they never write-then-repair.
- * 2. **Persisted means persisted.** Success is reported only after the storage
- *    confirmed the commit (`tx.oncomplete` for IndexedDB, a completed
- *    `setItem` for legacy). A request's `onsuccess` is not a commit.
- *
- * Implementations must not perform network, crypto or file I/O inside the write
- * path; §6.4 keeps those outside the transaction so a slow call cannot hold a
- * database transaction open.
+ * · cases never learn which one they are talking to.
  */
 import type { ItemMeta, NoteBody, InboxEntry, EntityLink, ItemKind } from '../domain/model';
 import type { AppError, Result } from './errors';
@@ -55,17 +32,12 @@ export interface SaveNoteInput {
   title: string;
   markdown: string;
   tags?: string[];
-  /**
-   * Project references.
-   *
-   * `undefined` means "leave the existing links alone" — a caller that only
-   * edits a title must not silently drop the note out of its projects. An array
-   * (including an empty one) *replaces* the link set, which is how a caller
-   * expresses "these are now the projects".
-   *
-   * Every id must already exist: a dangling reference is rejected atomically
-   * rather than stored and cleaned up later.
-   */
+/**
+ * Project references.
+ * `undefined` means "leave the existing links alone" — a caller that only
+ * edits a title must not silently drop the note out of its projects. An array
+ * · Every id must already exist: a dangling reference is rejected atomically
+ */
   projectIds?: string[];
 }
 

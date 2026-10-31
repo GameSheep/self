@@ -1,14 +1,7 @@
 /**
  * Which store is the fact source (P2 切库 phase 3).
- *
  * The switch is a **device-level** preference, deliberately outside `HubState`: the
  * library is data, this is "where do I read it from", and putting it in the payload
- * would mean the answer changes depending on which store you read the question from.
- *
- * `local` (default) keeps the app exactly as it was: the v2 payload in localStorage is
- * the fact source. `v3` reads the IndexedDB library built by the adapter, with the v2
- * payload still written on every save as the rollback path (§13.4) — a switch you
- * cannot undo is not a switch.
  */
 export type StorageMode = 'local' | 'v3';
 

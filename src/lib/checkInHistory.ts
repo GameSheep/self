@@ -1,14 +1,8 @@
 /**
  * Check-in history and streaks.
- *
  * The old model only stored `streakDays` and incremented it on every run, so
  * clicking "打卡" twice in one day counted as two days, and there was no record
- * of which days were actually done. History is now the source of truth and the
- * streak is derived from it.
- *
- * Only a real HTTP success counts (P1-07 / 开发文档 §11.4): "打开页面手动完成"
- * is recorded with its own outcome and appears in the strip as a non-success, so
- * the streak can never be inflated by merely opening a tab.
+ * · Only a real HTTP success counts (P1-07 / 开发文档 §11.4): "打开页面手动完成"
  */
 import { CheckInOutcome, CheckInRun, CheckInTask } from '../types';
 
@@ -56,12 +50,8 @@ export function countsForStreak(outcome: RunOutcome): boolean {
 
 /**
  * Record a run for today.
- *
  * - Only one entry per local day: running again replaces today's entry, so a
- *   double click can never inflate the streak.
- * - A run that could not be verified (e.g. "opened the check-in page") is stored
- *   as failed-for-streak but still recorded, with its message explaining why.
- * - `lastOutcome` is always written so the card can say what actually happened.
+ * double click can never inflate the streak.
  */
 export function recordRun(task: CheckInTask, outcome: RunOutcome, now: number = Date.now()): CheckInTask {
   const date = localDateKey(now);

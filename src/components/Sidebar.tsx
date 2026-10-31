@@ -30,16 +30,9 @@ const GROUP_LABELS: Record<string, string> = {
 
 /**
  * Left navigation (P1-01).
- *
  * Two changes from the previous dock: the labels are the plain-language names
  * from the redesign ("服务器" not "自研部署与主机"), and the list is grouped into
- * 日常 / 管理 with 设置 pinned to the bottom. Counts appear only where the number
- * means "something is waiting for you" — an inbox backlog and due reminders —
- * because an eleven-item list each with a total is decoration, not status.
- *
- * The global actions strip (search / AI ingest / new) that used to live here was
- * removed: the top bar now owns exactly one copy of each global action, which is
- * what stopped the two sets from drifting apart.
+ * · 日常 / 管理 with 设置 pinned to the bottom. Counts appear only where the number
  */
 export const Sidebar: React.FC<SidebarProps> = ({
   routeName,

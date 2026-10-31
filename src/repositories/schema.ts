@@ -1,20 +1,8 @@
 /**
  * v3 IndexedDB schema (P2-01) — docs/SELF_HUB_DEVELOPMENT.md §6.4.
- *
  * The database keeps its name (`self_hub_idb`) and moves from version 1 to 2.
  * Every new store is suffixed `_v3` and lives *beside* the old mirror stores
- * (`notes`, `sites`, …) rather than replacing them: the old stores stay readable
- * during the migration window, and a half-finished migration cannot corrupt the
- * records the running app still reads. They are dropped in a later, deliberate
- * step (§13.4), not as a side effect of this upgrade.
- *
- * Key design that everything else depends on (§6.1):
- *   business store PK = ['libraryId', 'id']        (bodies: ['libraryId','itemId'])
- *   device/migration stores PK = 'key' or 'id'     (not library-scoped)
- *
- * Runtime validation lives here too, because §6.4 requires it: "导入和查询在
- * 运行时做 schema 校验，不能只靠 TypeScript 类型断言". A backup file or an
- * extension message is untrusted input even when it looks like our own data.
+ * · 运行时做 schema 校验，不能只靠 TypeScript 类型断言". A backup file or an
  */
 
 /** Which key shape a store uses. */

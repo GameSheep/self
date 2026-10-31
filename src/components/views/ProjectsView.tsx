@@ -18,14 +18,8 @@ export interface ProjectsViewProps {
 
 /**
  * 项目 (4) — name plus one block of text.
- *
  * The previous page was a hub: status, repo, deploy URL, tags, a decision log and five
  * "link a note / site / server / reminder / credential" pickers. Using it meant leaving the
- * page to go somewhere else, which is exactly the complaint. A project is now what the user
- * said it is: a name and a body of text you can dump anything into.
- *
- * Existing data is kept: `description` is the text area; the other fields simply stop being
- * edited here — they stay in the payload and in exports.
  */
 export const ProjectsView: React.FC<ProjectsViewProps> = ({
   state,

@@ -1,14 +1,7 @@
 /**
  * Full-state cloud backup.
- *
  * The "多平台数据互通" page only ever uploaded Obsidian notes; sites, reminders,
  * projects, inbox, annotations and check-ins lived exclusively in this browser's
- * localStorage. Clearing site data or switching machines lost everything.
- *
- * This mirrors the whole HubState to `<prefix>.selfhub/state.json` in the same
- * bucket. Writes compare the remote Last-Modified first: if another device wrote
- * after our last backup we do NOT clobber it — the local snapshot is parked in
- * `.selfhub/conflicts/` and the caller is told to resolve it.
  */
 import { HubState } from '../types';
 import { ObsidianConfig, WebdavSyncConfig } from '../types';
@@ -36,14 +29,9 @@ export interface BackupEnvelope {
 
 /**
  * Remove every credential from a state before it leaves the device.
- *
  * A cloud backup sits in the user's own bucket/drive, but that is not the same
  * as safe: buckets get shared, prefixes get made public for image hosting, keys
- * leak. Writing the OSS secret *into the bucket it protects* is exactly the kind
- * of mistake that turns a small leak into a full compromise.
- *
- * The encrypted `secrets[]` vault is kept — it is useless without the master
- * password, which never leaves the browser.
+ * · of mistake that turns a small leak into a full compromise.
  */
 export function stripCredentials(state: HubState): HubState {
   return {
@@ -58,19 +46,9 @@ export function stripCredentials(state: HubState): HubState {
 
 /**
  * Merge a restored snapshot over the local state.
- *
  * Credentials cannot come from the backup (they were stripped), so the local ones
  * are kept: restoring on a new device must not silently blank out keys the user
- * just configured there.
- *
- * **A connection's fields are taken from one side only.** The previous version
- * mixed them — it took the backup's `endpoint`/`bucket`/`accessKeyId` and the
- * local `accessKeySecret` — which produces a *pair that cannot work* (a key id
- * from one account with another account's secret). The rule is now: if this device
- * already holds the secret for a connection, that connection is kept **whole**
- * (it is the configuration that was actually tested here), and the backup's
- * non-secret fields are only adopted when there is no local secret to bind them to.
- * Restoring data must not silently re-point a working connection either way.
+ * · **A connection's fields are taken from one side only.** The previous version
  */
 function preferLocalConnection<T>(
   restored: T | undefined,

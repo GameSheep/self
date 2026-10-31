@@ -1,19 +1,8 @@
 /**
  * Unified library index (P1-05 foundation).
- *
  * Notes, bookmark annotations, imported 五彩 highlights, hand drawings and OSS
  * remote documents live in five different collections with five different
- * shapes. The 资料库 page and the home "继续工作" block both need "everything,
- * newest first, with a type and a source".
- *
- * The important constraint: this is a **view over** the existing collections,
- * not a copy. Nothing is written back, no second array holds the same note, and
- * a record that appears in two places on screen is still one entity on disk —
- * which was an explicit acceptance criterion ("一条资料在多个页面可找到但没有
- * 复制成两条").
- *
- * Pure functions only; no React, no storage access. That keeps it testable and
- * keeps the P2 repository swap from touching the view.
+ * · Pure functions only; no React, no storage access. That keeps it testable and
  */
 import type { HubState } from '../types';
 import { isFeatureEnabled, type FeatureFlags, type FeatureId } from '../lib/features';
@@ -182,13 +171,8 @@ export interface LibraryFilters {
 
 /**
  * Apply the list filters. Kept separate so the home page can reuse the index.
- *
  * Measured on the P2-07 fixture (6.6k items): UI-level P95 ≈ 310ms. A lower-cased
  * haystack cache was tried here and made no measurable difference — the cost is the
- * scan itself plus rendering 100 rows, not the string building — so it was removed
- * rather than kept as unjustified complexity. The §15.4 ≤300ms target is stated for
- * the *indexed* vault search; this in-memory filter is a different code path and is
- * recorded as a known delta in `docs/perf-baseline.json`.
  */
 export function filterLibrary(items: LibraryItem[], filters: LibraryFilters): LibraryItem[] {
   const query = (filters.query || '').trim().toLowerCase();

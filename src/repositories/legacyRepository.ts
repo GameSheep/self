@@ -1,26 +1,8 @@
 /**
  * Legacy implementation of the repository contract (P2-01).
- *
  * This adapter lets the same contract suite validate the **v2 `localStorage`
  * payload** the app runs on today. It is transitional by design: P1 keeps v2 as
- * the fact source, P2-02 migrates into the IndexedDB implementation, and this
- * file is then deleted along with the old writer.
- *
- * It provides the same two guarantees as the IndexedDB implementation:
- *
- * - **Atomic.** Every write is applied to a shallow-cloned payload first. A
- *   rejection throws before `saveHubState` is ever called, so nothing partial is
- *   persisted — the v2 payload is one `setItem`, which is its own kind of
- *   transaction.
- * - **Persisted means persisted.** `saveHubState`'s result is checked. A refused
- *   write (storage full, or a newer schema owning the origin) is reported as a
- *   failure, never as success.
- *
- * Mapping notes (§13.2): a v3 note is a v2 `notes[]` record; project links are
- * the `projects[].noteIds` arrays; an inbox entry is a v2 `inbox[]` record with
- * `targetType`/`targetId`. Fields v2 does not model (`deletedAt`,
- * `resultRefs`) are stored alongside, because `normalizeHubState` preserves
- * unknown per-item fields — which P0-02 relied on as well.
+ * · failure, never as success.
  */
 import type { EntityLink, InboxEntry, ItemMeta, NoteBody, Project } from '../domain/model';
 import { MODEL_VERSION } from '../domain/model';

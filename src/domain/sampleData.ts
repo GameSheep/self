@@ -1,15 +1,8 @@
 /**
  * Explicit sample data (P1-03).
- *
  * The previous build seeded six example sites and a welcome note into every new
  * profile, which meant a first-time user's own library already contained data
- * they did not create — and the redesign explicitly forbids that ("示例数据必须
- * 在显式'体验示例'中创建，并可整批撤销，不污染正式库").
- *
- * So the samples live here, every id they create is recorded in
- * `state.sampleBatch`, and removing them deletes exactly those ids and nothing
- * else. A record the user edited is still removed, because it is still a sample
- * record — but a record the user created is never touched.
+ * · they did not create — and the redesign explicitly forbids that ("示例数据必须
  */
 import type {
   HubState,

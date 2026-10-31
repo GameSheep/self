@@ -23,9 +23,6 @@ export interface AnnotationsPaneProps {
  * Highlight colors, matching the 划词 toolbar's palette
  * (extension/content.js COLORS). Each annotation carries the color the user
  * picked on the page; the card shows it as the left rail + the 原文 block's
- * marker background, so scanning the list reads like scanning a highlighted
- * page. Hex values (not Tailwind classes) because the same value feeds both a
- * style border and an inline background with alpha.
  */
 const ANNOTATION_COLORS: Record<WebPageAnnotation['color'], string> = {
   yellow: '#eab308',
@@ -79,21 +76,20 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
     [annotations]
   );
   const [query, setQuery] = useState('');
+  /** 域名 facet：划词常集中在少数几个站，「只看这个站」是一等需求。 */
+  const [domainFilter, setDomainFilter] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftNote, setDraftNote] = useState('');
   /** Bounded first render: a few thousand annotations must not paint a few thousand cards. */
   const [visibleCount, setVisibleCount] = useState(100);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<AnnotationSyncResult | null>(null);
-  /**
-   * One-shot probe on mount, so the diagnosis needs no click.
-   *
-   * The boot import already pulls the rows in; what it never did was *say*
-   * anything when the pane stayed empty. The probe's result line names the
-   * failure (extension unanswered → stale build / wrong origin / empty vault)
-   * right where the user is looking. Rendered only when it has something to
-   * say — a connected extension with everything already imported stays silent.
-   */
+/**
+ * One-shot probe on mount, so the diagnosis needs no click.
+ * The boot import already pulls the rows in; what it never did was *say*
+ * anything when the pane stayed empty. The probe's result line names the
+ * · right where the user is looking. Rendered only when it has something to
+ */
   const [probe, setProbe] = useState<AnnotationSyncResult | null>(null);
   const probeRanRef = useRef(false);
   useEffect(() => {
@@ -117,13 +113,28 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return sorted;
-    return sorted.filter((item) =>
-      `${item.pageTitle} ${item.pageUrl} ${item.text} ${item.note || ''} ${(item.tags || []).join(' ')}`
+    return sorted.filter((item) => {
+      if (domainFilter && hostOf(item.pageUrl || '') !== domainFilter) return false;
+      if (!needle) return true;
+      return `${item.pageTitle} ${item.pageUrl} ${item.text} ${item.note || ''} ${(item.tags || []).join(' ')}`
         .toLowerCase()
-        .includes(needle)
-    );
-  }, [sorted, query]);
+        .includes(needle);
+    });
+  }, [sorted, query, domainFilter]);
+
+  /** 按域名聚合计数（降序），超过 6 个只展示前 6 个 + 「其余」归并，防 chip 墙。 */
+  const domainFacets = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of sorted) {
+      const host = hostOf(item.pageUrl || '');
+      counts.set(host, (counts.get(host) ?? 0) + 1);
+    }
+    const ranked = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+    if (ranked.length <= 7) return ranked;
+    const head = ranked.slice(0, 6);
+    head.push(['其他', ranked.slice(6).reduce((sum, [, n]) => sum + n, 0)]);
+    return head;
+  }, [sorted]);
 
   const page = visible.slice(0, visibleCount);
 
@@ -187,6 +198,32 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
         >
           {syncResult.message}
         </p>
+      )}
+
+      {sorted.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-3" data-testid="annotations-domain-facets">
+          {([{ host: '', count: sorted.length }, ...domainFacets.map(([host, count]) => ({ host, count }))] as Array<{
+            host: string;
+            count: number;
+          }>).map(
+            (facet) => {
+              const active = domainFilter === facet.host;
+              return (
+                <button
+                  key={facet.host || '__all__'}
+                  onClick={() => setDomainFilter(active ? '' : facet.host)}
+                  data-testid={`annotations-domain-chip-${facet.host || 'all'}`}
+                  aria-pressed={active}
+                  className={`px-2 py-0.5 rounded-lg text-[11px] border transition-colors ${
+                    active ? 'bg-sh-surface2 border-sh-line-strong text-sh-fg' : 'border-sh-line text-sh-muted hover:text-sh-fg'
+                  }`}
+                >
+                  {facet.host || '全部'} ({facet.count})
+                </button>
+              );
+            }
+          )}
+        </div>
       )}
 
       {sorted.length === 0 ? (

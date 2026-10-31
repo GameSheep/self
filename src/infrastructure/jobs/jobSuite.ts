@@ -1,20 +1,7 @@
 /**
  * Durable job queue self-check suite (P2-05).
- *
  * Runs **in a real browser** through the dev-only bridge, like the repository
  * contract suite, because the guarantees here are about IndexedDB transactions
- * and about surviving a restart — neither can be demonstrated by mocking storage.
- *
- * Three deliberate choices:
- *
- * - **Injected clock.** Retry backoff is 30 s / 2 min / 10 min; a suite that
- *   actually waited would take over 12 minutes and still not prove the schedule.
- *   The queue takes `now`, so the clock is advanced instead of slept through.
- * - **One library per check.** The queue is library-scoped, so sharing one
- *   library between checks would let one check's queued job be claimed by
- *   another's runner — a false failure that says nothing about the product.
- * - **Checks return results instead of throwing**, so one broken guarantee does
- *   not hide the other twelve.
  */
 import { appError } from '../../repositories/errors';
 import { IndexedDbRepository } from '../../repositories/indexedDbRepository';

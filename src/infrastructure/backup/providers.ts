@@ -1,16 +1,8 @@
 /**
  * Backup transports for the two existing providers (P2-05).
- *
  * Both adapters are thin on purpose. All the interesting behaviour — ordering,
  * completion markers, hashing, retention — lives in `writer.ts` and is provider
- * agnostic; these files only translate `BackupTransport` into the calls the P1
- * clients already make, and translate their failure strings into `AppError` codes
- * so the job runner can decide between "retry" and "the user must fix something".
- *
- * The path convention is shared by both: **paths are relative to the root the user
- * configured** (OSS `prefix`, WebDAV `pathPrefix`). That is what makes
- * `.selfhub/v3/<library>/<device>/<generation>/…` meaningful without either
- * adapter knowing what a generation is.
+ * · agnostic; these files only translate `BackupTransport` into the calls the P1
  */
 import { appError, type AppError } from '../../repositories/errors';
 import type { ObsidianConfig, WebdavSyncConfig } from '../../types';

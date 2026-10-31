@@ -1,14 +1,7 @@
 /**
  * Settings-facing state for the v3 backup path (P2-05).
- *
  * The settings pane needs four things: whether this session can decrypt a backup,
  * what the destination currently holds, a way to run one now, and an honest
- * statement of whether the automatic task will run. All of that is derived here so
- * the pane stays presentational and `App` does not grow another block of state.
- *
- * Refresh is explicit rather than automatic on every state change: listing a
- * destination costs network requests, and a settings page that re-lists on each
- * keystroke of an unrelated field would be both slow and rude to the server.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConnectionTestRecord, HubState } from '../types';
@@ -31,12 +24,9 @@ import { snapshotForRollback } from '../lib/storage';
 
 /**
  * The v3 backup stack is loaded on demand.
- *
  * Importing it statically pulled the whole backup implementation (format, writer,
  * encryption, OSS/WebDAV clients) into the initial bundle — measured at +9.8 KB
- * gzip for every user, including those who never turn v3 on. These dynamic imports
- * keep the feature out of the first load and inside the settings chunk / first v3
- * run, which is where it is actually needed.
+ * · gzip for every user, including those who never turn v3 on. These dynamic imports
  */
 const loadService = () => import('../infrastructure/backup/backupService');
 

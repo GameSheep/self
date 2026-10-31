@@ -1,22 +1,8 @@
 /**
  * Connection state vocabulary (P1-08).
- *
  * The defect this file exists to kill: the old settings panel had exactly one
  * judgement — `def.isConfigured(state)` — and it was rendered as a green dot
- * labelled 「已配置」. One flag stood in for four unrelated facts:
- *
- *   1. are the required fields filled?
- *   2. has *this exact configuration version* ever been probed successfully?
- *   3. has the user switched a purpose on for this connection?
- *   4. is a background task actually running with it?
- *
- * They are now four separate answers. Filling a URL can never make 2 true,
- * a passed test can never make 3 or 4 true, and editing the URL after a test
- * invalidates 2 instead of inheriting a stale green tick.
- *
- * A test record is bound to the probed configuration by a *fingerprint*, so
- * "verified" always means "this version of the connection was probed", not
- * "the connection uses the same id as something that once worked".
+ * · They are now four separate answers. Filling a URL can never make 2 true,
  */
 import type { HubState, ObsidianConfig, AiConfig, ConnectionTestRecord } from '../types';
 import type { IntegrationDef, IntegrationField } from './integrations';
@@ -95,18 +81,9 @@ function toHex8(n: number): string {
 
 /**
  * Stable, **non-reversible** hash of a connection's parameters (FNV-1a + djb2).
- *
  * It is an invalidation fingerprint, NOT a security primitive: it only has to
  * answer "is this the same configuration that was probed?" and it must never be
- * usable to recover a key. It is not a checksum for integrity either — a
- * 32+32-bit digest is far too weak for that, and that is fine.
- *
- * Only the declared connection parameters participate (the non-toggle fields).
- * Enable/purpose switches are excluded on purpose: flipping "启用连接" does not
- * change what a probe proved, so it must not invalidate a test result.
- *
- * The digest — not the values — is what gets persisted and rendered. Secret
- * values never reach a log, a DOM attribute or the test record.
+ * · Only the declared connection parameters participate (the non-toggle fields).
  */
 export function fingerprintOf(def: IntegrationDef, values: Record<string, string>): string {
   const keys = def.fields.filter((f) => f.type !== 'toggle').map((f) => f.key);

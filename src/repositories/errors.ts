@@ -1,14 +1,8 @@
 /**
  * Failure vocabulary for the repository layer (P2-01).
- *
  * Every write in P2 returns the same result shape and the same error codes, so a
  * caller can branch on `code` instead of parsing a message — and so nothing has
- * to guess whether "it failed" means "retry", "ask the user to unlock" or "this
- * environment cannot do that at all".
- *
- * The rule from §7.1 that the type system enforces: a message must never carry a
- * password, an Authorization header or a raw response dump. `safeDetail` is for
- * things a support log may contain; secrets do not go anywhere near either field.
+ * · The rule from §7.1 that the type system enforces: a message must never carry a
  */
 
 export type AppErrorCode =

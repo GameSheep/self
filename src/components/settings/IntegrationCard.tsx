@@ -31,13 +31,9 @@ interface IntegrationCardProps {
 
 /**
  * One consistent layout for every external connection.
- *
  * Fields are generated from the registry, so a new integration never needs a new
  * bespoke form — which is exactly how the settings drifted apart before.
- *
- * P1-08: there is no blur persistence and no save-on-toggle. The form is a
- * draft; 「保存连接」 commits it, 「取消」 throws it away, and a green tick is only
- * shown after the parent state provably reflects the submitted values.
+ * · draft; 「保存连接」 commits it, 「取消」 throws it away, and a green tick is only
  */
 export const IntegrationCard: React.FC<IntegrationCardProps> = ({
   def,
@@ -54,15 +50,12 @@ export const IntegrationCard: React.FC<IntegrationCardProps> = ({
   const persistedSig = JSON.stringify(persisted);
   const [draft, setDraft] = useState<Record<string, string>>(persisted);
   const [phase, setPhase] = useState<SaveState>('idle');
-  /**
-   * Collapsed by default.
-   *
-   * Six integrations rendered as six full forms meant one screen of nothing but inputs, and the
-   * user could not see that OSS / WebDAV were even there. The header keeps what matters at a
-   * glance (status pill + the four facts); the fields appear on demand. A card with unsaved
-   * edits or a visible error always opens itself, so a draft can never be hidden behind the
-   * toggle.
-   */
+/**
+ * Collapsed by default.
+ * Six integrations rendered as six full forms meant one screen of nothing but inputs, and the
+ * user could not see that OSS / WebDAV were even there. The header keeps what matters at a
+ * · edits or a visible error always opens itself, so a draft can never be hidden behind the
+ */
   const [expanded, setExpanded] = useState(false);
   const [pending, setPending] = useState<Record<string, string> | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);

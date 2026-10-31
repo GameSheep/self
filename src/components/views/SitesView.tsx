@@ -1,17 +1,8 @@
 /**
  * 快捷导航 (P1-04).
- *
  * Responsibilities:
  * - open a site by clicking its body (new tab, rel="noreferrer"), never by a
- *   management action: edit / move / copy / pin / reorder / delete all live in
- *   the per-site ⋯ menu and are confirmed or reported inline;
- * - grouping + stable ordering. The design requires a non-drag alternative, so
- *   上移 / 下移 / 移动到分组 and drag-and-drop both call the same helpers in
- *   `src/features/navigation/siteOrdering.ts` and write real `order` numbers;
- * - make "filter my saved sites" and "search the web" two visibly different
- *   things. The local filter never issues a request; the external box states
- *   which engine the query goes to and only fires on an explicit action;
- * - import bookmarks through a preview dialog that can be undone in one batch.
+ * · things. The local filter never issues a request; the external box states
  */
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {

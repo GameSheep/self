@@ -3,15 +3,9 @@ import { looksLikeUrl, normalizeCapturedUrl } from './inbox';
 
 /**
  * Turn pasted text into site candidates (2).
- *
  * The user asked for "paste something, the AI recognises the site, then confirm where it goes".
  * Recognition here is deliberately **local and deterministic**: pull URLs out of the text, give
- * each one a title and a best-guess category from the host. It runs before any cloud call — a
- * paste must never require AI to be configured, and pasting a private URL into a classifier
- * without asking is exactly the kind of surprise the AI rules in this project forbid.
- *
- * When cloud AI is enabled the *category* can be refined afterwards; the candidates themselves
- * are always produced locally, so the feature works offline.
+ * · paste must never require AI to be configured, and pasting a private URL into a classifier
  */
 
 export interface RecognizedSite {

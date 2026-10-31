@@ -1,17 +1,7 @@
 /**
  * Backup transport seam (P2-05).
- *
  * The format in `format.ts` must not know whether it is talking to OSS or WebDAV.
  * Two reasons, both from the dev doc:
- *
- * - §1.3: "不在业务层判断当前是否扩展、选择 OSS/WebDAV 或直接操作浏览器存储". The
- *   backup logic is business logic; provider selection is not.
- * - §15.1 requires the "只 WebDAV 也能自动备份" case to be covered by a regression
- *   test. With one interface and one in-memory implementation, the protocol
- *   (ordering, markers, retention) is testable without a network at all.
- *
- * Failures are thrown as `AppError` so the runner can map them to retry / block /
- * waiting-unlock instead of guessing from a message.
  */
 import { appError, type AppError } from '../../repositories/errors';
 

@@ -2,15 +2,8 @@ import type { DomainRecord, HubState } from '../types';
 
 /**
  * 域名 as first-class records.
- *
  * Why this exists: 域名 used to be a *projection* over 提醒 — a reminder with
  * `category: 'domain'`. The page therefore only ever offered 「新建到期提醒」, and pressing it
- * landed on the reminders page. A domain now stores what a reminder has no field for (when it
- * was bought, from whom, its nameservers), and the page lists those records.
- *
- * Existing data is not lost: `migrateDomainReminders` copies every `category: 'domain'`
- * reminder into a domain record **without deleting the reminder**, so the reminder keeps
- * working for anyone who relies on it.
  */
 
 export function normalizeDomainName(raw: string): string {

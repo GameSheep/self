@@ -1,23 +1,8 @@
 /**
  * Inbox actions, including the cross-domain conversions.
- *
  * "Turn this inbox item into a note / a site / a project task" touches several
  * domains at once. Rather than reaching into other slices, this hook receives the
- * collaborators it needs (addNote, addSite) as explicit dependencies — the
- * conversion logic stays here, the ownership of each collection stays there.
- *
- * P1-05 rework. The old conversion had three problems the redesign calls out:
- *
- * 1. It stamped `status: 'processed'` and `targetId` in the same pass but never
- *    reported the result, so the view announced success unconditionally.
- * 2. Converting an already-converted item was blocked with a toast — but the
- *    correct behaviour is to *open the original target*, not to refuse.
- * 3. A conversion whose target had since been deleted left an item pointing at
- *    nothing, with no way forward.
- *
- * All three are handled by returning a result object and by looking the target
- * up before creating anything. Batch conversion reuses the same single-item path
- * so a partial failure is reported per item instead of aborting the batch.
+ * · 1. It stamped `status: 'processed'` and `targetId` in the same pass but never
  */
 import { useCallback } from 'react';
 import { HubState, InboxItem, NavSite, QuickNote } from '../types';

@@ -1,22 +1,8 @@
 /**
  * v3 domain model (P2-01).
- *
  * This is the model described in docs/SELF_HUB_DEVELOPMENT.md §6. It is
  * deliberately separate from `src/types/index.ts`: the v2 `HubState` is the
- * *current* on-disk format and must keep working untouched while P2 is built
- * beside it. P2-02 migrates v2 → v3, and only then does v3 become the fact
- * source.
- *
- * Shape rules that the rest of P2 depends on (§6.1):
- * - Every business entity carries `libraryId`, and the primary key is
- *   `[libraryId, id]` (bodies use `[libraryId, itemId]`). Restoring into a
- *   staging library therefore cannot clobber a same-id record in the live one.
- * - `revision` is a monotonic integer *within one library*. It is not compared
- *   across devices; P3 introduces a separate `serverRevision`.
- * - Instants are epoch milliseconds. A *due date* is additionally kept as a
- *   local `YYYY-MM-DD` string plus the user's timezone, so midnight offsets can
- *   never move a renewal by a day.
- * - Deletion writes `deletedAt` first (30-day recycle bin), never a hard delete.
+ * · *current* on-disk format and must keep working untouched while P2 is built
  */
 
 /** Model version written into every v3 record set. */

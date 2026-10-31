@@ -1,19 +1,8 @@
 /**
  * Reminder notifications.
- *
  * Reminders could only be seen by opening the app, which defeats the purpose of
  * a renewal reminder. This wires the browser Notification API.
- *
- * Honest limitations, stated the same way in the UI:
- * - a plain web page can only notify **while a page is open**;
- * - inside the extension the background worker owns notifications and can fire
- *   while the browser is running, but only if the notification permission is
- *   granted;
- * - nothing here can promise a reminder while the browser is closed.
- *
- * Dedupe key is `reminderId + occurrence due date + stage`, stored per tab
- * session, so a re-render or a repeated effect cannot notify twice while a new
- * day/occurrence still gets its own notification.
+ * · - a plain web page can only notify **while a page is open**;
  */
 import { ReminderItem } from '../types';
 import { daysUntil } from './dates';

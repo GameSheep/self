@@ -1,14 +1,7 @@
 /**
  * v3 backup format self-check suite (P2-05).
- *
  * Runs in the browser (through the dev-only bridge) because the crypto and the
  * hashing are real Web Crypto calls — the whole point is that the package's
- * guarantees hold with the actual algorithms, not with a stub.
- *
- * The transport is in-memory, which is deliberate: the protocol (write order,
- * completion marker, hash verification, retention) is what is under test, and
- * mixing it with a network provider would make failures ambiguous. Provider
- * adapters are covered separately.
  */
 import type { HubState } from '../../types';
 import { MemoryBackupTransport, type BackupTransport } from './transport';

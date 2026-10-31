@@ -1,17 +1,7 @@
 /**
  * Reminder actions.
- *
  * "完成本次" and "续期" are different things and are recorded differently
  * (P1-07 / 开发文档 §11.3):
- *
- * - 完成本次 appends a `completed` occurrence and marks that occurrence handled.
- *   It does not silently move the due date.
- * - 续期 computes the next due date, appends a `renewed` occurrence with
- *   `nextDueAt`, and moves `targetDate` forward.
- *
- * Both are idempotent per occurrence: retrying for the same due date neither
- * appends a second record nor advances the series twice. The pure helpers are
- * exported so the rule can be tested without a React runtime.
  */
 import { useCallback } from 'react';
 import { ReminderItem, ReminderOccurrence } from '../types';
@@ -111,17 +101,9 @@ export interface RenewResult {
 
 /**
  * 续期: advance exactly one cycle from the *current occurrence*.
- *
  * Deliberately one step, not a catch-up: the user is confirming "I renewed the
  * period that was due", so a long-neglected reminder lands on the immediately
- * following period (1 月 31 日 → 2 月 28 日 → 3 月 31 日) instead of silently
- * jumping months into the future. Automatic catch-up is a separate path
- * ({@link autoAdvanceReminder}) that does not write an occurrence.
- *
- * Retrying for the same occurrence returns the stored `nextDueAt` instead of
- * advancing again, so a double click (or a retried handler) cannot skip a cycle.
- * The anchor is re-derived from the current target date only when the reminder
- * has none stored, which keeps legacy rows working.
+ * · The anchor is re-derived from the current target date only when the reminder
  */
 export function renewReminderOccurrence(reminder: ReminderItem, now: number = Date.now()): RenewResult {
   const dueAt = reminder.targetDate;

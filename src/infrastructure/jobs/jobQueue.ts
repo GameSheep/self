@@ -1,33 +1,8 @@
 /**
  * Durable job queue (P2-05).
- *
  * Dev doc §9.3 is the reason this exists: "MV3 后台可能休眠或被终止，内存布尔锁和普通
  * 计时器不能作为唯一执行保障". A backup that only "runs while the tab is open"
- * and a retry that lives in a `setTimeout` are both lost the moment the worker or
- * the page goes away. So the queue is a store, not a variable:
- *
- * - **Lease, not lock.** A running job holds a lease with an expiry. Another
- *   runner may reclaim an expired lease, which is how a killed worker recovers
- *   instead of leaving the job `running` forever.
- * - **Bounded retries with backoff.** §10.2: retryable network failures back off
- *   30 s → 2 min → 10 min, at most 3 automatic attempts. Auth and permission
- *   errors are *not* retried; they need the user to fix something. "最多 3 次自动
- *   重试" is three *retries* on top of the first attempt, so this queue allows four
- *   attempts in total and every backoff value is actually reachable.
- * - **`waiting-unlock` is a state, not a failure.** A locked credential store
- *   parks the job; it does not report success and does not hammer the network.
- *   `resumeWaitingUnlock()` is how it comes back once the vault is open.
- * - **Cancellation is persisted too.** A running worker cannot be reached by a
- *   click, so `requestCancel()` writes a flag the runner polls; a killed worker
- *   therefore still ends up cancelled instead of quietly finishing.
- * - **State changes do not re-trigger work.** The trigger is the library's content
- *   revision, and finishing a job must not bump it — otherwise "job状态更新不触发
- *   备份无限循环" (§15.1) becomes an infinite loop that is very hard to see. This
- *   module only ever writes `jobs_v3`, never a content store.
- * - **Logs are inputs from the network, so they are scrubbed.** §12.3: diagnostic
- *   records must not contain secrets. A provider error message can echo an
- *   Authorization header or a token, so every message goes through `maskSecrets`
- *   before it is stored.
+ * · revision, and finishing a job must not bump it — otherwise "job状态更新不触发
  */
 import type { JobState } from '../../domain/model';
 import { requestToPromise, runV3Transaction } from '../storage/idbV3';
@@ -290,15 +265,12 @@ export class JobQueue {
     return this.finish(id, 'cancelled', undefined, reason);
   }
 
-  /**
-   * Ask a job to stop, whether or not it is currently running.
-   *
-   * A queued job can be cancelled immediately. A running one cannot: the worker
-   * owns the work and may be mid-PUT, so the request is persisted and the runner
-   * observes it between steps. If the worker never comes back, the flag is still
-   * there when the lease is reclaimed — the job ends up cancelled rather than
-   * silently succeeding later.
-   */
+/**
+ * Ask a job to stop, whether or not it is currently running.
+ * A queued job can be cancelled immediately. A running one cannot: the worker
+ * owns the work and may be mid-PUT, so the request is persisted and the runner
+ * · observes it between steps. If the worker never comes back, the flag is still
+ */
   async requestCancel(id: string, reason = '用户取消'): Promise<Result<JobRecord | null>> {
     const now = this.now();
     try {
@@ -340,17 +312,11 @@ export class JobQueue {
     return ok(Boolean(read.value?.cancelRequested));
   }
 
-  /**
-   * Recover work whose runner died.
-   *
-   * A `running` job whose lease has expired is the signature of a killed worker
-   * (MV3 service worker termination, closed tab, crashed page). Re-queueing it is
-   * what makes the queue durable rather than "durable until something crashes".
-   *
-   * The attempt counter is not touched here — recovery is not a failure. The next
-   * `claimNext` charges the attempt, so a job that keeps killing its worker still
-   * runs out of budget instead of spinning forever.
-   */
+/**
+ * Recover work whose runner died.
+ * A `running` job whose lease has expired is the signature of a killed worker
+ * (MV3 service worker termination, closed tab, crashed page). Re-queueing it is
+ */
   async requeueExpired(now = this.now()): Promise<Result<JobRecord[]>> {
     try {
       const outcome = await runV3Transaction([JOBS], 'readwrite', async (ctx) => {

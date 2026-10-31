@@ -1,14 +1,8 @@
 /**
  * Hash routing (P1-01).
- *
  * Why a hand-rolled parser instead of a router dependency: the workspace runs
  * from a static `dist/` and from `chrome-extension://<id>/app/index.html`, so
- * History-API paths would need server rewrites and would break inside the
- * extension. Hash routing needs neither. Route strings are built and parsed in
- * exactly one place — views never concatenate their own URLs, which is what
- * makes deep links (搜索→条目, 通知→提醒) trustworthy.
- *
- * The route table mirrors docs/SELF_HUB_DEVELOPMENT.md §4.1.
+ * · exactly one place — views never concatenate their own URLs, which is what
  */
 
 export type RouteName =

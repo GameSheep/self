@@ -43,15 +43,8 @@ function groupServers(servers: ServerDeployment[]): Array<[string, ServerDeploym
 
 /**
  * Servers (P1-06).
- *
  * The list leads with what the user needs to act on — name, environment,
  * address, HTTP reachability with the time it was observed, and expiry — instead
- * of a wall of equal-weight cards. "从未检测" is its own state: the previous
- * markup rendered an unprobed host identically to a healthy one.
- *
- * The probe is called "HTTP 可达性" everywhere, because that is all a browser
- * fetch proves; TCP/SSH monitoring and around-the-clock alerting are not
- * capabilities this build has.
  */
 export const ServersView: React.FC<ServersViewProps> = ({
   servers,

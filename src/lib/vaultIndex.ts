@@ -1,12 +1,8 @@
 /**
  * Full-vault content index.
- *
  * The tree only knows file names, so with ~1700 notes there was no way to answer
  * "which note mentions Redis?". OSS has no full-text search, so we keep a local
- * index of note bodies in IndexedDB and search that.
- *
- * Lives in its own database (`self_hub_vault_index`) so bumping its schema can
- * never disturb the main app data.
+ * · never disturb the main app data.
  */
 import { ObsidianConfig, ObsidianNote } from '../types';
 import { fetchObsidianNoteContent } from './s3Client';

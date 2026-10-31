@@ -1,18 +1,8 @@
 /**
  * Navigation registry (P1-01).
- *
  * The old sidebar was an array literal inside `Sidebar.tsx` with eleven flat
  * entries, and the top bar had a second, differently-worded copy of the same
- * list. Two sources meant two ways to be wrong. Everything now reads this
- * registry: sidebar, mobile bar, mobile drawer, command-search hints and the
- * "back to" logic in settings.
- *
- * Three rules the registry encodes, from the design doc:
- * 1. Navigation grouping is a *preference*. Hiding an entry never changes
- *    whether a background task runs.
- * 2. Only inbox and pending reminders carry an actionable count. A total on
- *    every entry is noise, not information.
- * 3. A module can be hidden from the sidebar and still be reachable by URL.
+ * · 1. Navigation grouping is a *preference*. Hiding an entry never changes
  */
 import type { LucideIcon } from 'lucide-react';
 import {

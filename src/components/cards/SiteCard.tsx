@@ -1,15 +1,8 @@
 /**
  * Quick-navigation site card (P1-04).
- *
  * The defect this file fixes: the old card put 复制 / 删除 / 置顶 buttons directly
  * next to the whole-card "open" click target, so a mis-click while managing a
- * bookmark navigated away — and there was no per-item menu at all.
- *
- * Now the card body is the *only* open target. Every management action lives
- * behind the ⋯ menu, and menu buttons are real `<button>`s that stop the click
- * from reaching the open handler, so keyboard activation cannot open the link
- * either. Deleting asks for confirmation through ConfirmDialog in the parent
- * (a native `confirm()` cannot list what is being removed).
+ * · Now the card body is the *only* open target. Every management action lives
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {

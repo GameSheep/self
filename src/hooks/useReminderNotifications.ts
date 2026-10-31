@@ -1,20 +1,8 @@
 /**
  * Reminder delivery, extracted from App.
- *
  * Three paths exist and they must not fight:
  * - inside the extension, the background service worker owns notifications
- *   (it can fire while the browser runs, with notification permission), so the
- *   extension page itself must stay silent;
- * - in a plain browser tab, the page notifies **while the page is open**;
- * - when the permission is not granted, neither path notifies — the reminders
- *   page keeps the in-page list and offers an explicit "开启到期提醒" action
- *   instead of requesting the permission on first visit.
- *
- * Nothing here can remind while the browser is closed; the reminder page says so.
- *
- * Deduplication lives in `reminderNotifier` and is keyed by
- * reminderId + occurrence due date + stage, so a re-render or a repeated effect
- * cannot fire the same notification twice.
+ * · extension page itself must stay silent;
  */
 import { useEffect, useRef } from 'react';
 import { ReminderItem } from '../types';

@@ -1,15 +1,8 @@
 /**
  * Trusted-device session store.
- *
  * The "keep me signed in on this device for 30 days" promise used to be backed only
  * by a module-level variable plus a sessionStorage flag that was never read, so the
- * vault locked again on every reload. This stores the master password wrapped with a
- * random per-device key in IndexedDB and expires the record after N days.
- *
- * Security note: the wrapping key lives next to the ciphertext in the same origin's
- * IndexedDB, so this protects against casual inspection of localStorage dumps and
- * accidental backups — it is not protection against script execution on this origin.
- * The master password itself is never stored in clear text.
+ * · The master password itself is never stored in clear text.
  */
 import { getDb } from './indexedDb';
 

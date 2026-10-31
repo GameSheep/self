@@ -1,11 +1,8 @@
 /**
  * Obsidian-specific inline entities: [[wikilinks]] and #tags.
- *
  * These are resolved while rendering *plain text tokens* rather than by
  * pre-processing the raw markdown. marked consumes code spans, fenced code and
- * normal links as their own tokens, so text tokens are exactly the places where
- * a wikilink or tag can legally appear — this can never mangle `[[…]]` inside a
- * code block or a `#` inside a URL fragment.
+ * · a wikilink or tag can legally appear — this can never mangle `[[…]]` inside a
  */
 
 export type InlineSegment =

@@ -1,23 +1,8 @@
 /**
  * Migration lock (P2-02), the durable half of P0-03's write guard.
- *
  * §13.3 requires the old writers to stop *before* a migration touches anything,
  * and §13.4 requires that a failed migration leaves the live library usable. The
- * lock is how those two meet:
- *
- * - `acquire()` records an owner, a phase and an expiry in `localStorage`, so the
- *   guard is visible to every writer on this origin — including a tab that was
- *   already open.
- * - `saveHubState()` consults it on every write (via `schemaGeneration`), so an
- *   ordinary edit cannot interleave with a migration.
- * - The lock **expires**. A crashed tab must not freeze the app forever; an
- *   expired lock is reclaimable, and reclaiming it is recorded rather than
- *   silent.
- *
- * Scope, stated plainly because the docs call this out: the lock covers **this
- * origin only**. A normal web page and the extension are separate origins with
- * separate storage, and one origin's lock cannot stop a writer in the other.
- * §13.3: "不声称一个 origin 的锁可以锁住另一边".
+ * · - The lock **expires**. A crashed tab must not freeze the app forever; an
  */
 import { type MigrationPhase } from './types';
 import {

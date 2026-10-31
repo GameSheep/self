@@ -1,18 +1,8 @@
 /**
  * Generation writer, reader and retention (P2-05).
- *
  * Three rules from §10.2/§10.4 are enforced here rather than described in a comment:
- *
  * 1. **Write order is data → manifest → marker.** The marker is written last and
- *    is the only thing that makes a generation restorable, so an upload that dies
- *    halfway cannot be mistaken for a good backup ("中断上传不会出现可恢复成功
- *    标记").
- * 2. **Verification happens after the marker, not instead of it.** A generation is
- *    reported as complete only once the marker is readable, the manifest hash
- *    matches, and (by default) every object is fetched back and re-hashed.
- * 3. **Retention never deletes the only usable backup, another device's
- *    directory, or a generation that was just written.** Pruning runs after a
- *    successful, verified backup — not before one.
+ * · is the only thing that makes a generation restorable, so an upload that dies
  */
 import { appError, fail, ok, toAppError, type AppError, type Result } from '../../repositories/errors';
 import type { BackupTransport } from './transport';

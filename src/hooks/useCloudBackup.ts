@@ -1,19 +1,8 @@
 /**
  * Cloud backup side-effects, extracted from App.
- *
  * App owned the backup state, the debounce timer, the provider routing and the
  * status object, all inline next to unrelated business logic. That is what made
- * "changing one feature touches everything" true. Backup is now one hook.
- *
- * P1-09 rewrite: the destination comes from `resolveBackupTarget()` and nothing
- * else. The previous version asked two different questions — the debounced
- * effect looked only at the OSS fields, the manual button at WebDAV-then-OSS —
- * so configuring just WebDAV produced a working manual backup and an automatic
- * one that never fired. Manual, automatic and the settings preview now call the
- * same resolver, which is the entire fix.
- *
- * Manual and automatic runs are also distinguished in the status object so the
- * UI can say "上次自动备份 10:30" instead of implying the user pressed a button.
+ * · effect looked only at the OSS fields, the manual button at WebDAV-then-OSS —
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { HubState } from '../types';

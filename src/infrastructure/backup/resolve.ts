@@ -1,13 +1,8 @@
 /**
  * "Which generation is current?" (P2-05).
- *
  * Lives apart from both `latest.ts` (pointer primitives) and `writer.ts` (write /
  * read / retention) so neither has to import the other — the pointer asks the
- * writer for a scan fallback, and the writer updates the pointer.
- *
- * The rule the caller depends on: **the default restore source is never an
- * unmarked generation** (§10.2). A pointer that cannot be verified degrades to the
- * newest *complete* generation, and the degradation is reported rather than hidden.
+ * · The rule the caller depends on: **the default restore source is never an
  */
 import { fail, ok, type Result } from '../../repositories/errors';
 import { listGenerations } from './writer';

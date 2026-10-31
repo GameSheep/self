@@ -58,7 +58,9 @@ async function configureOss(page: any) {
   await page.addInitScript(() => sessionStorage.clear());
   await page.goto('/');
   await gotoTab(page, '多平台数据互通');
-  await expect(page.locator('main')).toContainText('测连通');
+  // 连接诊断默认折叠（summary 常显结论），点开后才能触发自检。
+  await page.getByTestId('oss-diagnostics').locator('summary').click();
+  await expect(page.getByTestId('oss-self-check')).toBeVisible();
 }
 
 test.describe('阿里云 OSS 签名', () => {

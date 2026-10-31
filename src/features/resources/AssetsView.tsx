@@ -44,13 +44,9 @@ const KIND_LABELS: Record<AssetKind, string> = {
 
 /**
  * 域名与订阅 (P1-06).
- *
  * This view is a **projection**, not a new store. The design doc is explicit
  * that a due date must have one authoritative owner: if a domain's renewal date
- * already exists on a reminder (or on a server / credential), this page reads it
- * from there. It never invents an account, and it never asks the user to type
- * the same date twice — the empty state offers "创建并关联资源", which creates a
- * reminder that references the existing record.
+ * · from there. It never invents an account, and it never asks the user to type
  */
 export const AssetsView: React.FC<AssetsViewProps> = ({ state, onNavigate, onAddReminder, onCreateAsset }) => {
   const [kindFilter, setKindFilter] = useState<AssetKind | 'all'>('all');

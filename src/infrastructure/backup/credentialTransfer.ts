@@ -1,29 +1,8 @@
 /**
  * Credential transfer for migration packages (P2-06).
- *
  * A migration package is the one artefact allowed to carry connection secrets
  * (§10.3). Two rules make importing them safe, and both are enforced here rather
- * than described in a comment:
- *
- * 1. **A secret is never separated from the configuration it belongs to.** §10.4.7:
- *    "不把 A 服务的凭据绑定到 B 服务". Importing therefore adopts the package's
- *    (config + secret) *pair* for a service, or nothing. There is no code path that
- *    writes the package's AccessKeySecret next to the local bucket, and none that
- *    writes it next to a different account's AccessKeyId.
- *
- * 2. **The decision is per service and reported.** Each service ends up with one of:
- *    - `adopt`        — this device has nothing configured, so the package's pair is
- *                       taken as a whole;
- *    - `keep-local`   — the same account/endpoint is already configured here; the
- *                       local pair stays (importing would be a no-op), or the local
- *                       token exists and there is no identity to compare;
- *    - `skip`         — a *different* account/service is configured here; importing
- *                       would silently re-point (or break) a working connection.
- *
- * 3. **Imported connections are marked untested.** A migrated credential has not been
- *    probed on this device, so the stored connection-test result is dropped and the
- *    settings page shows "待测试" instead of inheriting a green tick from another
- *    machine (§10.4.7 "恢复后连接凭据在本机重新绑定与测试").
+ * · 1. **A secret is never separated from the configuration it belongs to.** §10.4.7:
  */
 import type { HubState, ConnectionTestRecord } from '../../types';
 

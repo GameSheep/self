@@ -1,12 +1,8 @@
 /**
  * Vault (secret) actions and the check-in list actions.
- *
  * Check-ins were deliberately demoted from "automation" to a plain list of sites
  * the user wants to visit daily: the app opens the page and records what *it*
- * observed (a page opened / the user said "done"), and never fires HTTP requests
- * on the user's behalf. The old HTTP-request path, the bulk runner and the
- * `enabled` toggle were removed with it (the fields stay in the type so old
- * data keeps loading).
+ * · observed (a page opened / the user said "done"), and never fires HTTP requests
  */
 import { useCallback, useRef } from 'react';
 import { CheckInTask, HubState, SecretItem } from '../types';
@@ -54,15 +50,11 @@ export function useCheckInActions(state: HubState, updateState: StateUpdater) {
     [updateState]
   );
 
-  /**
-   * Open the site, or record the user's "done" confirmation.
-   *
-   * `open_page` opens a new tab and records `opened_page` — the app cannot know
-   * whether the site counted anything, so it stays out of the streak.
-   * `mark_done` records the user's own confirmation as a success day: the human
-   * is the verifier now, and the message says so.
-   * History is per local day, so repeats cannot inflate the streak.
-   */
+/**
+ * Open the site, or record the user's "done" confirmation.
+ * `open_page` opens a new tab and records `opened_page` — the app cannot know
+ * whether the site counted anything, so it stays out of the streak.
+ */
   const runCheckIn = useCallback(
     async (id: string, mode: CheckInMode = 'open_page') => {
       const task = stateRef.current.checkIns.find((c) => c.id === id);

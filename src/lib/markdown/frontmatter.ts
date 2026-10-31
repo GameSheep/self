@@ -1,13 +1,8 @@
 /**
  * YAML frontmatter handling.
- *
  * marked has no frontmatter support: `---\ntitle: x\n---` is lexed as an <hr>
  * plus a setext heading. We therefore strip it before lexing and render it the
- * way Obsidian shows "Properties".
- *
- * Only the simple YAML subset that notes actually use is parsed. Anything else
- * is reported as unparsed so the raw block can still be shown verbatim instead
- * of being silently dropped.
+ * · Only the simple YAML subset that notes actually use is parsed. Anything else
  */
 
 export interface FrontmatterField {

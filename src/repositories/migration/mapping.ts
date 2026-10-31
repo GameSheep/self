@@ -1,20 +1,8 @@
 /**
  * v2 → v3 mapping rules (P2-02), from docs/SELF_HUB_DEVELOPMENT.md §13.2.
- *
  * Pure functions over the source collections: no storage access, no clock beyond
  * what the caller passes, no side effects. That makes the mapping testable on the
- * P0-02 fixtures and makes "what did we decide about this record" answerable
- * without running a migration.
- *
- * Three rules the mapping never breaks:
- * - **Ids are namespaced by source** (`<source>:<legacyId>`). §6.3: a 五彩 id and
- *   an extension id may collide, and "同 ID 跨来源不静默合并". Two records that
- *   genuinely differ stay two records, and re-running the migration produces the
- *   same ids so nothing duplicates.
- * - **Nothing is invented.** A reference that cannot be resolved is reported,
- *   not replaced with a placeholder entity (§13.2: "不生成空实体冒充修复").
- * - **Unknown fields are recorded.** They are also carried on the record where
- *   the store allows it, so a later pass can still see them.
+ * · Three rules the mapping never breaks:
  */
 import type {
   Annotation,

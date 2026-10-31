@@ -49,14 +49,8 @@ ${hl.note ? hl.note : '*暂无批注思考*'}
 /**
  * Pull highlights from the Wucai OpenAPI and return only the records the app
  * does not already have.
- *
  * Import-only, the same contract as `importExtensionAnnotations`: ids the app
- * knows are skipped, nothing on either side is deleted or overwritten, so a
- * locally edited note can never be clobbered by the cloud copy.
- *
- * Throws on transport or API failure so the caller can surface a real error;
- * a successful pull with nothing new resolves to `[]`. Without an enabled
- * config this resolves to `[]` without touching the network.
+ * · locally edited note can never be clobbered by the cloud copy.
  */
 export async function fetchWucaiHighlights(
   config: WucaiConfig,

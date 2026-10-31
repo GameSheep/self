@@ -21,12 +21,8 @@ export interface VaultViewProps {
 
 /**
  * Credential vault (P1-06).
- *
  * A locked vault shows a locked screen, not a grid of greyed-out cards: the
  * search box, the counts and the previews are all absent while locked, because
- * "locked" has to mean the plaintext is not in the DOM. The unlock screen also
- * states what unlocking does and does not protect against, instead of implying
- * that storing a value here makes it safe.
  */
 /** Group credentials by site, unassigned last. */
 function groupByWebsite(secrets: SecretItem[]): Array<[string, SecretItem[]]> {

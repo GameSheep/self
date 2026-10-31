@@ -1,14 +1,8 @@
 /**
  * Dev-only diagnostic bridge.
- *
  * Used by `tests/e2e/repository-contract.spec.ts` to run the shared contract
  * suite against **real** IndexedDB and the **real** legacy payload, inside a
- * browser, without Playwright having to import app internals (it cannot: the
- * repositories are TypeScript modules behind Vite).
- *
- * Guarded by `import.meta.env.DEV`, so a production build never exposes it. It
- * only constructs repositories and runs the read/write contract — it is not a
- * back door to credentials, settings or remote files.
+ * · Guarded by `import.meta.env.DEV`, so a production build never exposes it. It
  */
 import { runContractSuite, type ContractCheckResult } from '../repositories/contractSuite';
 import { IndexedDbRepository } from '../repositories/indexedDbRepository';
@@ -49,13 +43,7 @@ import type { HubState } from '../types';
  * Import rule for this file: anything under `infrastructure/backup` or
  * `infrastructure/jobs` must be loaded with `await import(...)` inside the handler
  * that needs it, never imported at the top.
- *
- * The bridge is imported by the app entry even in a production build, where its body
- * is dead code that the bundler removes — but a *static* import here still makes the
- * module part of the entry graph. Twice now that quietly moved the backup stack
- * (≈6 KB, then ≈5 KB gzip) into the first load; `npm run measure:first-load` is what
- * caught both. `lib/storage` and the type-only imports are fine: the app loads them
- * anyway or they do not exist at runtime.
+ * · caught both. `lib/storage` and the type-only imports are fine: the app loads them
  */
 
 /** Build an OSS config from the plain object a spec passes over the bridge. */
@@ -252,12 +240,9 @@ export interface MigrationPackageBridge {
 
 /**
  * Restore surface (P2-06).
- *
  * Reads and writes the **app's own payload** (`self_hub_data_v2`) so a spec can
  * drive the real preview/apply path: seed a package from one library, preview it
- * against what the app currently holds, then apply with a chosen strategy.
- * `setCurrentState` exists so a test can simulate "the user edited something after
- * the preview", which is the case that must be refused rather than overwritten.
+ * · the preview", which is the case that must be refused rather than overwritten.
  */
 export interface RestoreBridge {
   seedBatch(input: {

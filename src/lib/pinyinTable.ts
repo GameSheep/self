@@ -1,14 +1,7 @@
 /**
  * Pinyin initials table — GENERATED FILE, do not edit by hand.
- *
  * Source: mozillazg/pinyin-data (pinyin.txt), filtered to the 6763 hanzi of
  * GB2312 (i.e. the common set), reduced to the first letter of each reading.
- *
- * Two parallel strings: PINYIN_CHARS[i] has initials PINYIN_INITIALS[i].
- * Chars are sorted by code point, so a binary search is possible; in practice
- * a Map built once at module load is fast enough and simpler.
- *
- * Regenerate with the script in docs/scripts/generate-pinyin-table.ps1.
  */
 
 export const PINYIN_CHARS =

@@ -1,27 +1,8 @@
 /**
  * Bridge between the new-tab page and the hub state, for backup purposes.
- *
  * The new tab (`extension/newtab.html`) is its own extension page and is the **only**
  * writer of these two keys in `chrome.storage.local`:
- *
- *   - `selfhub_newtab_layout` — column ratios, module order/height/data source
- *   - `selfhub_newtab_pins`   — site ids the user starred there
- *
- * They used to live exclusively on that side, which meant a backup carried every note and
- * bookmark but not the dashboard the user had spent time arranging — restore on a new
- * machine and the layout was gone. `HubState.newtabPreferences` is a mirror of those two
- * keys so that a backup (file export or v3 batch) includes them for free, because both
- * paths serialise the whole state.
- *
- * The direction rules keep a single writer intact:
- *
- *   - **pull** (chrome.storage → state): on boot and on `storage.onChanged`. The new tab
- *     changed something; the workbench records it. It never writes back.
- *   - **push** (state → chrome.storage): only after a restore, because that is the one
- *     moment the state legitimately knows better than the local storage.
- *
- * Nothing here runs outside the extension: a plain web build has no `chrome.storage`, and
- * the new tab does not exist there either, so every function degrades to a no-op.
+ * · changed something; the workbench records it. It never writes back.
  */
 
 import type { HubState, NewtabPreferences } from '../types';
@@ -122,13 +103,7 @@ export function sameNewtabPreferences(
 /**
  * Read the layout straight from `chrome.storage` and graft it onto a state about to be
  * backed up.
- *
  * `App` already mirrors layout changes into the state, so this is belt-and-braces for the
- * race that matters: the user drags a card, switches to the workbench and hits 备份 before
- * the `storage.onChanged` round trip lands. Reading at the moment of the backup makes the
- * package carry what is actually on screen rather than what was there a moment ago.
- *
- * Returns the state untouched outside the extension, or when the new tab has no layout yet.
  */
 export async function withFreshNewtabPreferences(state: HubState): Promise<HubState> {
   const prefs = await readNewtabPreferences();

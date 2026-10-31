@@ -623,12 +623,9 @@ interface TaskPosition {
 
 /**
  * Source offsets of every rendered task checkbox, in render order.
- *
  * The renderer counts tasks while walking `marked.lexer` output, so the toggle
  * must use the same walk. Scanning source lines with a regex disagreed in two
- * ways: `- [ ]` inside a code fence was counted but never rendered, and a task
- * inside a blockquote (`> - [ ]`) was rendered but never matched — clicking the
- * Nth checkbox then flipped the wrong task and corrupted the note.
+ * · ways: `- [ ]` inside a code fence was counted but never rendered, and a task
  */
 function collectTaskPositions(markdown: string): TaskPosition[] {
   let tokens: Tokens.Generic[];

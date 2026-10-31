@@ -55,12 +55,9 @@ import { NotFoundView } from './features/shell/NotFoundView';
 
 /**
  * Deferred chunks (P1-10).
- *
  * The first paint only needs the shell, the home page and the light list views.
  * The OSS file tree, the AI ingestion wizard, the entry form and the settings
- * panel are all large and are all reachable only by an explicit click, so they
- * are split out. Without this the initial bundle sat above the 250 KB gzip
- * budget in docs/SELF_HUB_DEVELOPMENT.md §15.4.
+ * · panel are all large and are all reachable only by an explicit click, so they
  */
 const DataInteropView = React.lazy(() => import('./components/views/DataInteropView').then((m) => ({ default: m.DataInteropView })));
 const AiIngestModal = React.lazy(() => import('./components/modals/AiIngestModal').then((m) => ({ default: m.AiIngestModal })));
@@ -462,24 +459,18 @@ export function App() {
   /** Payload size the user already dismissed the near-quota banner for. */
   const storageWarningDismissedRef = useRef<number>(0);
   useEffect(() => {
-    /**
-     * In v3 mode only this device's configuration is written to the payload.
-     *
-     * The library holds the business data, so writing it here too would keep the app at
-     * the ~5 MB localStorage limit for no benefit — and would also make every save a
-     * full duplicate. The pre-switch payload is kept once as a rollback copy
-     * (`selfhub_v2_rollback`), which is what "切回 v2" restores from after materialising
-     * the library.
-     */
+/**
+ * In v3 mode only this device's configuration is written to the payload.
+ * The library holds the business data, so writing it here too would keep the app at
+ * the ~5 MB localStorage limit for no benefit — and would also make every save a
+ */
     if (storageMode === 'v3' && !v3ReadyRef.current) {
-      /**
-       * Before the boot-time library read finishes, the in-memory state is *not*
-       * authoritative — it is whatever the payload held at load. Persisting it here used to
-       * write the **whole library back into localStorage** on every boot in v3 mode (the
-       * `deviceOnly` guard was false at that moment), briefly re-inflating the payload to
-       * several megabytes and firing a storage event that other tabs read as "somebody
-       * changed the data". Nothing has been edited yet, so there is nothing to save: skip.
-       */
+/**
+ * Before the boot-time library read finishes, the in-memory state is *not*
+ * authoritative — it is whatever the payload held at load. Persisting it here used to
+ * write the **whole library back into localStorage** on every boot in v3 mode (the
+ * · `deviceOnly` guard was false at that moment), briefly re-inflating the payload to
+ */
       return;
     }
     const deviceOnly = storageMode === 'v3';
@@ -634,24 +625,12 @@ export function App() {
     };
   }, [storageMode]);
 
-  /**
-   * Switch the fact source (settings → 数据与备份 → 存储模式).
-   *
-   * Going to v3 runs the **verified migration** (P2-02), not a raw copy: it writes an
-   * encrypted snapshot of the sources first (§13.3), fills a staging library in batches
-   * with a checkpoint, verifies counts and links, and only then flips `activeLibraryId`
-   * in one durable write. The password is required because the snapshot is what makes a
-   * failed migration recoverable.
-   *
-   * Coming back materialises the payload from the library; if it no longer fits in
-   * localStorage the switch is refused rather than performed half-way.
-   *
-   * Guarded against re-entry: the switch takes seconds (snapshot → staging writes →
-   * verification), and a second click used to start a **second** migration — two reports
-   * measured 36 ms apart, two snapshots, two staging libraries. The outcome happened to be
-   * right (the last switch wins the pointer) but it doubled the work and discarded the first
-   * migration's rollback snapshot.
-   */
+/**
+ * Switch the fact source (settings → 数据与备份 → 存储模式).
+ * Going to v3 runs the **verified migration** (P2-02), not a raw copy: it writes an
+ * encrypted snapshot of the sources first (§13.3), fills a staging library in batches
+ * · with a checkpoint, verifies counts and links, and only then flips `activeLibraryId`
+ */
   const switchingRef = useRef(false);
   const switchStorageModeInner = useCallback(
     async (mode: StorageMode, password?: string) => {
@@ -795,18 +774,11 @@ export function App() {
   const { addInboxItem, updateInboxItem, deleteInboxItem, convertToNote, convertToSite, assignToProject, previewBatch, convertMany } =
     useInboxActions(state, updateState, { addNote, addSite });
 
-  /**
-   * Bring across captures the extension made on its own (new-tab 「记一笔」, the
-   * popup, and right-click 「保存至统一收件箱」).
-   *
-   * Those all write the extension's own v3 inbox, which lives in a *different*
-   * IndexedDB database from the app's (`selfhub_extension` vs `self_hub_idb`).
-   * Nothing on this side ever asked for those rows, so a capture made on the new
-   * tab reported 「已进收件箱」 and then was nowhere to be found in the workbench.
-   *
-   * Idempotent by `operationId`, and the rows are marked `imported` afterwards so
-   * the same capture cannot come back once the user has dealt with it.
-   */
+/**
+ * Bring across captures the extension made on its own (new-tab 「记一笔」, the
+ * popup, and right-click 「保存至统一收件箱」).
+ * Those all write the extension's own v3 inbox, which lives in a *different*
+ */
   const runCaptureImport = useCallback(async () => {
     if (!isExtensionContext()) return;
     // Same v3 guard as the annotation/wucai imports: without it this merge runs
@@ -835,16 +807,11 @@ export function App() {
     void runCaptureImport();
   }, [storageMode, v3Status, runCaptureImport]);
 
-  /**
-   * Live capture import while the workbench stays open.
-   *
-   * The boot pass runs once, so a capture made *after* the workbench tab was
-   * opened stayed invisible until a full reload — which is exactly when a user
-   * goes looking for it ("我刚记的那条呢？"). The background broadcasts
-   * `SELFHUB_CHANGED` with `kind: 'capture'` on every write; a visibility/focus
-   * pass covers broadcasts that fired while this tab was asleep. Both are cheap:
-   * the import is idempotent and a no-op when nothing new arrived.
-   */
+/**
+ * Live capture import while the workbench stays open.
+ * The boot pass runs once, so a capture made *after* the workbench tab was
+ * opened stayed invisible until a full reload — which is exactly when a user
+ */
   useEffect(() => {
     if (!isExtensionContext()) return;
     const chromeApi = (
@@ -939,15 +906,12 @@ export function App() {
     return () => chromeApi?.storage?.onChanged?.removeListener?.(onChanged);
   }, [storageMode, v3Status, runPendingNoteImport]);
 
-  /**
-   * Import highlights the extension's content script saved (划词 → background →
-   * chrome.storage). `importExtensionAnnotations` existed but was never wired to
-   * anything, so the 网页批注 pane stayed empty even with highlights in the store.
-   *
-   * Import-only, like every other cross-store move here: ids the app already has
-   * are skipped, nothing is deleted on either side. Runs after the v3 boot read
-   * so the imported rows cannot be overwritten by the library load.
-   */
+/**
+ * Import highlights the extension's content script saved (划词 → background →
+ * chrome.storage). `importExtensionAnnotations` existed but was never wired to
+ * anything, so the 网页批注 pane stayed empty even with highlights in the store.
+ * · Import-only, like every other cross-store move here: ids the app already has
+ */
   const extensionAnnotationsImportedRef = useRef(false);
   /** Import-only merge of extension-collected highlights into the app library. */
   const runAnnotationImport = useCallback(async (): Promise<{ imported: number; extensionCount: number; dropped: number }> => {
@@ -977,16 +941,11 @@ export function App() {
     return { imported: rows.length, extensionCount: totalCount, dropped };
   }, [updateState]);
 
-  /**
-   * The pane's manual 「从扩展同步」 button.
-   *
-   * The automatic paths (boot import, broadcast listener, visibility re-import)
-   * cover the happy path; this is the diagnostic path for when none of them seem
-   * to have run: it says, in one line, whether the extension answered at all, how
-   * many annotations it holds, and how many were new — so "the pane is empty"
-   * becomes attributable to a not-reloaded extension, a page opened outside the
-   * extension, or simply nothing saved yet.
-   */
+/**
+ * The pane's manual 「从扩展同步」 button.
+ * The automatic paths (boot import, broadcast listener, visibility re-import)
+ * cover the happy path; this is the diagnostic path for when none of them seem
+ */
   const handleSyncAnnotations = useCallback(async (): Promise<AnnotationSyncResult> => {
     if (!isExtensionContext()) {
       return {
@@ -1053,18 +1012,11 @@ export function App() {
     void runAnnotationImport();
   }, [storageMode, v3Status, runAnnotationImport]);
 
-  /**
-   * Live import while the workbench stays open.
-   *
-   * The boot import above runs once, so a highlight saved *after* the app tab was
-   * open never arrived — the user highlights on a page, sees "已保存", and the
-   * 网页批注 pane (in the already-running tab) stayed empty until a full reload.
-   * The background broadcasts `SELFHUB_CHANGED` to every extension page on every
-   * annotation write; listening here closes that gap. A visibility/focus re-import
-   * covers the case where the broadcast fired while this tab was asleep (runtime
-   * messages are not queued for suspended pages) — the import is idempotent by id,
-   * so an extra pass is free.
-   */
+/**
+ * Live import while the workbench stays open.
+ * The boot import above runs once, so a highlight saved *after* the app tab was
+ * open never arrived — the user highlights on a page, sees "已保存", and the
+ */
   useEffect(() => {
     if (!isExtensionContext()) return;
     const chromeApi = (globalThis as unknown as {
@@ -1096,16 +1048,12 @@ export function App() {
     };
   }, [runAnnotationImport]);
 
-  /**
-   * Pull highlights from the Wucai OpenAPI on boot.
-   *
-   * `fetchWucaiHighlights` existed but had no caller, so a configured token never
-   * did anything: the 划词 pane only ever held manually added rows. Import-only,
-   * same contract as the extension import above — ids the app already has are
-   * skipped, nothing is overwritten. Works in any environment (the API is plain
-   * HTTPS), but only when the 五彩 switch and its token are both on. A failed
-   * boot sync stays quiet here; the 划词 pane's manual button surfaces errors.
-   */
+/**
+ * Pull highlights from the Wucai OpenAPI on boot.
+ * `fetchWucaiHighlights` existed but had no caller, so a configured token never
+ * did anything: the 划词 pane only ever held manually added rows. Import-only,
+ * · HTTPS), but only when the 五彩 switch and its token are both on. A failed
+ */
   const wucaiSyncedRef = useRef(false);
   useEffect(() => {
     if (wucaiSyncedRef.current) return;
@@ -1136,19 +1084,12 @@ export function App() {
   }, [storageMode, v3Status, updateState]);
   const batchImport = useBatchImport(updateState);
 
-  /**
-   * Carry the new-tab layout into the hub state so that backups include it.
-   *
-   * The new tab is a separate extension page and is the only writer of
-   * `selfhub_newtab_layout` / `selfhub_newtab_pins`. The workbench merely records what is
-   * there — on boot, and live via `storage.onChanged` while this tab is open — so the next
-   * file export or v3 batch carries the dashboard the user arranged. It never writes back
-   * from here; that would make two writers for one key. The restore direction lives in
-   * `handleRestoreState`, which is the one moment the state legitimately knows better.
-   *
-   * A plain web build has no `chrome.storage`, so this is a no-op there and
-   * `newtabPreferences` simply stays absent from the payload.
-   */
+/**
+ * Carry the new-tab layout into the hub state so that backups include it.
+ * The new tab is a separate extension page and is the only writer of
+ * `selfhub_newtab_layout` / `selfhub_newtab_pins`. The workbench merely records what is
+ * · file export or v3 batch carries the dashboard the user arranged. It never writes back
+ */
   useEffect(() => {
     if (!canCarryNewtabPreferences()) return;
     let cancelled = false;
@@ -1171,32 +1112,20 @@ export function App() {
     void clearTrustedSession();
   };
 
-  /**
-   * Apply a restored state (legacy import, encrypted import, rollback, v3 batch restore).
-   *
-   * In v3 mode the payload holds only device configuration, so writing the restored data
-   * there would look exactly like "the restore did nothing": the app reads the library, and
-   * the library still holds the old records. The restored data therefore has to go into the
-   * **active library**, through the same adapter the app writes with.
-   *
-   * The device's own connections are kept (`mergeDeviceConfig`), matching §10.4.7 for the v3
-   * path: a package must never replace this machine's keys with whatever it carries.
-   *
-   * Returns `false` when a v3 write failed, so the caller does not claim success.
-   */
+/**
+ * Apply a restored state (legacy import, encrypted import, rollback, v3 batch restore).
+ * In v3 mode the payload holds only device configuration, so writing the restored data
+ * there would look exactly like "the restore did nothing": the app reads the library, and
+ * · path: a package must never replace this machine's keys with whatever it carries.
+ */
   const handleRestoreState = async (restored: HubState): Promise<boolean | void> => {
     const next = normalizeHubState(restored);
-    /**
-     * Push the new-tab layout back into `chrome.storage.local`.
-     *
-     * This is the only place the workbench writes those keys, and it is deliberate: a
-     * restore is the one moment the state legitimately knows better than the device's
-     * local storage. `writeNewtabPreferences` leaves absent fields alone, so a backup
-     * taken before the field existed cannot wipe the layout the user already has.
-     *
-     * Fire-and-forget on purpose — the new tab picks it up via `storage.onChanged`, and a
-     * failed write must not turn a successful data restore into an error.
-     */
+/**
+ * Push the new-tab layout back into `chrome.storage.local`.
+ * This is the only place the workbench writes those keys, and it is deliberate: a
+ * restore is the one moment the state legitimately knows better than the device's
+ * · failed write must not turn a successful data restore into an error.
+ */
     if (next.newtabPreferences) void writeNewtabPreferences(next.newtabPreferences);
     if (storageMode !== 'v3') {
       setState(next);

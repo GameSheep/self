@@ -1,15 +1,8 @@
 /**
  * IndexedDB implementation of the repository contract (P2-01).
- *
  * This is the P2 fact source. It is written now, beside the v2 payload, so the
  * migration in P2-02 has something verified to migrate *into*.
- *
- * Notes on the two guarantees:
- * - Atomicity comes from real IndexedDB transactions. The write path validates
- *   before it queues, and any rejection calls `tx.abort()`, which rolls back the
- *   requests already queued in the same transaction.
- * - "Written" means the transaction reached `complete`. `runV3Transaction`
- *   resolves on that event only, never on a request's `onsuccess`.
+ * · resolves on that event only, never on a request's `onsuccess`.
  */
 import type { EntityLink, InboxEntry, ItemMeta, NoteBody, Project } from '../domain/model';
 import { MODEL_VERSION } from '../domain/model';

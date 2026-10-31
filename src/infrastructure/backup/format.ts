@@ -1,38 +1,8 @@
 /**
  * v3 backup format (P2-05).
- *
  * The P1 backup was a single mutable `state.json` per destination. That shape has
  * three problems the dev doc calls out explicitly:
- *
- * - Two devices backing up to the same prefix fight over one file, and the loser
- *   silently overwrites the winner (§10.2 "不依赖一个共享 state.json 的时间戳竞争").
- * - A half-finished upload is indistinguishable from a good one: the object is
- *   either there or not, and "there" may mean truncated JSON.
- * - Nothing is encrypted, so the whole library sits in plain text in a bucket
- *   that the config also points image hosting at.
- *
- * So a generation is an **immutable directory** with a manifest and a completion
- * marker:
- *
- *     <root>/.selfhub/v3/<libraryId>/<deviceId>/<generationId>/
- *       objects/<name>.enc.json
- *       attachments/<name>.enc.json
- *       manifest.enc.json
- *       _complete.json
- *
- * Write order is fixed — data, then manifest, then marker — because the marker is
- * the only thing that makes a generation restorable. Anything without a marker is
- * incomplete by definition, no matter how many objects made it up.
- *
- * Every object (including the manifest, which carries file names and titles) is
- * encrypted with AES-256-GCM. One PBKDF2-derived key per generation, and a fresh
- * random IV per object, so two identical objects do not produce identical
- * ciphertext. Parameters are recorded in the manifest so a future version can
- * still read an old package.
- *
- * This module deliberately knows nothing about OSS or WebDAV: it talks to a
- * `BackupTransport`, which is what lets the format be tested without a network
- * and lets both providers share one implementation.
+ * · the only thing that makes a generation restorable. Anything without a marker is
  */
 import { appError, type AppError } from '../../repositories/errors';
 

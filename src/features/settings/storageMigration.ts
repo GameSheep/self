@@ -1,16 +1,7 @@
 /**
  * Switching this device onto the v3 library — the orchestration, kept out of `App.tsx`.
- *
  * Two reasons, one of them a measured build fact:
- *
  * 1. `App.tsx` is the entry chunk. When the entry itself does `await import('…/migration/runner')`,
- *    Rollup folds that single-importer dynamic chunk back into the entry, so the whole
- *    migration stack (runner + sources + mapping + lock, ~30 KB raw / ~10 KB gzip) became
- *    part of the first load — code that cannot run until a user switches storage mode.
- *    Importing this module instead gives the stack a lazy importer: the entry dynamically
- *    imports this file, and this file dynamically imports the runner.
- * 2. The migration sequence (snapshot → staging → verify → atomic switch) is a workflow, and
- *    the app shell should not contain workflows.
  */
 import type { MigrationReport } from '../../repositories/migration/types';
 

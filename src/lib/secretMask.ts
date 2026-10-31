@@ -1,13 +1,8 @@
 /**
  * Credential detection and masking.
- *
  * The AI ingest feature is built to pull API keys and passwords out of pasted
  * text. When cloud AI is on, that text goes to a third party — so we mask the
- * credentials first and re-hydrate the values locally afterwards. The model still
- * sees the *shape* of the content (enough to classify it) but never the secret.
- *
- * Patterns are deliberately high-confidence: a false positive silently destroys
- * content, which is worse than missing an unusual key format.
+ * · sees the *shape* of the content (enough to classify it) but never the secret.
  */
 
 export interface MaskFinding {
@@ -33,12 +28,8 @@ function previewOf(value: string): string {
 
 /**
  * Placeholder inserted in place of a masked value.
- *
  * `kind` may contain Chinese ("疑似令牌"). The previous sanitisation at the call
  * site used `/[^\w]/g`, which strips every Chinese character and produced
- * `⟪SH_MASKED__0⟫` with an empty kind — the value is still masked either way,
- * but the marker is meant to stay legible, and it is the key that rehydration
- * looks up. Keep ASCII word characters plus CJK; drop everything else.
  */
 function placeholderFor(kind: string, index: number): string {
   const safe = kind.replace(/[^\w\u4e00-\u9fff]/g, '');

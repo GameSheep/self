@@ -19,12 +19,8 @@ import { searchEverything, type SearchHit, type SearchKind, type SearchResult } 
 
 /**
  * Global command palette.
- *
  * Thin by design: the searching itself lives in `domain/search.ts`
  * (`searchEverything`), which is the single place that knows what is searchable and
- * what is not. This component renders groups, highlights the match inside a real
- * snippet, shows how many matches each group has, and reports its coverage — so a
- * "no results" answer can no longer mean "this box didn't look there".
  */
 
 interface GlobalSearchProps {
@@ -123,6 +119,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
   // Restore focus to the trigger when the palette closes; dropping focus on body
   // forced keyboard users to Tab from the top of the page.
   const triggerRef = useRef<Element | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!isOpen) return;
     triggerRef.current = document.activeElement;
@@ -209,6 +206,21 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
       event.preventDefault();
       const hit = visibleHits[selectedIndex];
       if (hit) activate(hit);
+    } else if (event.key === 'Tab') {
+      // 最小焦点陷阱：Tab 在面板内循环（输入框 ↔ 关闭/筛选按钮），不再走到
+      // 被遮罩盖住的底层页面。
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusables = Array.from(
+        panel.querySelectorAll<HTMLElement>('input, button:not([disabled])')
+      ).filter((el) => el.offsetParent !== null);
+      if (focusables.length === 0) return;
+      event.preventDefault();
+      const current = focusables.indexOf(document.activeElement as HTMLElement);
+      const next = event.shiftKey
+        ? (current <= 0 ? focusables.length - 1 : current - 1)
+        : (current === -1 || current === focusables.length - 1 ? 0 : current + 1);
+      focusables[next].focus();
     }
   };
 
@@ -228,6 +240,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
       className="fixed inset-0 z-50 flex items-start justify-center pt-14 sm:pt-20 p-3 sm:p-4 bg-[var(--sh-overlay)] backdrop-blur-sm animate-in fade-in"
     >
       <div
+        ref={panelRef}
         onClick={(event) => event.stopPropagation()}
         className="w-full max-w-2xl bg-sh-surface border border-sh-line rounded-2xl shadow-2xl overflow-hidden flex flex-col"
       >
@@ -237,6 +250,12 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
             ref={inputRef}
             type="text"
             autoFocus
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="global-search-listbox"
+            aria-activedescendant={
+              query.trim() !== '' && visibleHits.length > 0 ? `search-option-${selectedIndex}` : undefined
+            }
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -279,7 +298,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
           </div>
         )}
 
-        <div ref={listRef} role="listbox" aria-label="搜索结果" className="p-2 max-h-[60vh] overflow-y-auto space-y-1" data-testid="global-search-results">
+        <div ref={listRef} id="global-search-listbox" role="listbox" aria-label="搜索结果" className="p-2 max-h-[60vh] overflow-y-auto space-y-1" data-testid="global-search-results">
           {query.trim() === '' ? (
             <div className="p-6 text-center text-xs text-sh-subtle">
               输入关键词开始搜索。批注的原文与你的批注、笔记正文都会被检索；金库只匹配名称，明文不参与搜索。
@@ -309,6 +328,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
                   return (
                     <div
                       key={`${hit.kind}-${hit.id}`}
+                      id={`search-option-${index}`}
                       onClick={() => activate(hit)}
                       onMouseEnter={() => setSelectedIndex(index)}
                       data-search-hit={hit.kind}

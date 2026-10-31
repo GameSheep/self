@@ -1,20 +1,8 @@
 /**
  * Local-time date helpers.
- *
  * `<input type="date">` works in local time while `Date#toISOString()` works in UTC,
  * so mixing them shifted renewal dates by one day for users east of UTC (e.g. 东八区)
- * and produced the off-by-one "D-0天" countdown.
- *
- * Recurrence is *anchored*, not incremental (P1-07 / 开发文档 §11.3):
- *
- * - a monthly series remembers its start day-of-month (`anchorDay`, 1–31) and the
- *   month it started in, so 1 月 31 日 renews to 2 月 28 日 and then *returns* to
- *   3 月 31 日 instead of permanently drifting to the 28th;
- * - a yearly series remembers its start month + day, so 2 月 29 日 lands on
- *   2 月 28 日 in a non-leap year and comes back to 2 月 29 日 in the next leap year.
- *
- * Every value handled here is an epoch-ms timestamp interpreted through the
- * browser's local calendar. `toISOString()` is never involved.
+ * · browser's local calendar. `toISOString()` is never involved.
  */
 
 export const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -76,12 +64,8 @@ export function clampDayOfMonth(year: number, monthIndex: number, day: number): 
 /**
  * Add whole months while keeping the requested day-of-month, clamping into the
  * target month instead of letting JavaScript roll over into the next one.
- *
  * `addMonthsClamped(1 月 31 日, 1, 31)` → 2 月 28 日 (2 月 29 日 in a leap year),
- * never 3 月 3 日. The time-of-day carried by `ts` is preserved; invalid input
- * returns NaN.
- *
- * When `anchorDay` is omitted the day-of-month of `ts` is used as the anchor.
+ * · never 3 月 3 日. The time-of-day carried by `ts` is preserved; invalid input
  */
 export function addMonthsClamped(ts: number, months: number, anchorDay?: number): number {
   const base = new Date(ts);
@@ -231,12 +215,7 @@ export function occurrenceAt(fromTs: number, recurring: string, steps: number, o
 /**
  * Advance `fromTs` by whole recurrence cycles until it reaches `nowTs`, so an
  * expired series catches up in one call.
- *
  * Returns null for unknown/invalid recurrences instead of looping forever, and
- * null when no cycle lands at or before `nowTs`.
- *
- * The optional anchor keeps the series from drifting: advancing 1 月 31 日 to
- * March yields 3 月 31 日, not 3 月 28 日.
  */
 export function advanceRecurringDate(
   fromTs: number,

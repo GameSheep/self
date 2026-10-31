@@ -1,15 +1,8 @@
 /**
  * Shared contract suite (P2-01).
- *
  * One list of checks, run against **both** implementations. The plan's
  * requirement is literal: "用例仅依赖仓库契约；Legacy 和 IndexedDB 实现可用同一组
- * 契约测试验证". A check may only use the `HubRepository` surface, so a check
- * that passes for one implementation and fails for the other is a real
- * divergence rather than a test artefact.
- *
- * Each check returns a result instead of throwing, so one failure does not hide
- * the rest — when the two implementations disagree, seeing *which* guarantees
- * diverge is the whole point.
+ * · 契约测试验证". A check may only use the `HubRepository` surface, so a check
  */
 import type { HubRepository } from './contract';
 

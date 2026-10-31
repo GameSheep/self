@@ -1,21 +1,8 @@
 /**
  * Unified search across every collection (P2-07 "统一索引覆盖").
- *
  * There were three overlapping searches with different reach: the ⌘K dialog matched
  * titles and note bodies (but not annotations), the library filtered notes,
- * annotations and remote metadata, and the vault index searched remote note bodies.
- * "Where can I find this?" therefore depended on which box you typed into, and
- * annotations — the thing this product is *for* — were invisible in the global box.
- *
- * This module is the single answer: one scan over all sources, grouped by kind, with
- * a real snippet per hit, a declared coverage (what was and was not searched) and
- * per-kind totals so the UI can say "还有 N 条" instead of silently truncating.
- *
- * What it deliberately does **not** do:
- * - decrypt or index vault plaintext. A credential matches on its name, description,
- *   category and tags only; the ciphertext is never searched ($12.1).
- * - claim completeness it cannot have: remote note bodies are only searchable when the
- *   local index holds them, and that is reported in `coverage`.
+ * · category and tags only; the ciphertext is never searched ($12.1).
  */
 import type { HubState } from '../types';
 import type { IndexedDoc } from '../lib/vaultIndex';

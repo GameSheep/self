@@ -23,13 +23,8 @@ export interface TopBarProps {
 
 /**
  * Top bar (P1-01).
- *
  * The old header and the old sidebar each rendered search, AI-ingest, new and
  * settings — two visible copies of the same four actions competing for
- * attention. The header keeps exactly one copy of each global action; the
- * sidebar keeps navigation. On narrow screens the header also carries the
- * navigation, but it reads the same registry, so the two can no longer disagree
- * about what exists.
  */
 export const TopBar: React.FC<TopBarProps> = ({
   routeName,

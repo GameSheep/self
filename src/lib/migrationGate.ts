@@ -1,16 +1,8 @@
 /**
  * "Is a migration running?" — the part of the migration lock that ordinary writers need.
- *
  * This lives **outside** `repositories/migration/` on purpose. `lib/storage.ts` has to ask
  * this question on every single write (§13.3: old writers stop before a migration touches
- * anything), and while it imported `repositories/migration/lock` the production entry
- * chunk statically pulled the migration package in with it — the first load paid for the
- * migration runner, sources and mapping, none of which can run until a user switches
- * storage mode. Measured: entry 174.82 → 184.00 KB gzip before this split (≈9 KB).
- *
- * The reverse dependency would be just as wrong, so this module owns the key and the
- * readers; `repositories/migration/lock.ts` imports *from here* and adds the writer side
- * (acquire/renew/release) that only a migration needs.
+ * · (acquire/renew/release) that only a migration needs.
  */
 import type { MigrationPhase } from '../repositories/migration/types';
 import { runV3Transaction, requestToPromise } from '../infrastructure/storage/idbV3';
@@ -80,12 +72,8 @@ export function isWriteBlockedByMigration(writer: string, now = Date.now()): boo
 
 /**
  * The library the app should read, or `null` when no migration has ever switched this device.
- *
  * This lives here rather than in the migration runner because **every reader and writer of
  * library data needs it**: the app's boot hydration, and — this is what made it a bug —
- * the v3 backup service, which used to default to the pre-migration `local-v2` library and
- * would have backed up the wrong data after a switch. It is a single indexed read, so the
- * eager cost is negligible.
  */
 export async function readActiveLibraryId(): Promise<string | null> {
   try {

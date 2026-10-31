@@ -1,21 +1,8 @@
 /**
  * Application layer for the v3 backup path (P2-05).
- *
  * Everything below the UI meets here: the policy decides *whether* and *where*, the
  * snapshot decides *what*, the writer decides *how*, and this module turns that
- * into the two answers a screen needs — "what is the state of my backups?" and
- * "run one now".
- *
- * Three decisions worth stating, because they are the ones a UI could get wrong:
- *
- * 1. **The backup only ever reports what storage confirmed.** A run returns the
- *    writer's own result; nothing here optimistically says "已保存".
- * 2. **No password means no run.** §10.3 forbids falling back to plaintext, so a
- *    missing session password is returned as `LOCKED` with a message the settings
- *    page shows verbatim — and no request is made.
- * 3. **Status is read, not remembered.** The "last successful backup" comes from
- *    the on-destination pointer, so it survives a reload and cannot disagree with
- *    what is actually in the bucket.
+ * · 1. **The backup only ever reports what storage confirmed.** A run returns the
  */
 import { appError, fail, ok, toAppError, type Result } from '../../repositories/errors';
 import type { HubState } from '../../types';
@@ -69,13 +56,9 @@ import { withFreshNewtabPreferences } from '../../lib/newtabPreferences';
 
 /**
  * Which library this operation is about.
- *
  * `local-v2` is only the *pre-migration* default. Once a migration switches
  * `activeLibraryId`, that pointer is the library the app reads and writes — so backups,
- * restores and migration packages must follow it too. They used to default to the constant,
- * which meant that after switching, a v3 backup silently captured the **old** library while
- * the user kept editing the new one: the backup existed, looked fine, and did not contain
- * their data. Every call site goes through here now.
+ * · restores and migration packages must follow it too. They used to default to the constant,
  */
 export async function resolveLibraryId(explicit?: string): Promise<string> {
   if (explicit) return explicit;

@@ -1,12 +1,7 @@
 /**
  * Optional feature switches.
- *
  * Not every user needs every module, and a long sidebar is its own kind of
  * complexity. These switches hide a module entirely (nav + routing) rather than
- * half-working: nothing is deleted, turning the switch back on restores it.
- *
- * Core modules (dashboard, sites, reminders, obsidian vault) are intentionally
- * not switchable — they are the product.
  */
 
 export type FeatureId =

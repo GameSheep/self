@@ -1,33 +1,8 @@
 /**
  * v3 restore: preview, then apply (P2-06).
- *
  * §10.4 is the contract this file implements, and its first two steps are the ones
  * that are easy to skip and expensive to skip:
- *
- * 1. **Verify, then read.** `readV3Payload` refuses a batch whose marker, manifest
- *    hash or object hashes do not line up, so a restore never starts from a package
- *    that only partly verified.
- * 2. **Parse into a staging area, report, and do not touch the current library.**
- *    `previewRestore` writes the package into a module-level staging slot and
- *    returns a report: counts on both sides, added records, same-id conflicts,
- *    missing attachments, reference-only remote files, unsupported fields and the
- *    things the user will have to re-enter. Nothing is merged yet.
- *
- * Then, on apply:
- *
- * - **The baseline is re-checked.** The preview records a fingerprint of the local
- *   library; if anything changed in between, the apply is refused and the user has
- *   to preview again (§10.4.5 "有新编辑需重新预览"). Silently overwriting edits made
- *   after the preview is exactly the failure this rule exists to prevent.
- * - **Conflicts are decided, not auto-won.** Same-id conflicts take an explicit
- *   per-collection choice — keep local, use the backup, or save a copy under a new
- *   id (with references rewritten). No "last write wins".
- * - **Credentials from the package never replace local ones.** The backup has them
- *   stripped on purpose (§10.3), and a restore on a new device must not blank the
- *   keys the user just configured — `mergeRestoredState` keeps the local values.
- * - **An external library id is remapped, not merged by accident.** Entities from a
- *   different library get a deterministic namespace id and references are rewritten,
- *   so importing the same package twice does not duplicate anything (§6.1 / §13.2).
+ * · hash or object hashes do not line up, so a restore never starts from a package
  */
 import { appError, fail, ok, type Result } from '../../repositories/errors';
 import type { HubState } from '../../types';
@@ -130,12 +105,8 @@ interface StagedPackage {
 
 /**
  * Staging area.
- *
  * Deliberately in memory: §10.4.2 says the package is parsed "在暂存区" and the
  * current library is not modified. Keeping the decrypted library only in memory
- * also means a reload cannot leave decrypted content lying in storage, and the
- * staging report disappears with it (the settings page then asks for a new
- * preview, which is the correct answer after a reload).
  */
 const stagingArea = new Map<string, StagedPackage>();
 const STAGING_LIMIT = 3;

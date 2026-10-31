@@ -12,16 +12,8 @@ export function encodeOssKey(key: string): string {
 
 /**
  * Generate Authentic Aliyun OSS Authorization Headers (V1 signature).
- *
  * MUST use `x-oss-date`, never `Date`: `Date` is a forbidden header name in the
  * Fetch spec, so the browser silently drops it and OSS answers
- * 403 AccessDenied "OSS authentication requires a valid Date." — a failure that
- * cannot be reproduced by curl/PowerShell, which do send `Date`.
- *
- * Verified against the live service: the signature is built from
- *   VERB \n Content-MD5 \n Content-Type \n <x-oss-date> \n
- *   x-oss-date:<x-oss-date>\n  (CanonicalizedOSSHeaders)
- *   /<bucket>/<key>
  */
 async function generateOssAuthHeaders(
   method: 'GET' | 'PUT' | 'DELETE' | 'HEAD' | 'POST',
@@ -885,12 +877,8 @@ const CONFLICT_TOLERANCE_MS = 1500;
 
 /**
  * Save / Update an existing note in Aliyun OSS & local state.
- *
  * Before writing, the cloud object's Last-Modified is compared with the value
  * recorded when the note was loaded. If another client (Obsidian desktop via
- * Remotely Save, another browser tab) wrote in between, the write is refused and
- * a `conflict` result is returned so the user can decide instead of silently
- * losing the other version.
  */
 export async function saveObsidianNote(
   config: ObsidianConfig,

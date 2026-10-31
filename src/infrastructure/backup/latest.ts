@@ -1,22 +1,8 @@
 /**
  * Per-device "latest" pointer (P2-05).
- *
  * §10.2 asks for two things that sound contradictory until you separate them:
  * "每次备份使用不可变 generation 目录，不覆盖其他设备快照" **and** "设备拥有独立
- * latest 指针". The generation directories stay immutable; the pointer is a tiny
- * mutable object *per device* that says which generation that device considers
- * current. Two devices backing up to one prefix therefore never race over a shared
- * `state.json` — the old design's central flaw.
- *
- * Two rules make the pointer safe to trust:
- *
- * 1. **It is written after the completion marker and after verification.** A
- *    pointer can therefore never name a generation that was not proven complete.
- * 2. **It is verified on read.** The pointer carries the manifest hash, and
- *    `resolveLatestGeneration` re-checks that the named generation still has a
- *    matching marker. If it does not, the pointer is reported as stale and the
- *    caller falls back to scanning — a broken pointer degrades to a slower path,
- *    never to a wrong restore source.
+ * · current. Two devices backing up to one prefix therefore never race over a shared
  */
 import { toAppError } from '../../repositories/errors';
 import { COMPLETION_NAME, BACKUP_FORMAT, BACKUP_FORMAT_VERSION, devicePrefix, generationPrefix, type CompletionMarker } from './format';

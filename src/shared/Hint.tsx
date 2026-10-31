@@ -3,13 +3,8 @@ import { Info, X } from 'lucide-react';
 
 /**
  * Explanatory text that can be dismissed — permanently, per browser.
- *
  * Several panes carried a paragraph explaining how they work, on every visit. That is useful
  * the first time and noise afterwards: the user asked for it to show once. Dismissal is stored
- * in `localStorage` under `selfhub_hint_dismissed:<id>`, so it does not come back on reload.
- *
- * The text stays reachable: the same hint is part of the docs, and the control that dismisses
- * it says so ("不再提示"), which is honest about what the click does.
  */
 export function Hint({
   id,

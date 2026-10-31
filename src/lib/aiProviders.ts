@@ -1,12 +1,7 @@
 /**
  * Provider-specific request shapes.
- *
  * These used to be one shared code path, which produced frequent 400s:
  * - the `model` field survived a provider switch, so Gemini was asked for
- *   `models/deepseek-chat` → 400 INVALID_ARGUMENT;
- * - DeepSeek fell back to the OpenAI endpoint when `baseUrl` was empty;
- * - errors reported `res.statusText`, which is EMPTY over HTTP/2 — so a failure
- *   showed as "Gemini API Error: " with no reason at all.
  */
 import { AiConfig } from '../types';
 
