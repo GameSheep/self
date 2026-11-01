@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileText, Folder, FolderPlus, Save, Trash2, X } from 'lucide-react';
 import type { QuickNote } from '../../types';
 import { ConfirmButton, EmptyState, PageHeader, inputClass, useDirtyGuard } from '../../shared/ui';
 import { MarkdownEditor, type EditorMode } from '../../components/MarkdownEditor';
+
 
 export interface NotesPaneProps {
   notes: QuickNote[];
@@ -137,6 +138,7 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
 
   const [selectedFolder, setSelectedFolder] = useState('');
   const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [selectedId, setSelectedId] = useState<string>(sorted[0]?.id ?? '');
   const [text, setText] = useState('');
@@ -169,12 +171,12 @@ export const NotesPane: React.FC<NotesPaneProps> = ({
 
   const visibleNotes = useMemo(() => {
     const inFolder = notesIn(sorted, selectedFolder);
-    const needle = query.trim().toLowerCase();
+    const needle = deferredQuery.trim().toLowerCase();
     if (!needle) return inFolder;
     return inFolder.filter((note) =>
       `${note.title} ${note.content} ${(note.tags || []).join(' ')}`.toLowerCase().includes(needle)
     );
-  }, [sorted, selectedFolder, query]);
+  }, [sorted, selectedFolder, deferredQuery]);
   const selected = sorted.find((note) => note.id === selectedId) ?? null;
 
   useEffect(() => {

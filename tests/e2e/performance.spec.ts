@@ -157,6 +157,15 @@ test.describe('P2-07 性能基线', () => {
       );
       paletteMs.push(Date.now() - start);
     }
+    // 打字回显延迟（defer 的真正受益指标）：逐字符输入，测「最后一个字符
+    // 出现在输入框」的耗时。阻塞版每个字符都要等一次全集合检索；defer 后
+    // 字符立即上屏，检索在低优先级 lane 里追。
+    await page.getByTestId('global-search-input').fill('');
+    const typingStart = Date.now();
+    await page.getByTestId('global-search-input').pressSequentially('性能测试', { delay: 40 });
+    await expect(page.getByTestId('global-search-input')).toHaveValue('性能测试');
+    const paletteTypingMs = Date.now() - typingStart;
+
     await page.keyboard.press('Escape');
 
     const report = {
@@ -186,7 +195,8 @@ test.describe('P2-07 性能基线', () => {
           queries: paletteQueries.length,
           max: Math.max(...paletteMs),
           values: paletteMs
-        }
+        },
+        paletteTypingMs: paletteTypingMs
       },
       docTargets: {
         homeInteractive: '≤ 2000ms',

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   BookOpen,
@@ -79,6 +79,12 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
   onCopySecret
 }) => {
   const [query, setQuery] = useState('');
+  /**
+   * 检索在统一索引上做全集合扫描（大库单次 P95 数百 ms），不能阻塞打字：
+   * 输入框仍绑 query 立即回显，结果列表用 deferred 值在低优先级 lane 里追。
+   */
+  const deferredQuery = useDeferredValue(query);
+  const isStale = deferredQuery !== query;
   const [activeKind, setActiveKind] = useState<'all' | SearchKind>('all');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loadedDocs, setLoadedDocs] = useState<IndexedDoc[]>([]);
@@ -160,13 +166,13 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
       searchEverything({
         state,
         vaultDocs: docs,
-        query,
+        query: deferredQuery,
         kinds: activeKind === 'all' ? undefined : [activeKind],
         // A single-category view is a deliberate "show me more of this", so it gets a
         // bigger page than the mixed view's 5-per-kind preview.
         limits: activeKind === 'all' ? undefined : { [activeKind]: 50 }
       }),
-    [state, docs, query, activeKind]
+    [state, docs, deferredQuery, activeKind]
   );
 
   /** Flat list in render order, so arrow keys and Enter agree with what is visible. */
@@ -298,7 +304,15 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
           </div>
         )}
 
-        <div ref={listRef} id="global-search-listbox" role="listbox" aria-label="搜索结果" className="p-2 max-h-[60vh] overflow-y-auto space-y-1" data-testid="global-search-results">
+        <div
+          ref={listRef}
+          id="global-search-listbox"
+          role="listbox"
+          aria-label="搜索结果"
+          aria-busy={isStale || undefined}
+          className={`p-2 max-h-[60vh] overflow-y-auto space-y-1 transition-opacity ${isStale ? 'opacity-60' : ''}`}
+          data-testid="global-search-results"
+        >
           {query.trim() === '' ? (
             <div className="p-6 text-center text-xs text-sh-subtle">
               输入关键词开始搜索。批注的原文与你的批注、笔记正文都会被检索；金库只匹配名称，明文不参与搜索。

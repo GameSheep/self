@@ -1,5 +1,5 @@
 {
-  "measuredAt": "2026-11-01T05:48:36.460Z",
+  "measuredAt": "2026-11-01T06:03:18.347Z",
   "environment": {
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.8010.12 Safari/537.36",
     "viewport": {
@@ -18,42 +18,30 @@
     "note": "开发文档的压测夹具是 1 万条元数据 / 2 千篇笔记 / 10 万条批注；这里批注数为 4 千以避免夹具本身成为瓶颈，因此数值是下界。"
   },
   "measurements": {
-    "mainVisibleMs": 790,
-    "homeInteractiveMs": 815,
-    "libraryVisibleMs": 680,
+    "mainVisibleMs": 738,
+    "homeInteractiveMs": 760,
+    "libraryVisibleMs": 576,
     "libraryInitialRows": 100,
     "libraryRowsAfterShowMore": 200,
     "searchMs": {
-      "p50": 136,
-      "p95": 522,
-      "max": 522
+      "p50": 105,
+      "p95": 627,
+      "max": 627
     },
     "paletteMs": {
       "queries": 3,
-      "max": 333,
+      "max": 316,
       "values": [
-        333,
-        141,
-        181
+        316,
+        149,
+        140
       ]
-    }
+    },
+    "paletteTypingMs": 885
   },
   "docTargets": {
     "homeInteractive": "≤ 2000ms",
     "searchP95": "≤ 300ms",
     "initialListRows": "≤ 100 条"
-  },
-  "v3Write": {
-    "fixture": {
-      "notes": 2000,
-      "annotations": 4000,
-      "sites": 600,
-      "reminders": 200
-    },
-    "records": 6600,
-    "firstWriteMs": 2812,
-    "noChangeWriteMs": 63,
-    "oneChangedNoteMs": 245,
-    "measuredAt": "2026-11-01T05:48:40.750Z"
   }
 }

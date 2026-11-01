@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Highlighter, Pencil, Search, Trash2 } from 'lucide-react';
 import type { WebPageAnnotation } from '../../types';
 import { EmptyState, PageHeader, inputClass } from '../../shared/ui';
@@ -68,6 +68,8 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
     [annotations]
   );
   const [query, setQuery] = useState('');
+  /** 4000 条夹具下单次过滤数百 ms：输入立即回显，过滤在 deferred lane 追。 */
+  const deferredQuery = useDeferredValue(query);
   /** 域名 facet：划词常集中在少数几个站，「只看这个站」是一等需求。 */
   const [domainFilter, setDomainFilter] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -104,7 +106,7 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
   };
 
   const visible = useMemo(() => {
-    const needle = query.trim().toLowerCase();
+    const needle = deferredQuery.trim().toLowerCase();
     return sorted.filter((item) => {
       if (domainFilter && hostOf(item.pageUrl || '') !== domainFilter) return false;
       if (!needle) return true;
@@ -112,7 +114,7 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
         .toLowerCase()
         .includes(needle);
     });
-  }, [sorted, query, domainFilter]);
+  }, [sorted, deferredQuery, domainFilter]);
 
   /** 按域名聚合计数（降序），超过 6 个只展示前 6 个 + 「其余」归并，防 chip 墙。 */
   const domainFacets = useMemo(() => {
