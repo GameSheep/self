@@ -292,7 +292,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
                 data-search-chip={chip.id}
                 data-active={activeKind === chip.id ? 'true' : 'false'}
                 className={`px-2.5 py-1 rounded-md transition-colors ${
-                  activeKind === chip.id ? 'bg-sh-surface2 text-sh-accent-fg font-semibold' : 'text-sh-muted hover:text-sh-fg'
+                  activeKind === chip.id ? 'bg-sh-surface2 text-sh-fg font-semibold' : 'text-sh-muted hover:text-sh-fg'
                 }`}
               >
                 {chip.label} ({chip.count})
@@ -348,7 +348,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
                       role="option"
                       aria-selected={isSelected}
                       className={`flex items-center justify-between p-2.5 rounded-xl text-xs cursor-pointer transition-colors ${
-                        isSelected ? 'bg-sh-surface2 text-sh-accent-fg' : 'text-sh-muted hover:bg-sh-surface2'
+                        isSelected ? 'bg-sh-surface2 text-sh-fg' : 'text-sh-muted hover:bg-sh-surface2'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0 flex-1">

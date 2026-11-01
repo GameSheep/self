@@ -301,7 +301,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
                 onClick={() => setLineWidth(w)}
                 aria-label={`线宽 ${w} 像素`}
                 aria-pressed={lineWidth === w}
-                className={`px-2 py-0.5 rounded ${lineWidth === w ? 'bg-sh-surface2 text-sh-accent-fg' : 'text-sh-subtle'}`}
+                className={`px-2 py-0.5 rounded ${lineWidth === w ? 'bg-sh-surface2 text-sh-fg' : 'text-sh-subtle'}`}
               >
                 {w}px
               </button>
@@ -312,7 +312,7 @@ export const HandwritingCard: React.FC<HandwritingCardProps> = ({
           <button
             onClick={() => setIsEraser(!isEraser)}
             className={`p-1.5 rounded-lg border text-xs flex items-center gap-1 transition-colors ${
-              isEraser ? 'bg-sh-surface2 border-sh-line-strong text-sh-accent-fg' : 'bg-sh-surface2 border-sh-line text-sh-muted'
+              isEraser ? 'bg-sh-surface2 border-sh-line-strong text-sh-fg' : 'bg-sh-surface2 border-sh-line text-sh-muted'
             }`}
             title="橡皮擦"
           >

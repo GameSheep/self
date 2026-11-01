@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Highlighter, Pencil, Search, Trash2 } from 'lucide-react';
 import type { WebPageAnnotation } from '../../types';
-import { EmptyState, PageHeader, inputClass } from '../../shared/ui';
+import { ConfirmButton, EmptyState, PageHeader, inputClass } from '../../shared/ui';
 import { isExtensionContext, type AnnotationSyncResult } from '../../lib/extensionBridge';
 import { useDeferredSearch } from '../../shared/ui';
 
@@ -72,6 +72,7 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
   const deferredQuery = useDeferredSearch(query);
   /** 域名 facet：划词常集中在少数几个站，「只看这个站」是一等需求。 */
   const [domainFilter, setDomainFilter] = useState('');
+  const [domainFilterHosts, setDomainFilterHosts] = useState<Set<string> | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftNote, setDraftNote] = useState('');
   /** Bounded first render: a few thousand annotations must not paint a few thousand cards. */
@@ -108,7 +109,7 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
   const visible = useMemo(() => {
     const needle = deferredQuery.trim().toLowerCase();
     return sorted.filter((item) => {
-      if (domainFilter && hostOf(item.pageUrl || '') !== domainFilter) return false;
+      if (domainFilterHosts && !domainFilterHosts.has(hostOf(item.pageUrl || ''))) return false;
       if (!needle) return true;
       return `${item.pageTitle} ${item.pageUrl} ${item.text} ${item.note || ''} ${(item.tags || []).join(' ')}`
         .toLowerCase()
@@ -124,9 +125,10 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
       counts.set(host, (counts.get(host) ?? 0) + 1);
     }
     const ranked = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-    if (ranked.length <= 7) return ranked;
-    const head = ranked.slice(0, 6);
-    head.push(['其他', ranked.slice(6).reduce((sum, [, n]) => sum + n, 0)]);
+    if (ranked.length <= 7) return ranked.map(([host, count]) => ({ host, count, hosts: [host] }));
+    const head = ranked.slice(0, 6).map(([host, count]) => ({ host, count, hosts: [host] }));
+    const restHosts = ranked.slice(6).map(([host]) => host);
+    head.push({ host: '其他', count: ranked.slice(6).reduce((sum, [, n]) => sum + n, 0), hosts: restHosts });
     return head;
   }, [sorted]);
 
@@ -196,16 +198,20 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
 
       {sorted.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 mb-3" data-testid="annotations-domain-facets">
-          {([{ host: '', count: sorted.length }, ...domainFacets.map(([host, count]) => ({ host, count }))] as Array<{
+          {([{ host: '', count: sorted.length, hosts: [] as string[] }, ...domainFacets] as Array<{
             host: string;
             count: number;
+            hosts: string[];
           }>).map(
             (facet) => {
               const active = domainFilter === facet.host;
               return (
                 <button
                   key={facet.host || '__all__'}
-                  onClick={() => setDomainFilter(active ? '' : facet.host)}
+                  onClick={() => {
+                    if (active || !facet.host) { setDomainFilter(''); setDomainFilterHosts(null); }
+                    else { setDomainFilter(facet.host); setDomainFilterHosts(new Set(facet.hosts)); }
+                  }}
                   data-testid={`annotations-domain-chip-${facet.host || 'all'}`}
                   aria-pressed={active}
                   className={`px-2 py-0.5 rounded-lg text-[11px] border transition-colors ${
@@ -338,15 +344,16 @@ export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, o
                   >
                     <Pencil className="w-3.5 h-3.5" aria-hidden />
                   </button>
-                  <button
-                    onClick={() => onDelete(item.id)}
+                  <ConfirmButton
+                    onConfirm={() => onDelete(item.id)}
+                    confirmLabel="确认删除？"
+                    confirmDetail={(item.text || '').slice(0, 30)}
                     data-testid={`annotation-delete-${item.id}`}
-                    aria-label="删除批注"
-                    title="删除这条批注"
                     className="p-1 rounded-lg border border-sh-line text-sh-danger hover:bg-sh-danger/10"
+                    aria-label="删除批注"
                   >
                     <Trash2 className="w-3.5 h-3.5" aria-hidden />
-                  </button>
+                  </ConfirmButton>
                 </div>
               </li>
             );

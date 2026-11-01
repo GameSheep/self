@@ -15,7 +15,7 @@ import { isFeatureEnabled } from './lib/features';
 import { fetchWucaiHighlights } from './lib/wucaiClient';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
-import { ToastHost } from './shared/ui/toast';
+import { ToastHost, showToast } from './shared/ui/toast';
 import type { SearchHit } from './domain/search';
 import { applyIntegrationValues } from './lib/integrations';
 import { useCloudBackup } from './hooks/useCloudBackup';
@@ -139,22 +139,11 @@ export function App() {
   const v3TimerRef = useRef<number | null>(null);
   /**
    * Transient global notice (clipboard results and other one-line feedback).
-   * Clipboard writes used to fail silently or misreport as password errors; one
-   * small toast covers every "did the thing actually happen" moment.
+   * Delegates to the unified ToastHost — no separate rendering path.
    */
-  const [globalNotice, setGlobalNotice] = useState('');
-  const globalNoticeTimerRef = useRef<number | null>(null);
-  const flashNotice = useCallback((message: string) => {
-    setGlobalNotice(message);
-    if (globalNoticeTimerRef.current) window.clearTimeout(globalNoticeTimerRef.current);
-    globalNoticeTimerRef.current = window.setTimeout(() => setGlobalNotice(''), 2600);
-  }, []);
-  useEffect(
-    () => () => {
-      if (globalNoticeTimerRef.current) window.clearTimeout(globalNoticeTimerRef.current);
-    },
-    []
-  );
+  const flashNotice = (msg: string) => {
+    showToast(msg, /失败|错误/.test(msg) ? 'danger' : 'ok');
+  };
   /**
    * Which library the v3 side reads and writes.
    *
@@ -711,6 +700,7 @@ export function App() {
       const typing =
         target &&
         (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable === true);
+      if (e.defaultPrevented) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         // 在输入框里也不再失效：首页两个输入框曾经吞掉 Ctrl+K，鼠标用户
         // 在首页就够不到全局检索。打开时顺手全选已有内容，连续检索不摩擦。
@@ -1897,16 +1887,7 @@ export function App() {
       {/* `focusNoteId` is consumed by the library item view; clear it once used. */}
       {focusNoteId && (route.name === 'library' || route.name === 'library-item') && <FocusClear onDone={clearFocusNoteId} />}
 
-      {/* Transient feedback for clipboard and other one-line results. */}
-      {globalNotice && (
-        <div
-          role="status"
-          data-testid="global-notice"
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] px-3.5 py-2 rounded-xl bg-sh-surface2 border border-sh-line-strong text-xs text-sh-fg shadow-xl max-w-[90vw] truncate"
-        >
-          {globalNotice}
-        </div>
-      )}
+
 
       {/* Exposed for diagnostics without importing the whole app in tests. */}
       <span className="hidden" data-testid="write-guard" data-mode={checkWritable().mode} />
