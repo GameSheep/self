@@ -545,7 +545,7 @@ npx playwright test --reporter=list
 | v3 设置接入专项 | `npx playwright test tests/e2e/backup-v3-settings.spec.ts` | **7 passed** |
 | 受影响的既有专项 | `settings-ia` + `state-backup` + `webdav` + `p1-main-path` | **26 passed** |
 | 备份与队列专项（含懒加载改动后复跑） | `backup-v3-settings` + `backup-providers` + `backup-v3` + `job-queue` + `state-backup` | **24 passed (1.4 分钟)** |
-| 生产构建与首屏预算 | `npm run build && npm run measure:first-load` | 通过。首屏静态图 gzip **191.56 KB / 6 个 chunk**，在 250 KB 预算内；v3 栈是 **6.33 KB 的按需 chunk**，不在首屏图里 |
+| 生产构建与首屏预算 | `npm run build && npm run measure:first-load` | 通过。首屏静态图 gzip **191.56 KB / 6 个 chunk**，在 250 KB 预算内；v3 栈是 **6.33 KB 的按需 chunk**，不在首屏图里。2026-11 性能批次后更新为 **152.81 KB / 3 个 chunk**（路由级懒加载，见下方 2026-11-01 条目） |
 | 全量回归 | `npx playwright test` | **278 passed / 0 failed（8.0 分钟）** |
 | 截图 | `docs/screenshots/p2-settings-v3-backup{,-narrow}.png` | 桌面 1280 与 390 窄屏各一张 |
 
@@ -565,7 +565,7 @@ npx playwright test --reporter=list
 
 ### 首屏预算与同步更新的既有测试
 
-**首屏预算是被盯住的**：把 v3 栈静态引入 `App` 后，首屏从 183.59 KB 涨到 **193.37 KB**（+9.8 KB gzip，实测），而绝大多数用户永远用不到 v3。改为按需 `import()` 后，v3 栈成为独立的 6.33 KB chunk，**首屏静态图 191.56 KB / 6 个 chunk**（`npm run measure:first-load`）。
+**首屏预算是被盯住的**：把 v3 栈静态引入 `App` 后，首屏从 183.59 KB 涨到 **193.37 KB**（+9.8 KB gzip，实测），而绝大多数用户永远用不到 v3。改为按需 `import()` 后，v3 栈成为独立的 6.33 KB chunk。**2026-11-01 性能批次**：本会话新增功能把首屏顶到 253.46 KB（超预算），已做路由级懒加载（15 个非首页视图 `React.lazy` + Suspense），回落到 **152.81 KB / 3 个 chunk**（-40%），最大单块 394 KB（<500 KB 告警线）。
 
 同时新增 `scripts/measure-entry-graph.mjs`：它从入口脚本出发跟随**静态** import 求 gzip 总和，而不是只看 `index-*.js`——旧的记录方式漏掉了同为同步加载的 `storage`、`jsx-runtime`、`stateBackup` 等 chunk，与 §15.4 的"初始路由 JS"不是同一个数字。**因此 191.56 KB 与旧记录的 183.59 KB 不能直接相减比较。**
 

@@ -16,14 +16,7 @@ import { fetchWucaiHighlights } from './lib/wucaiClient';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { ToastHost } from './shared/ui/toast';
-import { InboxView } from './components/views/InboxView';
-import { ProjectsView } from './components/views/ProjectsView';
-import { RemindersView } from './components/views/RemindersView';
-import { SitesView } from './components/views/SitesView';
-import { GlobalSearch } from './components/GlobalSearch';
 import type { SearchHit } from './domain/search';
-import { MasterKeyModal } from './components/modals/MasterKeyModal';
-import { OnboardingWizard } from './components/OnboardingWizard';
 import { applyIntegrationValues } from './lib/integrations';
 import { useCloudBackup } from './hooks/useCloudBackup';
 import { useV3Backup } from './hooks/useV3Backup';
@@ -44,13 +37,7 @@ import { migrateDomainReminders } from './domain/domains';
 import { taskFromTemplate } from './domain/checkinSites';
 import { HomeDashboard, type CaptureResult } from './features/home/HomeDashboard';
 import { LibraryTabs } from './features/library/LibraryTabs';
-import { ServersView } from './features/resources/ServersView';
-import { DomainsView } from './features/resources/DomainsView';
-import { AssetsView } from './features/resources/AssetsView';
 import { anchorFromDate, parseDateInputValue } from './lib/dates';
-import { VaultView } from './features/resources/VaultView';
-import { CheckInsView } from './features/tools/CheckInsView';
-import { DrawingView } from './features/tools/DrawingView';
 import { NotFoundView } from './features/shell/NotFoundView';
 
 /**
@@ -59,13 +46,26 @@ import { NotFoundView } from './features/shell/NotFoundView';
  * The OSS file tree, the AI ingestion wizard, the entry form and the settings
  * · panel are all large and are all reachable only by an explicit click, so they
  */
+const InboxView = React.lazy(() => import('./components/views/InboxView').then((m) => ({ default: m.InboxView })));
+const ProjectsView = React.lazy(() => import('./components/views/ProjectsView').then((m) => ({ default: m.ProjectsView })));
+const RemindersView = React.lazy(() => import('./components/views/RemindersView').then((m) => ({ default: m.RemindersView })));
+const SitesView = React.lazy(() => import('./components/views/SitesView').then((m) => ({ default: m.SitesView })));
+const GlobalSearch = React.lazy(() => import('./components/GlobalSearch').then((m) => ({ default: m.GlobalSearch })));
+const MasterKeyModal = React.lazy(() => import('./components/modals/MasterKeyModal').then((m) => ({ default: m.MasterKeyModal })));
+const OnboardingWizard = React.lazy(() => import('./components/OnboardingWizard').then((m) => ({ default: m.OnboardingWizard })));
+const AnnotationsPane = React.lazy(() => import('./features/library/AnnotationsPane').then((m) => ({ default: m.AnnotationsPane })));
+const NotesPane = React.lazy(() => import('./features/library/NotesPane').then((m) => ({ default: m.NotesPane })));
+const ServersView = React.lazy(() => import('./features/resources/ServersView').then((m) => ({ default: m.ServersView })));
+const DomainsView = React.lazy(() => import('./features/resources/DomainsView').then((m) => ({ default: m.DomainsView })));
+const AssetsView = React.lazy(() => import('./features/resources/AssetsView').then((m) => ({ default: m.AssetsView })));
+const VaultView = React.lazy(() => import('./features/resources/VaultView').then((m) => ({ default: m.VaultView })));
+const CheckInsView = React.lazy(() => import('./features/tools/CheckInsView').then((m) => ({ default: m.CheckInsView })));
+const DrawingView = React.lazy(() => import('./features/tools/DrawingView').then((m) => ({ default: m.DrawingView })));
 const DataInteropView = React.lazy(() => import('./components/views/DataInteropView').then((m) => ({ default: m.DataInteropView })));
 const AiIngestModal = React.lazy(() => import('./components/modals/AiIngestModal').then((m) => ({ default: m.AiIngestModal })));
 const AddItemModal = React.lazy(() => import('./components/modals/AddItemModal').then((m) => ({ default: m.AddItemModal })));
 const SettingsModal = React.lazy(() => import('./components/modals/SettingsModal'));
-import { AnnotationsPane } from './features/library/AnnotationsPane';
 const LibraryItemView = React.lazy(() => import('./features/library/LibraryItemView'));
-import { NotesPane } from './features/library/NotesPane';
 
 /** Loading placeholder that reserves space so the layout does not jump. */
 function ChunkFallback({ label = '正在加载…' }: { label?: string }) {
@@ -1392,7 +1392,7 @@ export function App() {
             )}
 
             {route.name === 'navigation' && (
-              <SitesView
+              <Suspense fallback={<ChunkFallback label="正在加载…" />}><SitesView
                 sites={state.sites}
                 categories={state.categories}
                 onVisit={visitSite}
@@ -1405,11 +1405,11 @@ export function App() {
                   onCaptureInbox: (raw) => captureEntry(raw, 'home'),
                   onAddNote: (note) => updateState((prev) => ({ ...prev, notes: [note, ...(prev.notes ?? [])] }))
                 }}
-              />
+              /></Suspense>
             )}
 
             {route.name === 'inbox' && (
-              <InboxView
+              <Suspense fallback={<ChunkFallback label="正在加载…" />}><InboxView
                 inbox={state.inbox || []}
                 onAddInboxItem={addInboxItem}
                 onUpdateInboxItem={updateInboxItem}
@@ -1425,7 +1425,7 @@ export function App() {
                   else if (type === 'site') go(buildRoute('navigation'));
                   else go(buildRoute('project', { id }));
                 }}
-              />
+              /></Suspense>
             )}
 
             {route.name === 'library' && route.query.view === 'sources' && (
@@ -1507,7 +1507,7 @@ export function App() {
                       </button>
                     </div>
                   ) : (
-                    <AnnotationsPane
+                    <Suspense fallback={<ChunkFallback label="正在加载…" />}><AnnotationsPane
                       annotations={state.annotations ?? []}
                       onSyncFromExtension={handleSyncAnnotations}
                       onUpdate={(annotation) =>
@@ -1524,7 +1524,7 @@ export function App() {
                           annotations: (prev.annotations ?? []).filter((entry) => entry.id !== id)
                         }))
                       }
-                    />
+                    /></Suspense>
                   )}
                 </div>
               </Suspense>
@@ -1537,7 +1537,7 @@ export function App() {
               route.query.view !== 'sources' && (
                 <div data-testid="notes-workspace">
                   <LibraryTabs active="notes" onNavigate={go} />
-                  <NotesPane
+                  <Suspense fallback={<ChunkFallback label="正在加载…" />}><NotesPane
                     focusNoteId={focusNoteId}
                     notes={state.notes || []}
                     folders={state.noteFolders ?? []}
@@ -1567,7 +1567,7 @@ export function App() {
                         })
                       }))
                     }
-                  />
+                  /></Suspense>
                 </div>
               )}
 
@@ -1606,7 +1606,7 @@ export function App() {
             )}
 
             {(route.name === 'projects' || route.name === 'project') && (
-              <ProjectsView
+              <Suspense fallback={<ChunkFallback label="正在加载…" />}><ProjectsView
                 state={state}
                 onAddProject={addProject}
                 onUpdateProject={updateProject}
@@ -1615,22 +1615,22 @@ export function App() {
                 /* 搜索命中 / 收件箱跳转的深链（#/projects/:id）以前落在这里 =
                    整页空白：路由解析出了 name:'project'，App 却只认 'projects'。 */
                 initialSelectedId={route.name === 'project' ? route.params.id : undefined}
-              />
+              /></Suspense>
             )}
 
             {route.name === 'reminders' && (
-              <RemindersView
+              <Suspense fallback={<ChunkFallback label="正在加载…" />}><RemindersView
                 reminders={state.reminders || []}
                 onAddReminder={addReminder}
                 onUpdateReminder={updateReminder}
                 onDeleteReminder={deleteReminder}
                 onToggleComplete={toggleReminderComplete}
                 onRenewReminder={renewReminder}
-              />
+              /></Suspense>
             )}
 
             {route.name === 'servers' && (
-              <ServersView
+              <Suspense fallback={<ChunkFallback label="正在加载…" />}><ServersView
                 servers={state.servers}
                 onDelete={deleteServer}
                 onUpdate={(server) =>
@@ -1642,7 +1642,7 @@ export function App() {
                 onCheck={(id) => checkServer(id)}
                 onCheckAll={() => checkAllServers()}
                 onOpenAddModal={(type) => openAddModal(type)}
-              />
+              /></Suspense>
             )}
 
             {route.name === 'assets' && (
@@ -1650,7 +1650,7 @@ export function App() {
                 {/* 到期总览是投影（提醒/服务器/凭证谁拥有日期这里读谁）+ 就地新建；
                     394 行的 AssetsView 曾经是孤儿组件——从未被任何文件 import，
                     订阅/证书集中视图对用户根本不存在。现在它才是这一页的主角。 */}
-                <AssetsView
+                <Suspense fallback={<ChunkFallback label="正在加载…" />}><AssetsView
                   state={state}
                   onNavigate={go}
                   onAddReminder={() => go('#/reminders')}
@@ -1674,9 +1674,9 @@ export function App() {
                       ...(anchor ? { anchorDay: anchor.day, anchorMonth: anchor.month } : {})
                     });
                   }}
-                />
+                /></Suspense>
                 <div className="mt-6">
-                  <DomainsView
+                  <Suspense fallback={<ChunkFallback label="正在加载…" />}><DomainsView
                     state={state}
                     onAddDomain={(domain) => updateState((prev) => ({ ...prev, domains: [domain, ...(prev.domains ?? [])] }))}
                     onUpdateDomain={(domain) =>
@@ -1688,13 +1688,13 @@ export function App() {
                     onDeleteDomain={(id) =>
                       updateState((prev) => ({ ...prev, domains: (prev.domains ?? []).filter((entry) => entry.id !== id) }))
                     }
-                  />
+                  /></Suspense>
                 </div>
               </>
             )}
 
             {route.name === 'vault' && (
-              <VaultView
+              <Suspense fallback={<ChunkFallback label="正在加载…" />}><VaultView
                 secrets={state.secrets}
                 masterPassword={masterPassword}
                 hasMasterAuth={hasMasterAuth}
@@ -1702,11 +1702,11 @@ export function App() {
                 onLockVault={handleLockVault}
                 onDelete={deleteSecret}
                 onOpenAddModal={(type) => openAddModal(type)}
-              />
+              /></Suspense>
             )}
 
             {route.name === 'checkins' && (
-              <CheckInsView
+              <Suspense fallback={<ChunkFallback label="正在加载…" />}><CheckInsView
                 checkIns={state.checkIns}
                 onRun={runCheckIn}
                 onDelete={deleteCheckIn}
@@ -1717,11 +1717,11 @@ export function App() {
                     checkIns: [taskFromTemplate(site), ...(prev.checkIns ?? [])]
                   }))
                 }
-              />
+              /></Suspense>
             )}
 
             {route.name === 'drawing' && (
-              <DrawingView handwritings={state.handwritings} onSave={saveHandwriting} onDelete={deleteHandwriting} />
+              <Suspense fallback={<ChunkFallback label="正在加载…" />}><DrawingView handwritings={state.handwritings} onSave={saveHandwriting} onDelete={deleteHandwriting} /></Suspense>
             )}
 
             {isPageSettings && (
@@ -1803,7 +1803,7 @@ export function App() {
 
       </div>
 
-      <GlobalSearch
+      <Suspense fallback={<ChunkFallback label="正在加载…" />}><GlobalSearch
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
         state={state}
@@ -1839,7 +1839,7 @@ export function App() {
          * what keeps `#/library/item/...` keys out of the search component.
          */
         onOpenResult={openSearchHit}
-      />
+      /></Suspense>
 
       <Suspense fallback={null}>
         <AiIngestModal
@@ -1853,14 +1853,14 @@ export function App() {
         />
       </Suspense>
 
-      <MasterKeyModal
+      <Suspense fallback={<ChunkFallback label="正在加载…" />}><MasterKeyModal
         isOpen={isMasterKeyOpen}
         onClose={() => setIsMasterKeyOpen(false)}
         onSuccess={(pwd) => {
           setMasterPassword(pwd);
           setHasMasterAuth(true);
         }}
-      />
+      /></Suspense>
 
       <Suspense fallback={null}>
         <AddItemModal
@@ -1879,7 +1879,7 @@ export function App() {
         />
       </Suspense>
 
-      <OnboardingWizard
+      <Suspense fallback={<ChunkFallback label="正在加载…" />}><OnboardingWizard
         isOpen={showOnboarding}
         features={state.features}
         onSkip={dismissOnboarding}
@@ -1891,7 +1891,7 @@ export function App() {
           dismissOnboarding();
           go(buildRoute('settings', { section: 'storage' }));
         }}
-      />
+      /></Suspense>
 
       {/* 设置只有页面形态；第二个 SettingsModal（永远打不开）已移除。 */}
       {/* `focusNoteId` is consumed by the library item view; clear it once used. */}
