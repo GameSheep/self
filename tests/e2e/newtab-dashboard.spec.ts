@@ -462,7 +462,70 @@ test.describe('模块面板：自定义与数据来源', () => {
           );
         })
     );
-    expect(stored!.modules.find((m) => m.id === 'm-sites')?.source).toEqual({ mode: 'bucket', value: 'AI' });
+    await page.close();
+  });
+
+  test('网站模块可以自选网站，刷新后还记得', async () => {
+    const page = await openNewTab();
+    const sites = page.locator('[data-module-id="m-sites"]');
+
+    // ⋯ → 数据来源… → 自选网站（勾选）
+    await sites.locator('.module-menu-btn').click();
+    await page.locator('.pop .pop-item', { hasText: '数据来源' }).click();
+    await page.locator('.pop .pop-item', { hasText: '自选网站' }).click();
+
+    // 勾 2 个（GitHub、阿里云），不勾 ChatGPT / Claude
+    await page.locator('.pop [data-pick-id="s-gh"]').click();
+    await page.locator('.pop [data-pick-id="s-ali"]').click();
+    await page.locator('.pop [data-pick-done]').click();
+
+    await expect(sites.locator('.site-card')).toHaveCount(2);
+    await expect(sites).toContainText('GitHub');
+    await expect(sites).toContainText('阿里云');
+    await expect(sites).not.toContainText('ChatGPT');
+
+    // 写进布局：source = { mode: 'custom', siteIds: [...] }
+    const stored = await page.evaluate(
+      () =>
+        new Promise<{ modules: Array<{ id: string; source: { mode?: string; siteIds?: string[] } }> } | null>((resolve) => {
+          chrome.storage.local.get(['selfhub_newtab_layout'], (res) =>
+            resolve((res.selfhub_newtab_layout as never) || null)
+          );
+        })
+    );
+    const source = stored!.modules.find((m) => m.id === 'm-sites')?.source;
+    expect(source?.mode).toBe('custom');
+    expect([...(source?.siteIds ?? [])].sort()).toEqual(['s-ali', 's-gh']);
+
+    // 刷新后仍然只显示自选的两个
+    await page.reload();
+    const after = page.locator('[data-module-id="m-sites"]');
+    await expect(after.locator('.site-card')).toHaveCount(2);
+    await page.close();
+  });
+
+  test('网站模块可以按原始分类筛选，同类型模块也能加第二个', async () => {
+    const page = await openNewTab();
+
+    // ① 按原始分类：数据来源 → 按原始分类 → 「AI 聊天助手」
+    const sites = page.locator('[data-module-id="m-sites"]');
+    await sites.locator('.module-menu-btn').click();
+    await page.locator('.pop .pop-item', { hasText: '数据来源' }).click();
+    await page.locator('.pop .pop-item', { hasText: '按原始分类' }).click();
+    await page.locator('.pop .pop-item', { hasText: 'AI 聊天助手' }).click();
+    await expect(sites.locator('.site-card')).toHaveCount(2);
+    await expect(sites).toContainText('ChatGPT');
+    await expect(sites).toContainText('Claude');
+    await expect(sites).not.toContainText('GitHub');
+
+    // ② 同类型再加一个实例：＋ 添加模块 → 全部网站，独立来源互不影响
+    await page.locator('[data-add-col="1"]').click();
+    await page.locator('.pop [data-add-type="sites"]').click();
+    const second = page.locator('[data-module-type="sites"]').last();
+    await expect(second).toBeVisible();
+    await expect(second.locator('.site-card')).toHaveCount(4);
+    // 第二个实例仍显示全部 4 个站（默认来源 all），第一个保持 2 个
+    await expect(sites.locator('.site-card')).toHaveCount(2);
     await page.close();
   });
 

@@ -925,3 +925,20 @@ html[data-theme='light'] .results { box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04)
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* 「自选网站」多选清单：勾选列表 + 完成按钮。 */
+.pop-multi {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+.pop-multi .pop-item { text-align: left; }
+.pop-item-done {
+  color: var(--accent);
+  font-weight: 600;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}

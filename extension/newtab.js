@@ -630,8 +630,54 @@
       body.appendChild(moreLink('去添网站 →', '#/navigation'));
       return;
     }
-    var groups = groupByBucket(sites);
     var mode = (mod.source && mod.source.mode) || 'all';
+
+    // 固定来源（☆ 常用 / 原始分类 / 自选）：先算出这组的站点集合，
+    // 再走与 all 相同的分组渲染——选站是自由组合，分组样式不另起炉灶。
+    if (mode === 'pinned' || mode === 'category' || mode === 'custom') {
+      var fixed = sites;
+      var head = '全部';
+      if (mode === 'pinned') {
+        fixed = sites.filter(function (site) { return site.pinned; });
+        head = '☆ 常用';
+      } else if (mode === 'category') {
+        var cat = (mod.source && mod.source.value) || '';
+        fixed = sites.filter(function (site) { return String(site.category || '').trim() === cat; });
+        head = cat || '未分类';
+      } else {
+        var ids = (mod.source && mod.source.siteIds) || [];
+        var wanted = {};
+        ids.forEach(function (id) { wanted[id] = true; });
+        fixed = sites.filter(function (site) { return wanted[site.id]; });
+        head = '自选 ' + fixed.length + ' 个';
+      }
+      if (!fixed.length) {
+        body.appendChild(el('div', 'empty',
+          mode === 'custom'
+            ? '还没有自选网站。点模块菜单「数据来源…」勾选要显示的站点。'
+            : '这一组下没有网站。'
+        ));
+        return;
+      }
+      var fixedGroups = groupByBucket(fixed);
+      BUCKETS.forEach(function (bucket) {
+        var list = fixedGroups[bucket];
+        if (!list.length) return;
+        var sub = el('div', 'subcard');
+        sub.setAttribute('data-bucket-card', bucket);
+        var subHead = el('div', 'subcard-head');
+        subHead.appendChild(el('span', 'subcard-title', bucket));
+        subHead.appendChild(el('span', 'subcard-count', String(list.length)));
+        sub.appendChild(subHead);
+        var grid = el('div', 'site-cards');
+        list.forEach(function (site) { grid.appendChild(siteCard(site)); });
+        sub.appendChild(grid);
+        body.appendChild(sub);
+      });
+      return;
+    }
+
+    var groups = groupByBucket(sites);
     var activeBucket = mode === 'bucket' ? mod.source.value : '全部';
 
     // 分类筛选做成模块顶部的一排小 chip：点一下就是「换个数据来源」。
@@ -870,6 +916,29 @@
     });
   }
 
+  /** 网站模块「按原始分类」的选项：工作台里的真实分类，不经过桶归并。 */
+  function siteCategoryOptions() {
+    var seen = {};
+    var out = [];
+    asArray(state.sites).forEach(function (site) {
+      var name = String((site && site.category) || '').trim();
+      if (!name || seen[name]) return;
+      seen[name] = true;
+      out.push({ value: name, label: name });
+    });
+    return out.sort(function (a, b) {
+      return a.label.localeCompare(b.label);
+    });
+  }
+
+  /** 「自选网站」勾选清单：全部站点，标签带域名以便区分同名站。 */
+  function sitePickOptions() {
+    return asArray(state.sites).map(function (site) {
+      var host = hostOf(site.url);
+      return { value: site.id, label: site.title + (host ? ' · ' + host : '') };
+    });
+  }
+
   function MODULE_TYPES() {
     return {
       notes: {
@@ -913,12 +982,17 @@
       sites: {
         label: '全部网站',
         icon: '🌐',
-        desc: '按分类成组，卡片套卡片',
+        desc: '分组方式可选：自动分桶 / 原始分类 / ☆ 常用 / 自选网站',
         legacyId: 'all-sites',
         defaultHeight: null,
         defaultSource: { mode: 'all' },
         sources: function () {
-          return [{ mode: 'all', label: '全部分类' }].concat(
+          return [
+            { mode: 'all', label: '全部分类（自动分桶）' },
+            { mode: 'pinned', label: '只看 ☆ 常用' },
+            { mode: 'category', label: '按原始分类', needsValue: true, valueLabel: '分类', options: siteCategoryOptions() },
+            { mode: 'custom', label: '自选网站（勾选）', needsValue: true, valueLabel: '网站', multi: true, options: sitePickOptions() }
+          ].concat(
             BUCKETS.map(function (bucket) {
               return { mode: 'bucket', label: '只看「' + bucket + '」', value: bucket };
             })

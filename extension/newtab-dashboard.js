@@ -827,6 +827,38 @@
         container.appendChild(el('div', 'pop-empty', '还没有可选的' + (source.valueLabel || '值') + '。'));
         return;
       }
+      if (source.multi) {
+        // 多选来源（自选网站）：勾选即时可见，「完成」写入模块配置。
+        var working = (mod.source && mod.source.siteIds || []).slice();
+        var list = el('div', 'pop-multi');
+        options.forEach(function (option) {
+          var row = el('button', 'pop-item');
+          row.type = 'button';
+          row.setAttribute('data-pick-id', option.value);
+          row.appendChild(el('span', 'pop-item-label', option.label));
+          var mark = el('span', 'pop-item-hint', working.indexOf(option.value) >= 0 ? '✓' : '');
+          row.appendChild(mark);
+          row.addEventListener('click', function () {
+            var at = working.indexOf(option.value);
+            if (at >= 0) working.splice(at, 1);
+            else working.push(option.value);
+            mark.textContent = at >= 0 ? '' : '✓';
+          });
+          list.appendChild(row);
+        });
+        container.appendChild(list);
+        var done = el('button', 'pop-item pop-item-done', '完成（' + working.length + ' 个）');
+        done.type = 'button';
+        done.setAttribute('data-pick-done', '');
+        done.addEventListener('click', function () {
+          mod.source = { mode: source.mode, siteIds: working };
+          saveLayout(layout);
+          closePop();
+          render();
+        });
+        container.appendChild(done);
+        return;
+      }
       options.forEach(function (option) {
         var active = (mod.source && mod.source.mode) === source.mode && mod.source.value === option.value;
         container.appendChild(
@@ -923,6 +955,9 @@
         if (sources[i].value !== undefined) {
           if (sources[i].value === (mod.source && mod.source.value)) return sources[i].label;
           continue;
+        }
+        if ((mod.source && mod.source.mode) === 'custom') {
+          return '自选 ' + ((mod.source && mod.source.siteIds) || []).length + ' 个网站';
         }
         if (sources[i].needsValue) {
           var options = sources[i].options || [];
