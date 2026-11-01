@@ -1683,16 +1683,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="p-3.5 rounded-xl bg-sh-surface2/40 border border-sh-line text-xs leading-relaxed">
                 <div className="font-semibold text-sh-fg flex items-center gap-1.5 mb-1.5">
                   <Shield className="w-4 h-4 text-sh-ok" />
-                  独立域名自定义部署与防护指引
+                  自定义域名部署
                 </div>
-                <p className="text-sh-muted mb-2">
-                  1. 本项目构建产物（`npm run build` 生成的 `dist` 目录）直接拖拽发布至 <strong>Cloudflare Pages</strong> 或任意静态托管服务即可秒级上线。<br />
-                  2. 在 Cloudflare Dashboard 绑定您的自定义域名（如 <code>my-hub.com</code>）。<br />
-                  3. 在 <strong>Zero Trust &gt; Access &gt; Applications</strong> 中为该域名添加门禁策略：设置规则为 <em>Include: Emails = 您的个人邮箱</em>。
+                <p className="text-sh-muted">
+                  自托管到 Cloudflare Pages 并加 Access 门禁的步骤在仓库 <span className="font-mono">docs/RELEASE.md</span>——那是部署文档，不属于隐私设置。
                 </p>
-                <div className="text-[11px] text-sh-ok bg-sh-ok/10 p-2 rounded-lg border border-sh-ok/40">
-                  ✅ 效果：未经授权的访客打开该域名会被 Cloudflare 边缘直接拦截；只有输入您邮箱的 6 位临时验证码才能进入。
-                </div>
               </div>
             </div>
           )}

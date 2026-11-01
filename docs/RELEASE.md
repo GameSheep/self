@@ -152,3 +152,13 @@ Self-Hub is a personal knowledge workspace: a new tab page plus a side panel tha
 page highlights and notes to the user's own device (optionally their own cloud storage).
 ```
 
+
+## 自定义域名部署与访问防护（Cloudflare Pages + Access）
+
+> 2026-11 从「设置 > 隐私与安全」迁出——部署文档不属于隐私设置。
+
+1. 本项目构建产物（`npm run build` 生成的 `dist` 目录）直接拖拽发布至 **Cloudflare Pages** 或任意静态托管服务即可秒级上线。
+2. 在 Cloudflare Dashboard 绑定您的自定义域名（如 `my-hub.com`）。
+3. 在 **Zero Trust > Access > Applications** 中为该域名添加门禁策略：设置规则为 *Include: Emails = 您的个人邮箱*。
+
+效果：未经授权的访客打开该域名会被 Cloudflare 边缘直接拦截；只有输入您邮箱的 6 位临时验证码才能进入。

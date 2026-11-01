@@ -916,6 +916,22 @@
     });
   }
 
+  /** 地理编码搜索：候选必须带省份（实测「大连」会命中福建的同名镇）。
+      城市级结果（有 population 或 PPLC/PPLA 特征）排前面。 */
+  function geocodeCity(query) {
+    var url = 'https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(query) +
+      '&language=zh&count=10';
+    return fetchJson(url).then(function (data) {
+      var results = (data.results || []).map(function (r) {
+        return { name: r.name, admin1: r.admin1 || '', lat: r.latitude, lon: r.longitude, population: r.population || 0 };
+      });
+      results.sort(function (a, b) { return b.population - a.population; });
+      return results.map(function (r) {
+        return { value: r.name, label: r.name + (r.admin1 ? ' · ' + r.admin1 : ''), lat: r.lat, lon: r.lon };
+      });
+    });
+  }
+
   /** 网站模块「按原始分类」的选项：工作台里的真实分类，不经过桶归并。 */
   function siteCategoryOptions() {
     var seen = {};
@@ -1052,11 +1068,13 @@
 
   function renderWeatherBody(mod, body) {
     var cityName = (mod.source && (mod.source.value || mod.source.city)) || '大连';
+    var lat = mod.source && mod.source.lat;
+    var lon = mod.source && mod.source.lon;
     var city = null;
     WEATHER_CITIES.forEach(function (c) {
       if (!city && c.name === cityName) city = c;
     });
-    if (!city) city = WEATHER_CITIES[0];
+    if (!city) city = lat && lon ? { name: cityName, lat: lat, lon: lon } : WEATHER_CITIES[0];
 
     var cacheKey = 'selfhub_weather_' + cityName;
     var container = el('div', 'weather');
@@ -1087,16 +1105,32 @@
         }
         target.appendChild(row);
       }
+      if (data.air && data.air.us_aqi != null) {
+        var aqi = Math.round(data.air.us_aqi);
+        var level = aqi <= 50 ? '优' : aqi <= 100 ? '良' : aqi <= 150 ? '轻度污染' : aqi <= 200 ? '中度污染' : aqi <= 300 ? '重度污染' : '严重污染';
+        var now2 = el('div', 'weather-aqi', 'AQI ' + aqi + '（' + level + '）· PM2.5 ' + Math.round(data.air.pm2_5));
+        target.appendChild(now2);
+      }
       var age = fetchedAt ? relTime(fetchedAt) : '';
       target.appendChild(el('div', 'weather-meta', 'Open-Meteo（免密钥）· ' + (age ? age + '的缓存' : '刚刚更新')));
     };
 
     renderWithCache(container, cacheKey, EXTRA_TTL.weather, renderData, function () {
-      return fetchJson(
+      // 天气与空气质量同源（air-quality 端点同样免密钥），并行取、合并进一份缓存。
+      var forecast = fetchJson(
         'https://api.open-meteo.com/v1/forecast?latitude=' + city.lat + '&longitude=' + city.lon +
           '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m' +
           '&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=4'
       );
+      var air = fetchJson(
+        'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' + city.lat + '&longitude=' + city.lon +
+          '&current=us_aqi,pm2_5&timezone=auto'
+      ).catch(function () { return null; }); // AQI 失败不拖垮天气展示
+      return Promise.all([forecast, air]).then(function (parts) {
+        var data = parts[0];
+        data.air = parts[1] && parts[1].current ? parts[1].current : null;
+        return data;
+      });
     }, '正在获取 ' + cityName + ' 的天气…');
   }
 
@@ -1230,17 +1264,37 @@
       focusBtn.type = 'button';
       focusBtn.setAttribute('data-testid', 'pomodoro-focus');
       focusBtn.addEventListener('click', function () {
-        setPomodoro({ mode: 'focus', endsAt: Date.now() + 25 * 60000 }).then(function () { renderPomodoroBody(mod, body); });
+        var endsAt = Date.now() + 25 * 60000;
+        setPomodoro({ mode: 'focus', endsAt: endsAt }).then(function () {
+          // 离开页面也能收到完成通知：alarms 会唤醒后台 worker。
+          try {
+            chrome.alarms.create('selfhub_pomodoro', { when: endsAt });
+          } catch (err) {
+            console.warn('[Self-Hub] pomodoro alarm unavailable', err);
+          }
+          renderPomodoroBody(mod, body);
+        });
       });
       var breakBtn = el('button', 'pomodoro-btn pomodoro-break', '休息 5 分钟');
       breakBtn.type = 'button';
       breakBtn.addEventListener('click', function () {
-        setPomodoro({ mode: 'break', endsAt: Date.now() + 5 * 60000 }).then(function () { renderPomodoroBody(mod, body); });
+        var endsAt = Date.now() + 5 * 60000;
+        setPomodoro({ mode: 'break', endsAt: endsAt }).then(function () {
+          try {
+            chrome.alarms.create('selfhub_pomodoro', { when: endsAt });
+          } catch (err) {
+            console.warn('[Self-Hub] pomodoro alarm unavailable', err);
+          }
+          renderPomodoroBody(mod, body);
+        });
       });
       var stopBtn = el('button', 'pomodoro-btn', '停止');
       stopBtn.type = 'button';
       stopBtn.addEventListener('click', function () {
-        setPomodoro(null).then(function () { renderPomodoroBody(mod, body); });
+        setPomodoro(null).then(function () {
+          clearPomodoroAlarm();
+          renderPomodoroBody(mod, body);
+        });
       });
       buttons.appendChild(focusBtn);
       buttons.appendChild(breakBtn);
@@ -1363,6 +1417,14 @@
 
   /** 倒计时每秒走字；跨过零点只触发一次整模块重画（画「完成」态）。 */
   var pomodoroTicker = null;
+
+  function clearPomodoroAlarm() {
+    try {
+      chrome.alarms.clear('selfhub_pomodoro');
+    } catch (err) {
+      console.warn('[Self-Hub] pomodoro alarm clear failed', err);
+    }
+  }
   var pomodoroExpiredFor = null;
 
   function MODULE_TYPES() {
@@ -1450,9 +1512,13 @@
         desc: '按城市的实时天气与三天预报（Open-Meteo，免密钥）',
         defaultSource: { mode: 'city', value: '大连' },
         sources: function () {
-          return WEATHER_CITIES.map(function (city) {
-            return { mode: 'city', label: city.name, value: city.name };
-          });
+          return [
+            { mode: 'city', label: '其他城市（输入名称搜索）', search: geocodeCity, geocode: true }
+          ].concat(
+            WEATHER_CITIES.map(function (city) {
+              return { mode: 'city', label: city.name, value: city.name };
+            })
+          );
         }
       },
       hitokoto: {

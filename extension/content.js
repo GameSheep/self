@@ -542,6 +542,7 @@
     // the claimed URL and the real tab is rejected instead of trusted.
     sendCommand('GET_PAGE_ANNOTATIONS', { url: window.location.href })
       .then((data) => {
+        console.log('[Self-Hub][debug] restore got', data && data.annotations && data.annotations.length, 'annotations for', location.href);
         if (!data || !Array.isArray(data.annotations) || data.annotations.length === 0) return;
         data.annotations.forEach((item) => {
           if (!item.text) return;
@@ -551,54 +552,139 @@
       .catch((err) => console.warn('[Self-Hub] restoring highlights failed', err));
   }
 
-  function highlightTextInDocument(annotation) {
-    if (!annotation.text || !annotation.text.trim()) return;
-
-    // Search DOM text nodes with strict tag filtering to prevent script/style mutation
-    const treeWalker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode: (node) => {
-          const parent = node.parentElement;
-          if (!parent) return NodeFilter.FILTER_REJECT;
-          const tag = parent.tagName.toUpperCase();
-          if (['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'NOSCRIPT', 'SVG'].includes(tag)) {
-            return NodeFilter.FILTER_REJECT;
-          }
-          if (parent.classList.contains('selfhub-highlight')) {
-            return NodeFilter.FILTER_REJECT;
-          }
-          return NodeFilter.FILTER_ACCEPT;
+  /** 可高亮的文本节点收集（跳过脚本/样式/已包裹的节点）。 */
+  function collectTextNodes(root) {
+    const nodes = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        const parent = node.parentElement;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        const tag = parent.tagName.toUpperCase();
+        if (['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'NOSCRIPT', 'SVG'].includes(tag)) {
+          return NodeFilter.FILTER_REJECT;
         }
+        if (parent.closest('.selfhub-highlight')) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
       }
-    );
+    });
     let node;
-    while ((node = treeWalker.nextNode())) {
-      const idx = node.textContent.indexOf(annotation.text);
-      if (idx !== -1) {
-
-        const range = document.createRange();
-        range.setStart(node, idx);
-        range.setEnd(node, idx + annotation.text.length);
-
-        const mark = document.createElement('mark');
-        mark.className = `selfhub-highlight selfhub-hl-${annotation.color || 'yellow'}`;
-        mark.setAttribute('data-selfhub-id', annotation.id);
-        mark.setAttribute('title', annotation.note || '点击查看/编辑批注 (Self-Hub)');
-        mark.addEventListener('click', (e) => {
-          e.stopPropagation();
-          showAnnotationPopover(mark, annotation);
-        });
-
-        try {
-          range.surroundContents(mark);
-        } catch {}
-        break; // matched
-      }
-    }
+    while ((node = walker.nextNode())) nodes.push(node);
+    return nodes;
   }
 
+  /**
+   * 锚定感知的区间查找：在拼接后的全文里找 annotation.text 的所有出现，
+   * 用 anchor（prefix/suffix/startOffset）给候选打分——划同一句话两次、
+   * 页面改版后偏移漂移，靠上下文而不是只靠首匹配。
+   * 返回 { startNode, startOffset, endNode, endOffset } 或 null。
+   */
+  function findAnchoredRange(annotation, nodes) {
+    const boundary = annotation.text;
+    const parts = [];
+    let total = 0;
+    nodes.forEach((node) => {
+      parts.push({ node, start: total, text: node.textContent });
+      total += node.textContent.length;
+    });
+    if (!total) return null;
+
+    const haystack = parts.map((p) => p.text).join('');
+    const candidates = [];
+    let from = 0;
+    while (true) {
+      const at = haystack.indexOf(boundary, from);
+      if (at === -1) break;
+      let score = 0;
+      if (annotation.anchor && annotation.anchor.prefix && haystack.slice(Math.max(0, at - annotation.anchor.prefix.length), at) === annotation.anchor.prefix) score += 2;
+      if (annotation.anchor && annotation.anchor.suffix && haystack.slice(at + boundary.length, at + boundary.length + annotation.anchor.suffix.length) === annotation.anchor.suffix) score += 2;
+      if (annotation.anchor && Number.isFinite(annotation.anchor.startOffset)) {
+        score += Math.max(0, 1 - Math.abs(at - annotation.anchor.startOffset) / 500);
+      }
+      candidates.push({ at, score });
+      from = at + 1;
+    }
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => b.score - a.score);
+    const best = candidates[0].at;
+    const stop = best + boundary.length;
+
+    // 拼接坐标 → 节点坐标。
+    let startNode = null, startOffset = 0, endNode = null, endOffset = 0;
+    for (const part of parts) {
+      const partEnd = part.start + part.text.length;
+      if (!startNode && best < partEnd) {
+        startNode = part.node;
+        startOffset = best - part.start;
+      }
+      if (stop <= partEnd && stop > part.start) {
+        endNode = part.node;
+        endOffset = stop - part.start;
+        break;
+      }
+    }
+    if (!startNode || !endNode) return null;
+    return { startNode, startOffset, endNode, endOffset };
+  }
+
+  /** 把区间（可跨节点）按节点逐段包上 mark，共用同一个批注 id。 */
+  function highlightRange(range, annotation) {
+    const nodes = [];
+    const walker = document.createTreeWalker(
+      range.commonAncestorContainer,
+      NodeFilter.SHOW_TEXT,
+      { acceptNode: (node) => (range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT) }
+    );
+    let node;
+    while ((node = walker.nextNode())) nodes.push(node);
+
+    nodes.forEach((node) => {
+      const startAt = node === range.startContainer ? range.startOffset : 0;
+      const endAt = node === range.endContainer ? range.endOffset : node.textContent.length;
+      if (endAt <= startAt) return;
+      const parent = node.parentElement;
+      if (!parent || parent.closest('.selfhub-highlight')) return;
+
+      const slice = document.createTextNode(node.textContent.slice(startAt, endAt));
+      const mark = document.createElement('mark');
+      mark.className = 'selfhub-highlight selfhub-hl-' + (annotation.color || 'yellow');
+      mark.setAttribute('data-selfhub-id', annotation.id);
+      mark.setAttribute('title', annotation.note || '点击查看/编辑批注 (Self-Hub)');
+      mark.appendChild(slice);
+      mark.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showAnnotationPopover(mark, annotation);
+      });
+      parent.insertBefore(mark, node);
+      const rest = document.createTextNode(node.textContent.slice(endAt));
+      if (rest.textContent) parent.insertBefore(rest, node.nextSibling);
+      parent.removeChild(node);
+    });
+  }
+
+  function highlightTextInDocument(annotation) {
+    if (!annotation.text || !annotation.text.trim()) return;
+    const nodes = collectTextNodes(document.body);
+    const rangeSpec = findAnchoredRange(annotation, nodes);
+    if (!rangeSpec) return; // 页面改版找不到原文：保持安静，批注仍在库里
+    const range = document.createRange();
+    range.setStart(rangeSpec.startNode, rangeSpec.startOffset);
+    range.setEnd(rangeSpec.endNode, rangeSpec.endOffset);
+    highlightRange(range, annotation);
+  }
+
+  /*
+   * The old `window.postMessage` bridge into the Self-Hub page is gone.
+   *
+   * It let any page that merely *looked* like the app (localhost, or a page whose
+   * title contained "Self-Hub") ask this content script for the whole annotation
+   * library. Dev doc §9.2 forbids exactly that: "不依赖万能 postMessage 桥", and a
+   * content script must not be able to read the library on behalf of the page it
+   * runs in. A content script may only submit captures for its own page.
+   *
+   * The packed app is itself an extension page, so it talks to the background
+   * directly (`GET_ALL_ANNOTATIONS` is allowed for page senders) — no bridge
+   * through an untrusted document is needed.
+   */
   /*
    * The old `window.postMessage` bridge into the Self-Hub page is gone.
    *

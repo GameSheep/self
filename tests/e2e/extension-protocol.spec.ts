@@ -253,7 +253,7 @@ test.describe('新标签页：网页批注卡片', () => {
     // 最新在前：第一行是新页面那条，带批注摘要。
     const firstRow = list.locator('[data-annotation-id="ann-new"]');
     await expect(firstRow).toBeVisible();
-    await expect(firstRow).toContainText('新页面');
+    // 主行是划词原文（pageTitle 在 tooltip 里，行内不重复）。
     await expect(firstRow).toContainText('最新的划线内容');
     await expect(firstRow).toContainText('我的思考');
 
@@ -778,4 +778,6 @@ test.describe('P2-04 扩展单写入口（真实扩展上下文）', () => {
 
     await page.close();
   });
+
+
 });

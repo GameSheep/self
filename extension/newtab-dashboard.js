@@ -831,6 +831,49 @@
         container.appendChild(el('div', 'pop-empty', '还没有可选的' + (source.valueLabel || '值') + '。'));
         return;
       }
+      if (source.geocode) {
+        // 地理编码搜索：输入 → 异步候选（带省份）→ 点选写入来源。
+        container.appendChild(el('div', 'pop-title', source.label));
+        var box = el('input', 'pop-search');
+        box.type = 'text';
+        box.placeholder = '输入城市名，如 乌鲁木齐';
+        box.setAttribute('aria-label', '搜索城市');
+        container.appendChild(box);
+        var resultList = el('div', 'pop-multi');
+        container.appendChild(resultList);
+        var timer = null;
+        box.addEventListener('input', function () {
+          if (timer) clearTimeout(timer);
+          var q = box.value.trim();
+          if (!q) { resultList.textContent = ''; return; }
+          timer = setTimeout(function () {
+            resultList.textContent = '';
+            resultList.appendChild(el('div', 'pop-empty', '搜索中…'));
+            Promise.resolve(source.search(q)).then(function (options) {
+              resultList.textContent = '';
+              if (!options.length) {
+                resultList.appendChild(el('div', 'pop-empty', '没有匹配的城市。'));
+                return;
+              }
+              options.forEach(function (option) {
+                resultList.appendChild(
+                  menuItem(option.label, function () {
+                    mod.source = { mode: source.mode, value: option.value, lat: option.lat, lon: option.lon };
+                    saveLayout(layout);
+                    closePop();
+                    render();
+                  })
+                );
+              });
+            }).catch(function (err) {
+              resultList.textContent = '';
+              resultList.appendChild(el('div', 'pop-empty', '搜索失败：' + ((err && err.message) || '网络不可用')));
+            });
+          }, 300);
+        });
+        setTimeout(function () { box.focus(); }, 0);
+        return;
+      }
       if (source.multi) {
         // 多选来源（自选网站）：勾选即时可见，「完成」写入模块配置。
         var working = (mod.source && mod.source.siteIds || []).slice();
@@ -977,11 +1020,21 @@
       return '';
     }
 
+    var ADD_GROUPS = [
+      { title: '记录', types: ['quicknote', 'capture'] },
+      { title: '浏览', types: ['notes', 'pinned', 'sites', 'annotations', 'weather', 'hitokoto', 'rates'] },
+      { title: '管理', types: ['checkins', 'reminders', 'countdown', 'pomodoro'] }
+    ];
+
     function openAddPop(anchor, columnIndex) {
       openPop(anchor, function (container) {
         container.appendChild(el('div', 'pop-title', '添加模块'));
-        Object.keys(types).forEach(function (type) {
-          var spec = types[type];
+        ADD_GROUPS.forEach(function (group) {
+          var present = group.types.filter(function (type) { return types[type]; });
+          if (!present.length) return;
+          container.appendChild(el('div', 'pop-group-title', group.title));
+          present.forEach(function (type) {
+            var spec = types[type];
           var item = el('button', 'pop-item pop-add-item');
           item.type = 'button';
           item.setAttribute('data-add-type', type);
@@ -1004,6 +1057,7 @@
             render();
           });
           container.appendChild(item);
+          });
         });
       });
     }

@@ -78,6 +78,16 @@ if (chrome.runtime.onStartup) {
 
 if (chrome.alarms) {
   chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'selfhub_pomodoro') {
+      // 番茄钟完成：模块 UI 只在页面打开时走字，离开页面的人靠这条通知。
+      chrome.notifications.create('selfhub_pomodoro_done', {
+        type: 'basic',
+        iconUrl: 'icon128.png',
+        title: '🍅 番茄钟完成',
+        message: '一个专注周期结束了。休息一下，或者再来一轮。'
+      });
+      return;
+    }
     if (alarm.name === REMINDER_ALARM) {
       checkDueReminders().catch((err) => console.warn('[Self-Hub] reminder check failed', err));
     }
