@@ -681,4 +681,149 @@ test.describe('模块面板：自定义与数据来源', () => {
     await page.close();
   });
 
+
+  test.describe('快捷内容模块', () => {
+    // 每条用例都先 openNewTab() 拿到真实扩展页 view——fixture 的 page 是空白页。
+    test('天气：两个城市两个模块，互不影响', async () => {
+      const view = await openNewTab();
+      // 环境无外网：直接种缓存（模块先渲染缓存），断言渲染路径与双实例独立。
+      const weather = (temp: number) => ({
+        fetchedAt: Date.now(),
+        data: {
+          current: { temperature_2m: temp, relative_humidity_2m: 61, weather_code: 3, wind_speed_10m: 15 },
+          daily: {
+            time: ['2026-11-01', '2026-11-02'],
+            weather_code: [3, 1],
+            temperature_2m_max: [temp + 1, temp],
+            temperature_2m_min: [temp - 5, temp - 7]
+          }
+        }
+      });
+      await view.evaluate(
+        ([dl, bj]) =>
+          new Promise<void>((resolve) => {
+            chrome.storage.local.set({ selfhub_weather_大连: dl, selfhub_weather_北京: bj }, () => resolve());
+          }),
+        [weather(14), weather(20)] as const
+      );
+
+      await view.locator('[data-add-col="0"]').click();
+      await view.locator('.pop [data-add-type="weather"]').click();
+      const first = view.locator('[data-module-type="weather"]').first();
+      await expect(first.locator('.weather-temp')).toHaveText('14°C', { timeout: 10_000 });
+      await expect(first).toContainText('大连');
+
+      await view.locator('[data-add-col="2"]').click();
+      await view.locator('.pop [data-add-type="weather"]').click();
+      const second = view.locator('[data-module-type="weather"]').last();
+      await second.locator('.module-menu-btn').click();
+      await view.locator('.pop .pop-item', { hasText: '数据来源' }).click();
+      await view.locator('.pop .pop-item', { hasText: '北京' }).click();
+      await expect(second.locator('.weather-temp')).toHaveText('20°C', { timeout: 10_000 });
+      await expect(first.locator('.weather-temp')).toHaveText('14°C');
+      await view.close();
+    });
+
+    test('一言：显示句子与出处，可换一句', async () => {
+      const view = await openNewTab();
+      await view.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            chrome.storage.local.set(
+              { selfhub_hitokoto: { fetchedAt: Date.now(), data: { hitokoto: '测试一句话', from: '测试来源', from_who: '测试者' } } },
+              () => resolve()
+            );
+          })
+      );
+
+      await view.locator('[data-add-col="0"]').click();
+      await view.locator('.pop [data-add-type="hitokoto"]').click();
+      const mod = view.locator('[data-module-type="hitokoto"]').first();
+      await expect(mod.locator('.hitokoto-text')).toContainText('测试一句话', { timeout: 10_000 });
+      await expect(mod.locator('.hitokoto-from')).toContainText('测试者');
+      // 换一句：清掉缓存重新拉取（本环境无外网，断言缓存被清）。
+      await mod.locator('.hitokoto-refresh').click();
+      await expect
+        .poll(async () =>
+          view.evaluate(
+            () =>
+              new Promise<string | null>((resolve) => {
+                chrome.storage.local.get(['selfhub_hitokoto'], (res) => resolve((res.selfhub_hitokoto as never) ?? null));
+              })
+          )
+        )
+        .toBeNull();
+      await view.close();
+    });
+
+    test('倒数日：添加条目显示剩余天数，刷新后还在', async () => {
+      const view = await openNewTab();
+      await view.locator('[data-add-col="0"]').click();
+      await view.locator('.pop [data-add-type="countdown"]').click();
+      const mod = view.locator('[data-module-type="countdown"]').first();
+
+      const tomorrow = new Date(Date.now() + 86400000);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const dateStr = tomorrow.getFullYear() + '-' + pad(tomorrow.getMonth() + 1) + '-' + pad(tomorrow.getDate());
+      await mod.locator('.countdown-input').first().fill('发工资');
+      await mod.locator('.countdown-date').fill(dateStr);
+      await mod.locator('.countdown-add').click();
+
+      await expect(mod.locator('.list-title')).toHaveText('发工资');
+      await expect(mod.locator('.badge')).toHaveText(/还有 1 天|就是今天/);
+
+      await view.reload();
+      const after = view.locator('[data-module-type="countdown"]').first();
+      await expect(after.locator('.list-title')).toHaveText('发工资');
+      await view.close();
+    });
+
+    test('汇率：显示常用货币对基准的汇率（缓存数据）', async () => {
+      const view = await openNewTab();
+      await view.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            chrome.storage.local.set(
+              {
+                selfhub_rates_CNY: {
+                  fetchedAt: Date.now(),
+                  data: { rates: { USD: 0.14, EUR: 0.13, JPY: 21.2, GBP: 0.11, HKD: 1.08, KRW: 190 } }
+                }
+              },
+              () => resolve()
+            );
+          })
+      );
+
+      await view.locator('[data-add-col="0"]').click();
+      await view.locator('.pop [data-add-type="rates"]').click();
+      const mod = view.locator('[data-module-type="rates"]').first();
+      await expect(mod.locator('.list-title').first()).toContainText('1 CNY = 0.14 USD', { timeout: 10_000 });
+      await expect(mod).toContainText('1 CNY = 21.2 JPY');
+      await view.close();
+    });
+
+    test('番茄钟：开始专注后计时并跨刷新继续', async () => {
+      const view = await openNewTab();
+      await view.locator('[data-add-col="0"]').click();
+      await view.locator('.pop [data-add-type="pomodoro"]').click();
+      const mod = view.locator('[data-module-type="pomodoro"]').first();
+      await mod.locator('[data-testid="pomodoro-focus"]').click();
+      const clock = mod.locator('.pomodoro-clock');
+      await expect(clock).toHaveText(/2[0-9]:[0-9]{2}/);
+      const stored = await view.evaluate(
+        () =>
+          new Promise<{ endsAt: number } | null>((resolve) => {
+            chrome.storage.local.get(['selfhub_pomodoro'], (res) => resolve((res.selfhub_pomodoro as never) || null));
+          })
+      );
+      expect(stored?.endsAt).toBeGreaterThan(Date.now());
+
+      await view.reload();
+      const after = view.locator('[data-module-type="pomodoro"]').first();
+      await expect(after.locator('.pomodoro-clock')).toHaveText(/2[0-9]:[0-9]{2}/);
+      await view.close();
+    });
+  });
+
 });

@@ -827,6 +827,10 @@
         container.appendChild(el('div', 'pop-empty', '还没有可选的' + (source.valueLabel || '值') + '。'));
         return;
       }
+      if (!options.length) {
+        container.appendChild(el('div', 'pop-empty', '还没有可选的' + (source.valueLabel || '值') + '。'));
+        return;
+      }
       if (source.multi) {
         // 多选来源（自选网站）：勾选即时可见，「完成」写入模块配置。
         var working = (mod.source && mod.source.siteIds || []).slice();
@@ -859,9 +863,10 @@
         container.appendChild(done);
         return;
       }
+      var wrap = options.length > 10 ? el('div', 'pop-multi') : container;
       options.forEach(function (option) {
         var active = (mod.source && mod.source.mode) === source.mode && mod.source.value === option.value;
-        container.appendChild(
+        (options.length > 10 ? wrap : container).appendChild(
           menuItem(option.label, function () {
             mod.source = { mode: source.mode, value: option.value };
             saveLayout(layout);
@@ -870,6 +875,7 @@
           }, { active: active })
         );
       });
+      if (options.length > 10) container.appendChild(wrap);
     }
 
     function openModuleMenu(anchor, mod, moduleEl) {

@@ -939,6 +939,432 @@
     });
   }
 
+  /* ── 快捷内容模块：天气 / 一言 / 倒数日 / 番茄钟 / 汇率 ─────────────── */
+
+  // 内置城市坐标表（离线、零歧义）。地理编码 API 对中文同名地名不可靠——
+  // 实测 geocoding「大连」命中的是福建的大连镇，辽宁大连市根本不在候选里，
+  // 所以常用城市直接内置，选城市 = 从表里选。
+  var WEATHER_CITIES = [
+    { name: '北京', lat: 39.904, lon: 116.407 },
+    { name: '上海', lat: 31.23, lon: 121.474 },
+    { name: '大连', lat: 38.914, lon: 121.605 },
+    { name: '广州', lat: 23.129, lon: 113.264 },
+    { name: '深圳', lat: 22.543, lon: 114.058 },
+    { name: '杭州', lat: 30.274, lon: 120.155 },
+    { name: '成都', lat: 30.572, lon: 104.066 },
+    { name: '武汉', lat: 30.593, lon: 114.305 },
+    { name: '西安', lat: 34.341, lon: 108.94 },
+    { name: '南京', lat: 32.061, lon: 118.798 },
+    { name: '重庆', lat: 29.563, lon: 106.551 },
+    { name: '天津', lat: 39.343, lon: 117.362 },
+    { name: '沈阳', lat: 41.806, lon: 123.432 },
+    { name: '哈尔滨', lat: 45.803, lon: 126.535 },
+    { name: '青岛', lat: 36.067, lon: 120.383 },
+    { name: '苏州', lat: 31.299, lon: 120.585 },
+    { name: '厦门', lat: 24.48, lon: 118.089 },
+    { name: '长沙', lat: 28.228, lon: 112.939 },
+    { name: '郑州', lat: 34.747, lon: 113.625 },
+    { name: '昆明', lat: 24.88, lon: 102.833 },
+    { name: '三亚', lat: 18.253, lon: 109.512 },
+    { name: '乌鲁木齐', lat: 43.826, lon: 87.617 },
+    { name: '拉萨', lat: 29.652, lon: 91.141 },
+    { name: '香港', lat: 22.32, lon: 114.169 },
+    { name: '澳门', lat: 22.198, lon: 113.544 },
+    { name: '台北', lat: 25.033, lon: 121.565 }
+  ];
+
+  // WMO 天气码 → 中文 + 字符图标。
+  var WEATHER_CODES = {
+    0: ['晴', '☀️'], 1: ['大致晴', '🌤️'], 2: ['多云', '⛅'], 3: ['阴', '☁️'],
+    45: ['雾', '🌫️'], 48: ['雾凇', '🌫️'],
+    51: ['小毛毛雨', '🌦️'], 53: ['毛毛雨', '🌦️'], 55: ['大毛毛雨', '🌧️'],
+    61: ['小雨', '🌦️'], 63: ['中雨', '🌧️'], 65: ['大雨', '🌧️'],
+    66: ['冻雨', '🌧️'], 67: ['强冻雨', '🌧️'],
+    71: ['小雪', '🌨️'], 73: ['中雪', '🌨️'], 75: ['大雪', '❄️'], 77: ['雪粒', '🌨️'],
+    80: ['小阵雨', '🌦️'], 81: ['阵雨', '🌧️'], 82: ['强阵雨', '⛈️'],
+    85: ['小阵雪', '🌨️'], 86: ['阵雪', '❄️'],
+    95: ['雷雨', '⛈️'], 96: ['雷雨伴冰雹', '⛈️'], 99: ['强雷雨伴冰雹', '⛈️']
+  };
+
+  function weatherDescribe(code) {
+    return WEATHER_CODES[code] || ['未知', '🌡️'];
+  }
+
+  var EXTRA_TTL = { weather: 30 * 60000, hitokoto: 10 * 60000, rates: 6 * 3600000 };
+  var extraInFlight = {};
+
+  function extraCacheGet(key) {
+    return new Promise(function (resolve) {
+      try {
+        chrome.storage.local.get([key], function (res) {
+          resolve((res && res[key]) || null);
+        });
+      } catch (err) {
+        resolve(null);
+      }
+    });
+  }
+
+  function extraCacheSet(key, data) {
+    try {
+      var obj = {};
+      obj[key] = { fetchedAt: Date.now(), data: data };
+      chrome.storage.local.set(obj);
+    } catch (err) {
+      console.warn('[Self-Hub] new tab: cannot cache', key, err);
+    }
+  }
+
+  function fetchJson(url) {
+    return fetch(url).then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    });
+  }
+
+  /** 有缓存先画缓存（并标出数据年龄），过期/缺失才发起请求；同一城市并发只发一次。 */
+  function renderWithCache(container, cacheKey, ttl, renderData, fetchAndBuild, loadingText) {
+    extraCacheGet(cacheKey).then(function (entry) {
+      var fresh = entry && Date.now() - entry.fetchedAt < ttl;
+      if (entry) {
+        renderData(container, entry.data, entry.fetchedAt);
+        if (fresh) return;
+      } else {
+        container.textContent = '';
+        container.appendChild(el('div', 'empty', loadingText));
+      }
+      if (extraInFlight[cacheKey]) return;
+      extraInFlight[cacheKey] = true;
+      fetchAndBuild()
+        .then(function (data) {
+          delete extraInFlight[cacheKey];
+          extraCacheSet(cacheKey, data);
+          container.textContent = '';
+          renderData(container, data, Date.now());
+        })
+        .catch(function (err) {
+          delete extraInFlight[cacheKey];
+          container.textContent = '';
+          container.appendChild(el('div', 'empty', '获取失败：' + ((err && err.message) || '网络不可用') + '。稍后会自动重试。'));
+        });
+    });
+  }
+
+  function renderWeatherBody(mod, body) {
+    var cityName = (mod.source && (mod.source.value || mod.source.city)) || '大连';
+    var city = null;
+    WEATHER_CITIES.forEach(function (c) {
+      if (!city && c.name === cityName) city = c;
+    });
+    if (!city) city = WEATHER_CITIES[0];
+
+    var cacheKey = 'selfhub_weather_' + cityName;
+    var container = el('div', 'weather');
+    body.appendChild(container);
+
+    var renderData = function (target, data, fetchedAt) {
+      target.textContent = '';
+      var cur = data.current;
+      var desc = weatherDescribe(cur.weather_code);
+      var now = el('div', 'weather-now');
+      now.appendChild(el('span', 'weather-icon', desc[1]));
+      var main = el('div', 'weather-main');
+      main.appendChild(el('div', 'weather-temp', Math.round(cur.temperature_2m) + '°C'));
+      main.appendChild(el('div', 'weather-desc', desc[0] + ' · ' + cityName));
+      main.appendChild(el('div', 'weather-sub', '湿度 ' + cur.relative_humidity_2m + '% · 风 ' + cur.wind_speed_10m + ' km/h'));
+      now.appendChild(main);
+      target.appendChild(now);
+
+      if (data.daily) {
+        var row = el('div', 'weather-days');
+        var names = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+        for (var i = 0; i < data.daily.time.length; i += 1) {
+          var day = el('div', 'weather-day');
+          day.appendChild(el('div', 'weather-day-name', i === 0 ? '今天' : names[new Date(data.daily.time[i]).getDay()]));
+          day.appendChild(el('div', 'weather-day-icon', weatherDescribe(data.daily.weather_code[i])[1]));
+          day.appendChild(el('div', 'weather-day-temp', Math.round(data.daily.temperature_2m_max[i]) + '° / ' + Math.round(data.daily.temperature_2m_min[i]) + '°'));
+          row.appendChild(day);
+        }
+        target.appendChild(row);
+      }
+      var age = fetchedAt ? relTime(fetchedAt) : '';
+      target.appendChild(el('div', 'weather-meta', 'Open-Meteo（免密钥）· ' + (age ? age + '的缓存' : '刚刚更新')));
+    };
+
+    renderWithCache(container, cacheKey, EXTRA_TTL.weather, renderData, function () {
+      return fetchJson(
+        'https://api.open-meteo.com/v1/forecast?latitude=' + city.lat + '&longitude=' + city.lon +
+          '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m' +
+          '&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=4'
+      );
+    }, '正在获取 ' + cityName + ' 的天气…');
+  }
+
+  function renderHitokotoBody(mod, body) {
+    var container = el('div', 'hitokoto');
+    body.appendChild(container);
+    var renderData = function (target, data, fetchedAt) {
+      target.textContent = '';
+      target.appendChild(el('div', 'hitokoto-text', '「' + (data.hitokoto || '……') + '」'));
+      var who = [data.from_who, data.from ? '《' + data.from + '》' : ''].filter(Boolean).join(' ');
+      target.appendChild(el('div', 'hitokoto-from', who ? '—— ' + who : '佚名'));
+      var foot = el('div', 'hitokoto-foot');
+      var again = el('button', 'hitokoto-refresh', '换一句');
+      again.type = 'button';
+      again.addEventListener('click', function () {
+        try { chrome.storage.local.remove('selfhub_hitokoto'); } catch (err) {}
+        container.textContent = '';
+        container.appendChild(el('div', 'empty', '正在换一句…'));
+        renderWithCache(container, 'selfhub_hitokoto', 0, renderData, function () {
+          return fetchJson('https://v1.hitokoto.cn/?max_length=60');
+        }, '正在换一句…');
+      });
+      foot.appendChild(again);
+      if (fetchedAt) foot.appendChild(el('span', 'weather-meta', relTime(fetchedAt)));
+      target.appendChild(foot);
+    };
+    // 「换一句」把 TTL 传 0：强制走网络。
+    renderWithCache(container, 'selfhub_hitokoto', EXTRA_TTL.hitokoto, renderData, function () {
+      return fetchJson('https://v1.hitokoto.cn/?max_length=60');
+    }, '正在获取一言…');
+  }
+
+  function renderCountdownBody(mod, body) {
+    body.textContent = '';
+    var container = el('div', 'countdown');
+    body.appendChild(container);
+
+    var renderList = function (target, entries) {
+      var list = el('div', 'list');
+      if (!entries.length) {
+        list.appendChild(el('div', 'empty', '还没有倒数日。添加一个纪念日或截止日。'));
+      }
+      entries.forEach(function (entry) {
+        var row = el('div', 'list-item');
+        var main = el('span', 'list-main');
+        main.appendChild(el('span', 'list-title', entry.title || '未命名'));
+        main.appendChild(el('span', 'list-sub', entry.date));
+        row.appendChild(main);
+        var days = Math.ceil((parseDay(entry.date) - startOfToday()) / DAY);
+        var label = days === 0 ? '就是今天' : days > 0 ? '还有 ' + days + ' 天' : '已过 ' + Math.abs(days) + ' 天';
+        var tone = days === 0 ? 'soon' : days > 0 ? 'ok' : 'overdue';
+        row.appendChild(el('span', 'badge ' + tone, label));
+        var del = el('button', 'countdown-del', '×');
+        del.type = 'button';
+        del.title = '删除';
+        del.setAttribute('aria-label', '删除 ' + (entry.title || '倒数日'));
+        del.addEventListener('click', function () {
+          getCountdowns().then(function (rest) {
+            var next = rest.filter(function (item) { return item.id !== entry.id; });
+            setCountdowns(next).then(function () { renderCountdownBody(mod, body); });
+          });
+        });
+        row.appendChild(del);
+        list.appendChild(row);
+      });
+      target.textContent = '';
+      target.appendChild(list);
+    };
+
+    var form = el('form', 'countdown-form');
+    var titleInput = el('input', 'countdown-input');
+    titleInput.type = 'text';
+    titleInput.placeholder = '名称（如 发工资）';
+    titleInput.maxLength = 30;
+    titleInput.setAttribute('aria-label', '倒数日名称');
+    var dateInput = el('input', 'countdown-input countdown-date');
+    dateInput.type = 'date';
+    dateInput.required = true;
+    dateInput.setAttribute('aria-label', '目标日期');
+    var add = el('button', 'countdown-add', '添加');
+    add.type = 'submit';
+    form.appendChild(titleInput);
+    form.appendChild(dateInput);
+    form.appendChild(add);
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      if (!dateInput.value) return;
+      getCountdowns().then(function (entries) {
+        entries.push({
+          id: 'cd-' + Date.now().toString(36),
+          title: titleInput.value.trim() || '倒数日',
+          date: dateInput.value,
+          createdAt: Date.now()
+        });
+        setCountdowns(entries).then(function () {
+          renderCountdownBody(mod, body);
+        });
+      });
+    });
+    body.appendChild(form);
+
+    getCountdowns().then(function (entries) {
+      renderList(container, entries);
+    });
+  }
+
+  function renderPomodoroBody(mod, body) {
+    body.textContent = '';
+    var container = el('div', 'pomodoro');
+    body.appendChild(container);
+
+    var renderState = function (target, state) {
+      target.textContent = '';
+      var remaining = state && state.endsAt ? state.endsAt - Date.now() : 0;
+      var running = Boolean(state && state.endsAt && remaining > 0);
+      var minutes = running ? Math.floor(remaining / 60000) : state && state.mode === 'break' ? 5 : 25;
+      var seconds = running ? Math.floor((remaining % 60000) / 1000) : 0;
+      var clock = running || (state && state.endsAt)
+        ? (running ? minutes : Math.max(0, minutes)) + ':' + String(running ? seconds : 0).padStart(2, '0')
+        : '25:00';
+      var label = state && state.mode === 'break' ? '休息' : '专注';
+      if (state && state.endsAt && remaining <= 0) {
+        target.appendChild(el('div', 'pomodoro-clock pomodoro-done', '🍅 完成！'));
+        target.appendChild(el('div', 'pomodoro-status', (state.mode === 'break' ? '休息' : '专注') + '结束，休息一下或再来一轮。'));
+      } else {
+        target.appendChild(el('div', 'pomodoro-clock', clock));
+        target.appendChild(el('div', 'pomodoro-status', running ? label + '进行中（离开页面计时继续）' : '准备' + label));
+      }
+      var buttons = el('div', 'pomodoro-actions');
+      var focusBtn = el('button', 'pomodoro-btn pomodoro-focus', running && state.mode === 'focus' ? '重新专注' : '专注 25 分钟');
+      focusBtn.type = 'button';
+      focusBtn.setAttribute('data-testid', 'pomodoro-focus');
+      focusBtn.addEventListener('click', function () {
+        setPomodoro({ mode: 'focus', endsAt: Date.now() + 25 * 60000 }).then(function () { renderPomodoroBody(mod, body); });
+      });
+      var breakBtn = el('button', 'pomodoro-btn pomodoro-break', '休息 5 分钟');
+      breakBtn.type = 'button';
+      breakBtn.addEventListener('click', function () {
+        setPomodoro({ mode: 'break', endsAt: Date.now() + 5 * 60000 }).then(function () { renderPomodoroBody(mod, body); });
+      });
+      var stopBtn = el('button', 'pomodoro-btn', '停止');
+      stopBtn.type = 'button';
+      stopBtn.addEventListener('click', function () {
+        setPomodoro(null).then(function () { renderPomodoroBody(mod, body); });
+      });
+      buttons.appendChild(focusBtn);
+      buttons.appendChild(breakBtn);
+      buttons.appendChild(stopBtn);
+      target.appendChild(buttons);
+    };
+
+    var node = el('div', 'pomodoro-state');
+    node.id = 'pomodoro-state';
+    container.appendChild(node);
+    getPomodoro().then(function (state) { renderState(node, state); });
+
+    // 每秒刷新剩余时间；渲染器重建后 node 会换新，tick 按 id 找当前节点。
+    if (!pomodoroTicker) {
+      pomodoroTicker = setInterval(function () {
+        var target = document.getElementById('pomodoro-state');
+        if (!target) return;
+        getPomodoro().then(function (state) {
+          if (!state || !state.endsAt) return;
+          var remaining = state.endsAt - Date.now();
+          if (remaining <= 0) {
+            if (pomodoroExpiredFor !== state.endsAt) {
+              pomodoroExpiredFor = state.endsAt;
+              if (dashboard) dashboard.render();
+            }
+            return;
+          }
+          var minutes = Math.floor(remaining / 60000);
+          var seconds = Math.floor((remaining % 60000) / 1000);
+          target.firstChild.textContent = minutes + ':' + String(seconds).padStart(2, '0');
+        });
+      }, 1000);
+    }
+  }
+
+  var RATES_CURRENCIES = ['USD', 'EUR', 'JPY', 'GBP', 'HKD', 'KRW'];
+  var RATES_BASES = ['CNY', 'USD', 'EUR', 'JPY', 'GBP', 'HKD'];
+
+  function renderRatesBody(mod, body) {
+    var base = (mod.source && (mod.source.value || mod.source.base)) || 'CNY';
+    var cacheKey = 'selfhub_rates_' + base;
+    var container = el('div', 'rates');
+    body.appendChild(container);
+
+    var renderData = function (target, data, fetchedAt) {
+      target.textContent = '';
+      var list = el('div', 'list');
+      RATES_CURRENCIES.forEach(function (cur) {
+        if (cur === base || !data.rates[cur]) return;
+        var row = el('div', 'list-item');
+        var main = el('span', 'list-main');
+        main.appendChild(el('span', 'list-title', '1 ' + base + ' = ' + data.rates[cur] + ' ' + cur));
+        row.appendChild(main);
+        list.appendChild(row);
+      });
+      target.appendChild(list);
+      var age = fetchedAt ? relTime(fetchedAt) : '';
+      target.appendChild(el('div', 'weather-meta', 'ExchangeRate-API · 每日更新 · ' + (age ? age + '的缓存' : '刚刚更新')));
+    };
+
+    renderWithCache(container, cacheKey, EXTRA_TTL.rates, renderData, function () {
+      return fetchJson('https://open.er-api.com/v6/latest/' + base);
+    }, '正在获取汇率…');
+  }
+
+  function parseDay(dateStr) {
+    var parts = String(dateStr || '').split('-');
+    return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])).getTime();
+  }
+
+  function startOfToday() {
+    var d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  }
+
+  function getCountdowns() {
+    return new Promise(function (resolve) {
+      try {
+        chrome.storage.local.get(['selfhub_newtab_countdowns'], function (res) {
+          resolve((res && res.selfhub_newtab_countdowns) || []);
+        });
+      } catch (err) {
+        resolve([]);
+      }
+    });
+  }
+
+  function setCountdowns(entries) {
+    return new Promise(function (resolve) {
+      try {
+        chrome.storage.local.set({ selfhub_newtab_countdowns: entries }, function () { resolve(); });
+      } catch (err) {
+        resolve();
+      }
+    });
+  }
+
+  function getPomodoro() {
+    return new Promise(function (resolve) {
+      try {
+        chrome.storage.local.get(['selfhub_pomodoro'], function (res) {
+          resolve((res && res.selfhub_pomodoro) || null);
+        });
+      } catch (err) {
+        resolve(null);
+      }
+    });
+  }
+
+  function setPomodoro(state) {
+    return new Promise(function (resolve) {
+      try {
+        if (state) chrome.storage.local.set({ selfhub_pomodoro: state }, function () { resolve(); });
+        else chrome.storage.local.remove(['selfhub_pomodoro'], function () { resolve(); });
+      } catch (err) {
+        resolve();
+      }
+    });
+  }
+
+  /** 倒计时每秒走字；跨过零点只触发一次整模块重画（画「完成」态）。 */
+  var pomodoroTicker = null;
+  var pomodoroExpiredFor = null;
+
   function MODULE_TYPES() {
     return {
       notes: {
@@ -1018,6 +1444,46 @@
           ];
         }
       },
+      weather: {
+        label: '天气',
+        icon: '⛅',
+        desc: '按城市的实时天气与三天预报（Open-Meteo，免密钥）',
+        defaultSource: { mode: 'city', value: '大连' },
+        sources: function () {
+          return WEATHER_CITIES.map(function (city) {
+            return { mode: 'city', label: city.name, value: city.name };
+          });
+        }
+      },
+      hitokoto: {
+        label: '一言',
+        icon: '💬',
+        desc: '每次打开一句随机的话（hitokoto.cn）',
+        sources: []
+      },
+      countdown: {
+        label: '倒数日',
+        icon: '📅',
+        desc: '纪念日与截止日，还有多少天（纯本地）',
+        sources: []
+      },
+      pomodoro: {
+        label: '番茄钟',
+        icon: '🍅',
+        desc: '25 分钟专注计时，离开页面计时继续',
+        sources: []
+      },
+      rates: {
+        label: '汇率',
+        icon: '💱',
+        desc: '常用货币的每日汇率（ExchangeRate-API）',
+        defaultSource: { mode: 'base', value: 'CNY' },
+        sources: function () {
+          return RATES_BASES.map(function (base) {
+            return { mode: 'base', label: '基准：' + base, value: base };
+          });
+        }
+      },
       annotations: {
         label: '网页批注',
         icon: '🖍️',
@@ -1060,6 +1526,21 @@
         break;
       case 'annotations':
         renderAnnotationsBody(mod, body);
+        break;
+      case 'weather':
+        renderWeatherBody(mod, body);
+        break;
+      case 'hitokoto':
+        renderHitokotoBody(mod, body);
+        break;
+      case 'countdown':
+        renderCountdownBody(mod, body);
+        break;
+      case 'pomodoro':
+        renderPomodoroBody(mod, body);
+        break;
+      case 'rates':
+        renderRatesBody(mod, body);
         break;
       default:
         body.appendChild(el('div', 'empty', '未知模块：' + mod.type));

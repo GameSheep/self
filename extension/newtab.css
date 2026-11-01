@@ -942,3 +942,110 @@ html[data-theme='light'] .results { box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04)
   border-top: 1px solid var(--line);
   padding-top: 8px;
 }
+
+
+/* ── 快捷内容模块：天气 / 一言 / 倒数日 / 番茄钟 / 汇率 ─────────────── */
+.weather-now {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.weather-icon { font-size: 2rem; line-height: 1; }
+.weather-temp { font-size: 1.6rem; font-weight: 700; color: var(--fg); line-height: 1.1; }
+.weather-desc { font-size: 0.8rem; color: var(--fg); }
+.weather-sub, .weather-meta, .hitokoto-foot {
+  font-size: 0.68rem;
+  color: var(--subtle);
+  font-family: var(--mono, monospace);
+}
+.weather-meta { margin-top: 8px; }
+.weather-days {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+.weather-day {
+  flex: 1;
+  text-align: center;
+  padding: 6px 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.weather-day-icon { font-size: 1rem; margin: 2px 0; }
+.hitokoto-text {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--fg);
+  margin-bottom: 8px;
+}
+.hitokoto-from { font-size: 0.72rem; color: var(--muted); margin-bottom: 6px; }
+.hitokoto-refresh {
+  background: none;
+  border: none;
+  color: var(--info);
+  cursor: pointer;
+  font-size: 0.72rem;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.countdown-form {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.countdown-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  color: var(--fg);
+}
+.countdown-date { flex: 0 0 auto; }
+.countdown-add {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.countdown-del {
+  background: none;
+  border: none;
+  color: var(--subtle);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0 4px;
+}
+.countdown-del:hover { color: var(--danger, #f87171); }
+.pomodoro { text-align: center; }
+.pomodoro-clock {
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.pomodoro-done { color: var(--ok, #4ade80); }
+.pomodoro-status { font-size: 0.72rem; color: var(--subtle); margin: 4px 0 10px; }
+.pomodoro-actions { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
+.pomodoro-btn {
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.72rem;
+  padding: 5px 10px;
+}
+.pomodoro-btn:hover { color: var(--fg); }
+.pomodoro-focus { color: var(--fg); font-weight: 600; }
+.list-item .badge.overdue { color: #f87171; }
