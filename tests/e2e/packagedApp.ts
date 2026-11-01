@@ -4,16 +4,7 @@ import fs from 'node:fs';
 
 /**
  * Guard against testing a stale build.
- *
  * The workbench cases under `tests/e2e` load `chrome-extension://<id>/app/index.html`,
- * which is the **built bundle** in `extension/app/assets` — not `src/`. Edit `src/`,
- * forget `npm run package:extension`, and the suite happily exercises the previous
- * build: a bug you just fixed stays red, a bug you did not fix stays green. Both
- * directions cost more time than this check does.
- *
- * The 60-second slack keeps a fresh `git clone` (where every file gets the checkout
- * mtime, within milliseconds of each other) from failing spuriously, while still
- * catching a bundle that is minutes or hours behind.
  */
 export function assertPackagedAppFresh(extPath: string): void {
   const newest = (dir: string): number => {

@@ -2,19 +2,7 @@ import { test, expect } from '@playwright/test';
 
 /**
  * The production bundle, driven for real.
- *
  * Every other spec runs against the Vite **dev server**, where nothing is tree-shaken and
- * every module is fetched separately — so a production-only problem is invisible to them.
- * This spec loads the built artifact through `vite preview` and checks the three things
- * that a build change can plausibly break:
- *
- * 1. the app boots at all (a dropped module shows up as a blank page or a console error);
- * 2. a lazy chunk still loads on demand (settings is dynamically imported);
- * 3. the **migration** chunk still loads on demand — it is the one that was moved out of the
- *    entry with `advancedChunks` and pinned with `"sideEffects"` metadata, i.e. exactly the
- *    kind of module a bundler can decide to drop.
- *
- * The build itself is produced by the `webServer` entry in playwright.config.ts.
  */
 
 const PREVIEW_URL = process.env.E2E_PREVIEW_URL || 'http://127.0.0.1:4173';

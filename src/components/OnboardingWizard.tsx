@@ -16,11 +16,7 @@ interface OnboardingWizardProps {
 
 /**
  * First-run guide.
- *
  * The app has ~11 modules; showing all of them on day one is the opposite of
- * "simple to use". This asks one question — which modules do you actually want —
- * and applies the existing feature switches, so the answer is immediate and
- * reversible in settings.
  */
 export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   isOpen,

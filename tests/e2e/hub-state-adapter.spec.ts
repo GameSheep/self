@@ -3,12 +3,7 @@ import { resetApp, seedState, baseState, STORAGE_KEY } from './helpers';
 
 /**
  * Replace the payload for the *next* navigation.
- *
  * `seedState` installs an init script that re-applies the original fixture on every
- * load, so writing localStorage in a running page and reloading is silently undone —
- * which made two of these tests assert against the wrong data. Registering another
- * init script (it runs after the first one) is the reliable way to change what the app
- * boots with.
  */
 async function pushPayloadOnNextLoad(page: any, state: unknown) {
   await page.addInitScript(
@@ -22,11 +17,7 @@ async function pushPayloadOnNextLoad(page: any, state: unknown) {
 
 /**
  * P2 切库 phase 1: the HubState ⇄ v3 adapter.
- *
  * The app still reads the v2 payload, so this is not a switch yet — it is the evidence
- * that switching *could* be lossless. The round trip compares every record by id and
- * reports mismatches individually, because "some rows differ" is not a useful answer
- * when the thing at stake is the user's data.
  */
 
 const LIBRARY = 'adapter-test';

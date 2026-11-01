@@ -157,11 +157,7 @@ export interface ReadBundleResult {
 
 /**
  * Verify and decrypt a bundle.
- *
  * Order matters for the same reason it does remotely: the manifest hash is checked
- * before anything is decrypted, and every object hash before the payload is parsed.
- * A truncated or hand-edited file therefore fails as "invalid package" instead of
- * surfacing as a half-restored library.
  */
 export async function readBundle(json: string, password: string | null | undefined): Promise<Result<ReadBundleResult>> {
   const pass = (password ?? '').trim();

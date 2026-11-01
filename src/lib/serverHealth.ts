@@ -1,10 +1,6 @@
 /**
  * Server health probing.
- *
  * The UI used to hardcode `status: 'online'` when a server was created, so the
- * dashboard's "N/M 运行中" was pure fiction. A browser cannot open raw TCP
- * sockets, so the only honest signal is an HTTP(S) probe of a URL the user
- * provides. When there is nothing to probe we say so instead of claiming "online".
  */
 import { ServerDeployment } from '../types';
 

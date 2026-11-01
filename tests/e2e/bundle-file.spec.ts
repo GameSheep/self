@@ -4,12 +4,7 @@ import { resetApp, STORAGE_KEY, baseState } from './helpers';
 /**
  * P2-06 / §9.1: single-file encrypted exchange between the web app and the
  * packaged extension.
- *
- * Those two environments are different origins with different databases, so data
  * moves as a file — and the UI must say that rather than imply shared storage. The
- * import path is the *same* preview/apply pipeline as a remote restore, which is what
- * these tests check: verification, baseline, conflicts and the credential opt-in all
- * behave identically for a file.
  */
 
 const PASSWORD = 'bundle-password-123';

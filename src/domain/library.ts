@@ -202,11 +202,7 @@ export function libraryFacets(items: LibraryItem[]): { kinds: LibraryKind[]; sou
 
 /**
  * Which switch owns an item.
- *
  * The unified list mixes five collections and each has its own module switch. Turning one off
- * used to hide only the sidebar entry while its rows kept showing up here, which made the
- * switch look broken — so the list filters too. Nothing is deleted: the UI reports how many
- * rows a switch is hiding.
  */
 export function featureOwnerOf(item: LibraryItem): FeatureId | null {
   if (item.source === 'wucai') return 'wucai';

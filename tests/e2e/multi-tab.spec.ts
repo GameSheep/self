@@ -3,18 +3,7 @@ import { resetApp } from './helpers';
 
 /**
  * Two tabs on the same device.
- *
  * This is the most common way a single user actually loses data: the same payload is open
- * in two tabs, both keep writing, and the last write wins. The app cannot merge (there is no
- * merge for concurrent plain writes), so its contract is: **notice, say so, and tell the user
- * to reload** — a loud warning instead of a silent overwrite.
- *
- * Nothing tested that contract before. It is cheap to test and it protects the one place
- * where the app deliberately chooses "warn" over "resolve".
- *
- * No `seedState` here on purpose: its init script re-applies the fixture on every
- * navigation, so the reload this test performs would silently restore the fixture and the
- * assertion would be about the fixture, not about what the two tabs wrote.
  */
 test.describe('多标签页：检测到其它标签页写入', () => {
   test.beforeEach(async ({ page }) => {
@@ -64,15 +53,10 @@ test.describe('多标签页：检测到其它标签页写入', () => {
     await expect(page.getByTestId('external-change-banner')).toHaveCount(0);
   });
 
-  /**
-   * The same contract in v3 mode, where it used to be impossible to notice.
-   *
-   * In v3 mode the payload holds only device configuration, so two tabs writing business
-   * data produce a **byte-identical** payload — `localStorage.setItem` then fires no storage
-   * event, and the first tab had no way to know the library changed under it. The warning
-   * has to survive the migration to v3, otherwise switching modes quietly removes a safety
-   * net.
-   */
+/**
+ * The same contract in v3 mode, where it used to be impossible to notice.
+ * In v3 mode the payload holds only device configuration, so two tabs writing business
+ */
   test('v3 模式下另一个标签页写入库时，本页同样会提示', async ({ page, context }) => {
     await page.goto('/');
     await expect(page.getByTestId('home-view')).toBeVisible();

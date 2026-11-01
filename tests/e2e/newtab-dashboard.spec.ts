@@ -500,14 +500,10 @@ test.describe('模块面板：自定义与数据来源', () => {
     await page.close();
   });
 
-  /**
-   * 用户报的 bug：「记一笔」记完之后，工作台里哪里都找不到。
-   *
-   * 原因是记一笔走 `CAPTURE_ENTRY`，写的是扩展自己的 v3 收件箱
-   * （`selfhub_extension` 库），而工作台读的是另一套存储；桥接层当时还在读
-   * 一个早就不写了的老 key `chrome.storage.local.selfhub_inbox`。所以它确实
-   * 存下来了，只是存到了一个没人看的地方。
-   */
+/**
+ * 用户报的 bug：「记一笔」记完之后，工作台里哪里都找不到。
+ * 原因是记一笔走 `CAPTURE_ENTRY`，写的是扩展自己的 v3 收件箱
+ */
   test('记一笔：新标签页记的内容会进工作台收件箱，工作台开着也立刻出现', async () => {
     test.setTimeout(90_000);
     freshBuild();

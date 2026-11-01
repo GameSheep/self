@@ -3,10 +3,7 @@ import { baseState, readState, seedState } from './helpers';
 
 /**
  * P1-04 — 书签导入：先预览数量/重复/未知字段，再作为一整批导入，并且可以撤销。
- *
  * The file below is a real Netscape-format export: a bookmark at the root, one
- * nested inside a folder, and one whose anchor text is blank (an "unknown
- * field" case). https://www.google.com/ is already in the seeded library, so it
  * must be reported — and skipped — as a duplicate.
  */
 const BOOKMARKS_HTML = `<!DOCTYPE NETSCAPE-Bookmark-file-1>

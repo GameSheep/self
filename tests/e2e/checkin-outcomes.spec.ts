@@ -3,12 +3,8 @@ import { seedState, baseState, readState } from './helpers';
 
 /**
  * P1-07 (simplified 2026-10) — check-in records without automation.
- *
  * The app no longer fires HTTP requests: the two user gestures are
  * 「打开网站」 (recorded as `opened_page`, never a success, never a streak day)
- * and 「标记今天已签」 (the user's own confirmation, recorded as the day's
- * success). Automatic execution is gone entirely: loading the page must not
- * touch the network.
  */
 
 const HOST = 'checkin.test';

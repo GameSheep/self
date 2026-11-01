@@ -3,12 +3,7 @@ import { resetApp } from './helpers';
 
 /**
  * P2-05: the v3 backup protocol through the **real** provider transports.
- *
  * `backup-v3.spec.ts` proves the format with an in-memory transport. This spec
- * proves the same protocol survives the actual OSS and WebDAV clients — signing,
- * bucket listing, PROPFIND, MKCOL, DELETE and error mapping — against a server
- * mocked at the network layer. "Works with a stub" is not evidence for a backup
- * that has to work against a real bucket.
  */
 
 const OSS_ENDPOINT = 'oss-cn-beijing.aliyuncs.com';

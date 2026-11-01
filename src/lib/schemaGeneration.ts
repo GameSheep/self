@@ -99,11 +99,7 @@ export function claimGeneration(writer: string = SCHEMA_WRITER): GenerationMarke
 
 /**
  * Decide whether this client may write.
- *
  * - `unavailable`: `localStorage` itself is unusable (private mode, blocked
- *   cookies). Callers keep their existing in-memory fallback behaviour.
- * - `read-only-newer-schema`: another client already upgraded this origin.
- * - `writable`: safe.
  */
 export function checkWritable(): WriteCheck {
   if (typeof localStorage === 'undefined') {

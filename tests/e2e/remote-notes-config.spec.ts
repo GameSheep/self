@@ -3,10 +3,7 @@ import { resetApp, seedState, baseState, readState, expandIntegration } from './
 
 /**
  * 配置只出现在一个地方。
- *
  * 用户的原话：「远端笔记下面还显示一个 阿里云 OSS 连接 / Bucket / Endpoint / 保存……就这种问题非常的多」。
- * 所以这里守两件事：
- * 1. 远端笔记页**没有任何连接配置输入框**（只读与使用），页面上只有一句"去哪里配"。
  * 2. 设置 → 连接与任务 是唯一能改配置的地方，且改完远端笔记读到的是同一份。
  */
 test.describe('配置只在一处', () => {

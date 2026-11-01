@@ -3,11 +3,7 @@ import { resetApp, seedState, baseState, readState, expandIntegration } from './
 
 /**
  * 多桶模型（按用户澄清）：
- *
  * 1. **配置页**（设置 → 连接与任务）里，每个桶是**一张「阿里云 OSS」卡**，名字自定义；
- *    卡与卡之间字段、保存、启用完全独立。
- * 2. **远端笔记**只负责**显示**：默认显示已配置的桶，「+ 桶」是从已有配置里挑一个显示出来，
- *    不在这里新建空白桶（`showInNotes` 控制是否显示）。
  */
 function bucket(overrides: Record<string, unknown>) {
   return {

@@ -3,16 +3,7 @@ import { seedState, baseState, openSettings, gotoSettingsPane } from './helpers'
 
 /**
  * P2-05: the v3 encrypted backup as a user-facing feature.
- *
  * Everything before this spec proved the format, the queue and the providers. This
- * one is about the promises the *screen* makes, which are the ones a user can be
- * misled by:
- *
- * - the format is a choice, and choosing v3 does not silently turn the task on;
- * - v3 does not run at all — and uploads nothing — while the backup password is
- *   not unlocked in this session;
- * - what "默认恢复源" and the scope lines say matches what is actually stored;
- * - the legacy path keeps working for anyone who does not opt in.
  */
 
 const ENDPOINT = 'oss-cn-beijing.aliyuncs.com';
@@ -173,14 +164,10 @@ test.describe('P2-05 v3 备份设置接入', () => {
     // Nothing was listed: a user who has not opted in should not pay for it.
     expect(captured.filter((entry) => entry.method === 'GET-LIST')).toEqual([]);
   });
-  /**
-   * The trap: business data in the v3 library, backup format still legacy.
-   *
-   * In v3 mode the payload holds only device configuration, so a legacy backup writes a
-   * package with no notes, bookmarks or vault entries — it succeeds and looks fine. This
-   * pins both halves of the fix: automatic runs are stopped, and the panel says why and
-   * offers the one-click way out.
-   */
+/**
+ * The trap: business data in the v3 library, backup format still legacy.
+ * In v3 mode the payload holds only device configuration, so a legacy backup writes a
+ */
   test('v3 模式下旧格式备份被拦下并说明原因，一键改用 v3 加密备份', async ({ page }) => {
     const captured: Captured[] = [];
     await mockOss(page, captured);

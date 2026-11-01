@@ -4,10 +4,7 @@ import { seedState, baseState } from './helpers';
 
 /**
  * P1-10 视觉检查：桌面与窄屏各截一批，集中复查。
- *
  * Not a pixel-diff suite — it produces the images a human reviews once, which is
- * what the plan asks for ("一批检查桌面/窄屏截图，集中修复，再确认一轮"). The
- * assertions here only guarantee the page actually rendered before the capture,
  * so an empty or crashed screen can never be filed as a screenshot.
  */
 

@@ -3,14 +3,7 @@ import { seedState, baseState, readState } from './helpers';
 
 /**
  * P1-07 — reminder recurrence and list state.
- *
  * The old `src/lib/dates.ts` advanced months with `setMonth(+1)`, so 1 月 31 日
- * renewed to 3 月 3 日. These cases pin the anchored behaviour: the day-of-month
- * is kept, a short month clamps to its last day, and the series returns to the
- * anchor afterwards.
- *
- * Every expectation is derived from the *seeded* timestamp through local date
- * getters, so the spec neither waits on real timers nor depends on the machine's
  * wall clock. `toISOString()` is never used — the app must stay in local time.
  */
 

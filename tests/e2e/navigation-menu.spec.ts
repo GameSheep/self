@@ -25,9 +25,6 @@ const ENGINE_PATTERN = /\/\/(www\.)?(google|bing|baidu)\.com\//;
  * Collects every request the browser engine sees (including aborted ones) and
  * aborts engine requests, so a leak is both recorded and harmless. Assertions
  * read the recorded list — never `route.abort()` side effects.
- *
- * Registered on the *context*, not the page: the explicit-search cases open the
- * engine in a popup, and page-level routes do not apply to other pages.
  */
 async function trackEngineRequests(context: BrowserContext) {
   const requests: string[] = [];
@@ -44,11 +41,7 @@ async function seedNavigation(page: Page) {
 
 /**
  * Seed without `addInitScript`.
- *
  * `seedState`'s init script re-runs on *every* navigation inside the context, so
- * a reload would rewrite the original payload and undo the very change the test
- * is checking. Writing the payload once and reloading gives a real boot from the
- * edited state without any script that can overwrite it.
  */
 async function seedNavigationByHand(page: Page) {
   const payload = JSON.stringify(

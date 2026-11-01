@@ -151,11 +151,7 @@ export function shannonEntropy(value: string): number {
 
 /**
  * Looks like a machine-generated secret?
- *
  * Heuristic, deliberately conservative: a false positive replaces real text with
- * a placeholder (the user can also see the mask report), while a false negative
- * leaks a credential. We still require several independent signals so ordinary
- * prose, URLs and file names are not touched.
  */
 export function looksLikeOpaqueToken(value: string): boolean {
   if (value.length < 20 || value.length > 200) return false;

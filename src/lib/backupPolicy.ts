@@ -12,11 +12,7 @@ export type BackupProvider = 'oss' | 'webdav' | 'none';
 
 /**
  * Which on-disk format the automatic snapshot task writes.
- *
  * §10.2: "旧 `state.json` 保留只读，升级新格式由用户明确启用". So `legacy` stays the
- * default for existing *and* new profiles: switching the format silently would
- * change what a working backup contains, and the v3 format additionally needs a
- * backup password the user has to establish first.
  */
 export type BackupFormat = 'legacy' | 'v3';
 
@@ -62,14 +58,10 @@ export interface BackupTarget {
   bothConfigured: boolean;
   ossConfigured: boolean;
   webdavConfigured: boolean;
-  /**
-   * Set when the chosen format cannot contain this device's data.
-   *
-   * The case this exists for: storage mode is `v3` (business data lives in the library,
-   * the payload holds only device configuration) but the backup format is still `legacy`,
-   * which writes that payload. The backup succeeds and contains no notes, bookmarks or
-   * credentials-vault entries — the kind of "it worked" that is discovered when restoring.
-   */
+/**
+ * Set when the chosen format cannot contain this device's data.
+ * The case this exists for: storage mode is `v3` (business data lives in the library,
+ */
   formatWarning?: string;
 }
 

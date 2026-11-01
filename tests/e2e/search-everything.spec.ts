@@ -3,12 +3,7 @@ import { seedState, baseState } from './helpers';
 
 /**
  * P2-07: unified search coverage.
- *
  * Before this, "where can I find it?" depended on which box you typed into: the ⌘K
- * palette searched titles and note bodies but **not annotations**, the library had its
- * own filter, and the vault index only held remote bodies. This spec pins the new
- * contract: one scan over every source, grouped, with a real snippet, and an explicit
- * statement of what was *not* searched.
  */
 
 function state(overrides: Record<string, unknown> = {}) {

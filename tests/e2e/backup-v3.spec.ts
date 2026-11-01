@@ -3,15 +3,7 @@ import { resetApp } from './helpers';
 
 /**
  * P2-05: v3 backup format.
- *
  * The old backup was one mutable `state.json`. This spec covers what replaced it:
- * an immutable generation directory with an encrypted manifest and a completion
- * marker, written in an order that makes a half-finished upload impossible to
- * mistake for a good backup.
- *
- * The checks live in `src/infrastructure/backup/backupSuite.ts` and run inside the
- * browser against real Web Crypto, with an in-memory transport — the protocol is
- * what is under test here, not the OSS/WebDAV providers.
  */
 
 type CheckResult = { name: string; ok: boolean; detail?: string };

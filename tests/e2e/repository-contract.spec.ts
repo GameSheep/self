@@ -3,17 +3,7 @@ import { resetApp } from './helpers';
 
 /**
  * P2-01: the shared repository contract, run against **both** implementations.
- *
  * The suite itself lives in `src/repositories/contractSuite.ts` and only uses the
- * `HubRepository` surface, so a divergence between the legacy payload and the v3
- * IndexedDB store shows up as a failing check rather than as a difference between
- * two hand-written test files.
- *
- * The suite is driven through the dev-only bridge (`src/app/devBridge.ts`), which
- * is guarded by `import.meta.env.DEV` and therefore absent from a production
- * build. Running it in a real browser is deliberate: IndexedDB cannot be
- * meaningfully exercised without one, and the point of P2-01 is that the
- * transaction guarantees hold for real.
  */
 
 type CheckResult = { name: string; ok: boolean; detail?: string };

@@ -4,17 +4,7 @@ import { mockOss } from './ossMock';
 
 /**
  * P2 切库: the storage-mode switch.
- *
  * The switch changes *where the app reads its data from*, which is the most dangerous
- * change in the whole redesign — getting it wrong means showing the wrong library or
- * silently overwriting the newer one. So this spec pins, in order:
- *
- * 1. the default is unchanged (v2), so nothing moves for anyone who does not switch;
- * 2. switching runs the verified migration (encrypted snapshot → staging library →
- *    verification → atomic `activeLibraryId` flip) and the app follows that pointer;
- * 3. in v3 mode edits reach the library and the payload shrinks to device configuration;
- * 4. a reload reads v3 and does **not** let a stale v2 payload overwrite it;
- * 5. switching back materialises the payload from the library.
  */
 
 function state(overrides: Record<string, unknown> = {}) {

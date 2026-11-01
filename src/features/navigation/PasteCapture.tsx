@@ -25,11 +25,7 @@ interface Destinations {
 
 /**
  * 粘贴识别 (2).
- *
  * Paste anything that contains links; the sites are recognised locally, then a confirmation
- * dialog asks **where the content should go** (快捷导航 / 收件箱 / 笔记). Nothing is written
- * until the user confirms — "识别到就自动存" plus "让我确认" is only compatible if confirmation
- * means "confirm the destinations", which is what this does.
  */
 export const PasteCapture: React.FC<PasteCaptureProps> = ({
   categories,

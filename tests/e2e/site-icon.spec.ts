@@ -3,13 +3,8 @@ import { seedState, baseState, gotoTab } from './helpers';
 
 /**
  * 网站图标自动识别.
- *
  * 识别机制：图标永远从 URL 派生（<img src={origin}/favicon.ico>，由浏览器自动请求），
  * 不需要用户上传，也不会把书签列表发给第三方图标服务；请求失败（站点没有
- * /favicon.ico 或离线）就回退到按主机名哈希着色的首字母块。
- *
- * 覆盖两条链路：手动添加网站（表单内实时预览）与快捷导航卡片（保存后直接生效）。
- * AI 识别用同一个 <SiteIcon> 组件渲染预览，机制相同，不重复搭 AI mock。
  */
 
 const TINY_PNG =

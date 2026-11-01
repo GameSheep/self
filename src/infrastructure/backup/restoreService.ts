@@ -275,11 +275,8 @@ export async function previewRestore(options: PreviewOptions): Promise<Result<Re
 
 /**
  * Build (and stage) the diff report for an already-verified package.
- *
  * Shared by the remote-batch path and the single-file bundle path: both end up with
  * a decrypted library + manifest, and both must produce exactly the same report. If
- * they diverged, one of the two would eventually forget the baseline check or the
- * credential rules.
  */
 async function stagePreview(input: {
   packageState: HubState;

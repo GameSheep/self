@@ -1,10 +1,6 @@
 /**
  * Bulk import used by the AI ingest flow.
- *
  * It writes to five collections in a single atomic update on purpose: a partial
- * import would leave the user with half of what the model extracted and no way to
- * tell which half. Keeping it in its own hook makes that intent explicit instead
- * of hiding it among unrelated handlers.
  */
 import { useCallback } from 'react';
 import { NavSite, QuickNote, ReminderItem, SecretItem, ServerDeployment } from '../types';

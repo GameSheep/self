@@ -1,9 +1,6 @@
 /**
  * Scoped syntax highlighting.
- *
  * Only the languages notes actually contain are registered, instead of pulling
- * in the full highlight.js bundle. highlight.js returns an HTML string, which we
- * parse into a small node tree and render as React elements — no innerHTML, so
  * code content can never inject markup.
  */
 import hljs from 'highlight.js/lib/core';

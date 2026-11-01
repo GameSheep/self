@@ -209,14 +209,10 @@ export function readV2Rollback(): { json: string; at: number } | null {
 }
 
 export interface SaveOptions {
-  /**
-   * Write only what belongs to this device (configuration + preferences).
-   *
-   * Used in v3 mode: the business data lives in the library, and the payload shrinks to
-   * a few KB — which is what actually lifts the 5 MB ceiling. `loadHubState()` normalises
-   * the missing collections to empty arrays, and the boot path merges the library over
-   * them (`mergeDeviceConfig`).
-   */
+/**
+ * Write only what belongs to this device (configuration + preferences).
+ * Used in v3 mode: the business data lives in the library, and the payload shrinks to
+ */
   deviceOnly?: boolean;
 }
 

@@ -3,13 +3,7 @@ import { resetApp, seedState, baseState, readState } from './helpers';
 
 /**
  * P1-03 / P1-05 acceptance: the first complete user path.
- *
  * 首页打开网站 → 快速记录 → 收件箱 → 查找并打开资料
- *
- * This is deliberately one continuous journey rather than four unit-ish tests:
- * the redesign's whole claim is that the three directions live in one workspace,
- * so the assertion that matters is that a record captured on the home page is
- * findable later without any cloud configuration.
  */
 
 test.describe('P1 主路径', () => {

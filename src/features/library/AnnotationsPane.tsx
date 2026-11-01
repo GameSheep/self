@@ -8,14 +8,10 @@ export interface AnnotationsPaneProps {
   annotations: WebPageAnnotation[];
   onUpdate: (annotation: WebPageAnnotation) => void;
   onDelete: (id: string) => void;
-  /**
-   * Manual 「从扩展同步」 pass, wired from the app shell.
-   *
-   * The boot import / broadcast listener cover the happy path automatically; this
-   * is the diagnostic escape hatch: its result line says whether the extension
-   * answered, how many annotations it holds, and how many were new — so an empty
-   * pane is attributable (old build not reloaded / wrong origin / nothing saved).
-   */
+/**
+ * Manual 「从扩展同步」 pass, wired from the app shell.
+ * The boot import / broadcast listener cover the happy path automatically; this
+ */
   onSyncFromExtension?: () => Promise<AnnotationSyncResult>;
 }
 
@@ -64,11 +60,7 @@ function timeLabel(ts: number): string {
 
 /**
  * 网页批注 (3.3) — a viewing window, not an editor.
- *
  * The user's words: 「这里只是展示窗口，划词肯定是我从其他网站划词存过来，这里只要修改删除，
- * 能够原始链接就行」. So: the highlight text and my own note are shown as text, the page opens
- * from its original link, and the only actions are edit and delete. There is no 「新建」, no
- * type/source/project filtering, and no "search coverage" paragraph.
  */
 export const AnnotationsPane: React.FC<AnnotationsPaneProps> = ({ annotations, onUpdate, onDelete, onSyncFromExtension }) => {
   const sorted = useMemo(

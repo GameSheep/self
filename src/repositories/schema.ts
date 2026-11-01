@@ -267,14 +267,10 @@ export const V3_STORES: StoreDef[] = [
   // Device-level and migration records are intentionally NOT library-scoped.
   { name: 'library_meta_v3', keyPath: 'key', keyShape: 'plain', required: ['key'], indexes: [] },
   { name: 'migrations_v3', keyPath: 'id', keyShape: 'plain', required: ['id', 'from', 'to', 'phase'], indexes: [{ name: 'phase', keyPath: 'phase' }] },
-  /**
-   * The encrypted pre-migration snapshot of the raw sources.
-   *
-   * Deliberately in IndexedDB rather than `localStorage`: the snapshot is about the size of
-   * the sources, and the reason a user migrates is that the payload outgrew localStorage's
-   * ~5 MB. Keeping the snapshot there made the migration fail exactly when it was needed.
-   * Not library-scoped — it belongs to the migration, not to a library.
-   */
+/**
+ * The encrypted pre-migration snapshot of the raw sources.
+ * Deliberately in IndexedDB rather than `localStorage`: the snapshot is about the size of
+ */
   {
     name: 'migration_snapshots_v3',
     keyPath: 'id',
@@ -303,11 +299,7 @@ export interface ValidationIssue {
 
 /**
  * Runtime shape check for one record.
- *
  * Deliberately structural, not exhaustive: it verifies the keys the indexes and
- * the queries depend on. Deep per-provider validation belongs to that provider's
- * adapter, and over-validating here would reject legitimately forward-compatible
- * records written by a newer build.
  */
 export function validateRecord(storeName: string, value: unknown): ValidationIssue[] {
   const def = storeDef(storeName);

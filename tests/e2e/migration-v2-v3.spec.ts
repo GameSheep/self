@@ -4,16 +4,7 @@ import { seedFixture, countCollections, v2Full, v2Messy } from '../fixtures/migr
 
 /**
  * P2-02: v2 → v3 migration, driven by the P0-02 sanitized fixtures.
- *
  * The acceptance criteria this spec exists to prove:
- *  - every source has count evidence (§13.4),
- *  - an interruption at any batch can be resumed without duplicating records,
- *  - a re-run whose *sources changed* refuses to resume,
- *  - a failed verification leaves the live library untouched,
- *  - stale writers are blocked while the lock is held,
- *  - and the app's active library is only switched when everything verified.
- *
- * The migration writes into a **staging library**; the app keeps reading v2.
  */
 
 const PASSWORD = 'fixture-migration-password';
@@ -58,16 +49,10 @@ async function migrate(
       page.on('dialog', (d) => d.dismiss());
     });
 
-    /**
-     * The snapshot has to survive the case it exists for.
-     *
-     * A user migrates *because* the payload outgrew localStorage, so keeping the encrypted
-     * pre-migration snapshot in localStorage made the migration fail exactly when it was
-     * needed (snapshot + live payload did not fit; the error was "无法保存加密快照").
-     * This test uses a ~3.6 MB payload — big enough that the old implementation could not
-     * have stored its snapshot — and asserts both that the migration succeeds and that the
-     * snapshot now lives in IndexedDB.
-     */
+/**
+ * The snapshot has to survive the case it exists for.
+ * A user migrates *because* the payload outgrew localStorage, so keeping the encrypted
+ */
     test('大库也能迁移：加密快照写在 IndexedDB 而不是 localStorage', async ({ page }) => {
       const bigContent = '正文内容。'.repeat(60_000); // ~360 KB per note, 10 notes ≈ 3.6 MB
       const notes = Array.from({ length: 10 }, (_, i) => ({

@@ -3,19 +3,7 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 
 /**
  * P2-07: performance fixture and measurements (§15.4).
- *
  * The dev doc sets targets and says to "记录设备/浏览器和构建版本后测量，不把本节目标当
- * 当前实测". So this spec builds a synthetic library, measures the things the targets
- * are about, and writes the numbers — with the environment — to
- * `docs/perf-baseline.json`. It asserts only the targets that are stated as product
- * requirements (bounded first render), and reports the rest.
- *
- * Fixture size: 2,000 notes + 4,000 annotations + 600 bookmarks + 200 reminders.
- * The doc's stress case (10k metadata / 2k notes / 100k annotations) is larger; the
- * annotation count here is deliberately smaller because every annotation is a full
- * JSON object in the legacy payload and 100k of them would make the *fixture* the
- * bottleneck rather than the app. The measured numbers are therefore a lower bound —
- * stated as such in the artifact.
  */
 
 const FIXTURE = { notes: 2000, annotations: 4000, sites: 600, reminders: 200 };
@@ -219,19 +207,10 @@ test.describe('P2-07 性能基线', () => {
     expect(homeInteractiveMs, `首页可交互 ${homeInteractiveMs}ms`).toBeLessThanOrEqual(2000);
   });
 
-  /**
-   * The v3 write path on a large library.
-   *
-   * In v3 mode every save goes through `writeLibrary`, which is incremental per record but
-   * still *reads* the library to compare against what is stored. That read is the cost this
-   * measures — it is the number that decides whether "edits stay fast" survives the switch
-   * to a real library, and nothing had measured it before.
-   *
-   * Three cases, because they cost different things:
-   *   - first write: everything is new;
-   *   - no-op write: pure read + compare (this is what a save that changed nothing pays);
-   *   - one changed note: read + compare + one put.
-   */
+/**
+ * The v3 write path on a large library.
+ * In v3 mode every save goes through `writeLibrary`, which is incremental per record but
+ */
   test('v3 库的大库写入延迟：首次 / 无变化 / 改一条', async ({ page }) => {
     const state = buildLargeState();
     await page.addInitScript(

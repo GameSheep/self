@@ -92,14 +92,10 @@ export interface SecretItem {
   iv: string;
   salt: string;
   maskedPreview: string; // e.g. "sk-proj-••••••••4a9b"
-  /**
-   * Multi-field credential set (key + secret together in one entry).
-   *
-   * Optional for backward compatibility: entries created before this field existed hold a
-   * single value in `encryptedValue` above. For new entries the first field is *also*
-   * mirrored into `encryptedValue`/`iv`/`salt`/`maskedPreview` so backups, global search
-   * previews and other legacy readers keep working unchanged.
-   */
+/**
+ * Multi-field credential set (key + secret together in one entry).
+ * Optional for backward compatibility: entries created before this field existed hold a
+ */
   fields?: SecretField[];
   description?: string;
   tags?: string[];
@@ -422,11 +418,8 @@ export interface WebdavSyncConfig {
 
 /**
  * Result of one user-initiated connection test.
- *
  * Separate from "the fields are filled" and from "the background task is on",
- * because those are three different facts. `fingerprint` binds the result to the
  * exact configuration that was probed: editing the URL or key must invalidate a
- * previous green result instead of inheriting it.
  */
 export interface ConnectionTestRecord {
   at: number;

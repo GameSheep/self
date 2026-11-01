@@ -3,11 +3,8 @@ import { buildRequestBody, describeAiError, resolveEndpoint, resolveModel } from
 
 /**
  * Optional cloud assist for the paste dialog (2).
- *
  * Scope is deliberately tiny: **hostnames only**. The user's pasted text (which routinely
  * contains tokens and private URLs) never leaves the device. The call happens only when cloud
- * AI is explicitly enabled *and* the user ticks the box for this paste, and its only output is
- * a category per host.
  */
 export class CloudAiDisabledError extends Error {
   constructor() {

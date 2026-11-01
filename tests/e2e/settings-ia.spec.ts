@@ -3,11 +3,7 @@ import { seedState, baseState, readState, gotoSettingsPane, expandAllIntegration
 
 /**
  * 设置中心的信息架构（P1-01 / P1-07）.
- *
  * The rule: configuration lives in exactly one place. Before this, settings were spread across
- * a four-tab modal plus inputs buried in business views, and the extension had its own unrelated
- * sync page. These tests assert the panes exist, are navigable, and that a setting has a single
- * editor — not that the words are pretty.
  */
 
 function state(overrides: Record<string, unknown> = {}) {

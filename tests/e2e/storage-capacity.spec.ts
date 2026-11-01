@@ -3,12 +3,7 @@ import { seedState, baseState, openSettings, gotoSettingsPane } from './helpers'
 
 /**
  * P2-07 capacity guardrails.
- *
  * The app stores the whole library as one localStorage payload, and browsers stop
- * accepting writes somewhere around 5 MB. The old behaviour was to say nothing until a
- * write failed — the user then saw "保存失败" with no idea how much room was left. This
- * spec pins the new behaviour: a warning *while saving still works*, with real numbers,
- * and a diagnostics row that reports the same figure.
  */
 
 /** A payload just under the ~5MB limit, so writes still succeed. */

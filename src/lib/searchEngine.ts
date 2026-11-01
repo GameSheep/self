@@ -1,10 +1,6 @@
 /**
  * High-Speed Fuzzy & Pinyin Search Engine
- *
  * Supports:
- * - direct substring match (Chinese / English / numbers)
- * - pinyin-initials match, so "rmkj" finds 热门科技
- * - multi-token AND matching
  */
 import { PINYIN_CHARS, PINYIN_INITIALS } from './pinyinTable';
 

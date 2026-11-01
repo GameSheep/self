@@ -5,23 +5,11 @@ import os from 'node:os';
 import { assertPackagedAppFresh } from './packagedApp';
 
 /**
- * The new-tab dashboard layout travelling with the backup.
- *
- * The new tab is a separate extension page and owns `selfhub_newtab_layout` /
- * `selfhub_newtab_pins` in `chrome.storage.local` — the workbench never authors them. They
- * used to stay there, so a backup carried every note and bookmark but not the dashboard the
- * user had arranged, and restoring on a new machine silently lost it.
- *
- * The fix has two directions, and each needs its own assertion:
- *
- *   - **into the payload** — the workbench mirrors what the new tab wrote, so a file export
- *     or a v3 batch (both serialise the whole state) carries it;
- *   - **back out on restore** — a restore writes the package's layout back to
- *     `chrome.storage.local`, and an old package without the field must not wipe what the
- *     device already has.
- *
- * Everything here runs against the packaged workspace inside the extension, because the
- * bridge is `chrome.storage` and a plain web build has none.
+ * The new-tab dashboard layout travels with the backup: the tab owns
+ * `selfhub_newtab_layout`/`_pins` in chrome.storage, and restores used to lose it.
+ * Asserted both ways — mirrored into exports/v3 batches, and written back on
+ * restore without an old package wiping what the device already has. Runs against
+ * the packaged workspace (the bridge is `chrome.storage`).
  */
 
 const EXT_PATH = path.join(process.cwd(), 'extension');

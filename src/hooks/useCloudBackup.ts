@@ -12,11 +12,7 @@ import { getSessionBackupPassword } from '../infrastructure/backup/backupSession
 
 /**
  * The legacy (v2) backup implementation is loaded on demand.
- *
  * It pulls in the OSS/WebDAV clients and the whole-state serialiser — several KB of
- * first-load JavaScript for a path that only runs after the user configured a
- * connection *and* the debounce fired. The only thing needed synchronously is the
- * "上次备份时间" key, which is a single localStorage read.
  */
 const LAST_BACKUP_KEY = 'selfhub_last_backup_at';
 const loadLegacyBackup = () => import('../lib/stateBackup');

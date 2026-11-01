@@ -166,11 +166,8 @@ export async function loadIndex(): Promise<IndexedDoc[]> {
 
 /**
  * Runtime shape check for stored documents.
- *
  * The index is a cache of *other people's* content fetched over the network, so a
  * malformed row must not be able to break search for the whole library: one bad
- * record is dropped and counted, not thrown. (The IO layer normally enforces the
- * shape; this is the belt-and-braces check that also survives a schema change.)
  */
 export function validateIndexDocs(raw: unknown[]): { docs: IndexedDoc[]; corrupt: number } {
   const docs: IndexedDoc[] = [];
@@ -226,11 +223,7 @@ export interface IndexHealth {
 
 /**
  * Report whether the persisted index can be trusted (§P2-07 "损坏重建").
- *
  * `loadIndex()` silently resets an unreadable store, which keeps the app working but
- * hides the fact that search just lost its cache. This is the visible half: the panel
- * can say "N 篇可用，M 条损坏，建议重建" instead of showing an empty result the user
- * would read as "my notes aren't there".
  */
 export async function inspectIndex(): Promise<IndexHealth> {
   const meta = readIndexMeta();

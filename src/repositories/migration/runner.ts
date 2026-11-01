@@ -26,11 +26,7 @@ interface PendingRecord {
 
 /**
  * Root-level fields a source carried that this build does not model.
- *
  * §13.2 requires unknown fields to survive a migration. They cannot be typed into
- * the v3 stores (there is nowhere to put them), so they are reported explicitly —
- * a visible list beats a silent drop, and P2-06's migration package can carry them
- * verbatim.
  */
 function rootUnknownFields(
   snapshots: Array<{ id: string; unknownFields: string[] }>
@@ -108,14 +104,10 @@ async function saveSnapshot(
         if (String(key) !== migrationId) store.delete(key);
       }
     });
-    /**
-     * Drop snapshots left in `localStorage` by earlier versions of this code.
-     *
-     * They were written there until the snapshot moved to IndexedDB, and a stale one can be
-     * megabytes — sitting in the very budget the migration exists to escape. Removing them
-     * is safe: the snapshot for *this* run was just written to IndexedDB, and an old
-     * snapshot only ever served the run that created it.
-     */
+/**
+ * Drop snapshots left in `localStorage` by earlier versions of this code.
+ * They were written there until the snapshot moved to IndexedDB, and a stale one can be
+ */
     try {
       for (const key of Object.keys(localStorage)) {
         if (key.startsWith(SNAPSHOT_KEY_PREFIX)) localStorage.removeItem(key);

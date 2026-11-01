@@ -3,19 +3,8 @@ import { resetApp } from './helpers';
 
 /**
  * P2-03: connections, credentials and purposes stored as three separate facts.
- *
  * The properties asserted here are the ones the redesign promises in prose:
- *  - saving a connection does not enable any purpose,
- *  - editing the configuration invalidates a previous green test result,
- *  - a secret cannot be stored while the vault is locked, and is never stored in
- *    plain text once it is stored,
- *  - deleting a connection reports the purposes it affects and disables them,
- *    without touching remote business data,
- *  - a binding whose configuration changed cannot be enabled until it is redone,
- *  - and a locked vault parks work as `waiting-unlock` rather than failing it.
- *
- * Everything runs in the browser through the dev-only bridge, because the point
- * is what actually reaches IndexedDB — not what a mocked repository returns.
+ * - a secret cannot be stored while the vault is locked, and is never stored in
  */
 
 const LIB = 'p2-03-library';
@@ -23,11 +12,7 @@ const MASTER = 'correct horse battery staple';
 
 /**
  * Run a scenario against a connection repository for {@link LIB}.
- *
  * `scenario` is serialised and re-created in the page, so it must only use its
- * two arguments (`b` = bridge, `args` = everything from the Node side). Nothing
- * from this file's scope is available inside it — that is why every constant is
- * passed through `args` instead of being closed over.
  */
 async function scenario<T>(
   page: import('@playwright/test').Page,

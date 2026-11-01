@@ -9,11 +9,8 @@ import { V3_STORES } from '../repositories/schema';
 const DB_NAME = V3_DB_NAME;
 /**
  * 1 = the P1-era mirror stores. 2 adds the `_v3` stores beside them (P2-01).
- *
  * This module is the **only** opener of the database. A second module opening
- * the same database at a different version would be blocked by this connection
  * (which is cached and never closed), so `idbV3.ts` deliberately delegates here
- * instead of calling `indexedDB.open` itself.
  */
 const DB_VERSION = V3_DB_VERSION;
 
@@ -152,11 +149,7 @@ export async function getDb(): Promise<IDBDatabase> {
 
 /**
  * Sync entire HubState into IndexedDB
- *
  * The mirror is a migration data source, so it must reflect deletions too:
- * putting only the current items would leave removed records behind and a
- * later v3 migration would resurrect deleted notes/secrets. Each store is
- * reconciled — put current items, delete ids that are no longer in the state.
  */
 export async function syncStateToIndexedDb(state: HubState): Promise<void> {
   const db = await getDb();

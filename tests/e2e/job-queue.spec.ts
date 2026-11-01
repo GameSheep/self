@@ -3,21 +3,7 @@ import { resetApp } from './helpers';
 
 /**
  * P2-05: durable job queue.
- *
  * The queue exists because a backup that only lives in a `setTimeout` inside an
- * open tab is not a task — it is a hope. These tests are about the properties
- * that make it durable:
- *
- * - work survives a **real page reload** (fresh JS context, no shared memory),
- * - a dead worker's job is reclaimed instead of staying `running` forever,
- * - retries are bounded and use the documented backoff,
- * - credentials cannot leak into job logs,
- * - updating a job does **not** bump the content revision, because that would
- *   re-trigger the very backup the job belongs to (§15.1).
- *
- * The bulk of the assertions live in `src/infrastructure/jobs/jobSuite.ts` and run
- * inside the browser through the dev-only bridge, so the guarantees are checked
- * against real IndexedDB transactions rather than a mocked store.
  */
 
 type CheckResult = { name: string; ok: boolean; detail?: string };

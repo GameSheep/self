@@ -366,14 +366,10 @@ export function App() {
 
   useReminderNotifications(state.reminders);
   const { backupStatus, target: backupTarget, runStateBackup } = useCloudBackup(state);
-  /**
-   * v3 backup panel state (P2-05).
-   *
-   * The policy write-back goes through the same `updateState` the legacy switch
-   * uses, so "which format" is one persisted preference and not a second source
-   * of truth. Note that choosing v3 does **not** turn automatic backup on: the
-   * format and the task switch stay separate, exactly like connections and tests.
-   */
+/**
+ * v3 backup panel state (P2-05).
+ * The policy write-back goes through the same `updateState` the legacy switch
+ */
   /**
    * Late-bound state restore.
    *
@@ -517,14 +513,10 @@ export function App() {
             } else {
               setV3WriteError(null);
               setV3Status({ counts: written.value.counts });
-              /**
-               * Tell other tabs that the *library* changed.
-               *
-               * The payload they watch is device-only in v3 mode and usually byte-identical
-               * between writes, so `localStorage` fires no event and a second tab would
-               * silently miss that the library moved under it. This key carries the library
-               * id, the new content revision and a timestamp — no data, no secrets.
-               */
+/**
+ * Tell other tabs that the *library* changed.
+ * The payload they watch is device-only in v3 mode and usually byte-identical
+ */
               try {
                 localStorage.setItem(
                   V3_ACTIVITY_KEY,
@@ -559,14 +551,10 @@ export function App() {
     return () => window.removeEventListener('storage', onStorage);
   }, []);
 
-  /**
-   * Boot-time hydration in v3 mode.
-   *
-   * Runs before any v3 write is allowed (`v3ReadyRef`), so a stale v2 payload can never
-   * overwrite the library it is about to be replaced by. An empty or unreadable library
-   * keeps the v2 data and says why — "the switch silently emptied my app" is the failure
-   * mode this is here to prevent.
-   */
+/**
+ * Boot-time hydration in v3 mode.
+ * Runs before any v3 write is allowed (`v3ReadyRef`), so a stale v2 payload can never
+ */
   useEffect(() => {
     if (storageMode !== 'v3') {
       if (v3TimerRef.current) window.clearTimeout(v3TimerRef.current);
@@ -845,14 +833,10 @@ export function App() {
     };
   }, [runCaptureImport]);
 
-  /**
-   * Notes typed in the new tab's 「文本框」 module.
-   *
-   * The new tab must not write the library itself (the app is its only writer),
-   * so it appends to a queue in `chrome.storage.local`. Draining it here keeps
-   * one writer, and `storage.onChanged` makes it live — the workbench is usually
-   * open in another tab while the user writes on the new tab.
-   */
+/**
+ * Notes typed in the new tab's 「文本框」 module.
+ * The new tab must not write the library itself (the app is its only writer),
+ */
   const pendingNotesImportedRef = useRef(false);
   const runPendingNoteImport = useCallback(async () => {
     if (!isExtensionContext()) return;
@@ -1150,14 +1134,10 @@ export function App() {
   // Fill in the late-bound reference used by the v3 restore flow above.
   restoreStateRef.current = handleRestoreState;
 
-  /**
-   * Quick capture (P1-03).
-   *
-   * Writes through `saveHubState` here and returns its real result, so the home
-   * page can say "已保存" only when the local write actually completed. An
-   * optimistic message followed by a failed effect write is exactly the
-   * dishonesty the redesign is meant to remove.
-   */
+/**
+ * Quick capture (P1-03).
+ * Writes through `saveHubState` here and returns its real result, so the home
+ */
   const captureEntry = useCallback((raw: string, source: InboxItem['source']): CaptureResult => {
     const current = stateRef.current;
     const { items, entry, created } = captureIntoInbox(current.inbox, raw, { source });

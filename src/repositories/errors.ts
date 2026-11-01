@@ -66,11 +66,7 @@ export function fail<T = never>(error: AppError): Result<T> {
 
 /**
  * Recognise a storage-quota failure across browsers.
- *
  * Chrome reports `QuotaExceededError`, Firefox `NS_ERROR_DOM_QUOTA_REACHED`, and
- * IndexedDB reports a plain `QuotaExceededError` on the transaction. Safari
- * sometimes surfaces a bare code 22. Anything unrecognised stays UNKNOWN rather
- * than being mislabelled as "your disk is full".
  */
 export function isQuotaError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;

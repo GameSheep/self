@@ -495,11 +495,7 @@ export interface PruneResult {
 
 /**
  * Retention: last 10 successful generations plus one per day for 30 days.
- *
  * Only complete generations from **this device** are considered (the caller passes
- * one device prefix), and pruning refuses outright when it would delete the last
- * restorable generation — losing every backup to a retention rule would be worse
- * than keeping one too many.
  */
 export async function pruneGenerations(options: PruneOptions): Promise<Result<PruneResult>> {
   const now = options.now ?? Date.now();

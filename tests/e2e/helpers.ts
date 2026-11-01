@@ -62,13 +62,7 @@ export async function resetApp(page: Page) {
 
 /**
  * Navigation labels → hash routes.
- *
  * The redesign regrouped the navigation and renamed every module in plain
- * language ("自研部署与主机" → "服务器"). Tests that only care about landing on a
- * page should not have to know the sidebar wording, so this map keeps the old
- * labels working and lets new tests use whichever name reads better. Anything
- * not listed here falls back to clicking the real nav item, which is also what
- * exercises the sidebar itself.
  */
 export const TAB_ROUTES: Record<string, string> = {
   // Old labels kept for the existing suites.
@@ -137,11 +131,7 @@ export async function openAddModal(
 
 /**
  * Old settings-pane ids → the redesigned pane that now contains them.
- *
  * The redesign collapsed seven panes into 概览 / 使用偏好 / 连接与任务 /
- * 数据与备份 / 浏览器与设备 / 隐私与安全 / 高级与维护. The old ids stay valid as
- * *routes* (they redirect to the new parent pane) but not as nav buttons, so
- * specs that clicked `[data-settings-nav="ai"]` need this map.
  */
 export const SETTINGS_PANE_ALIAS: Record<string, string> = {
   features: 'preferences',

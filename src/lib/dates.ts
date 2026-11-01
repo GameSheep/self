@@ -165,12 +165,7 @@ function readAnchor(
 
 /**
  * Move a date forward by exactly one recurrence cycle.
- *
  * Returns `fromTs` unchanged for unknown/invalid recurrences (no invented
- * "+30 days" cycle), and NaN-safe for invalid input.
- *
- * The `options` argument may also be a plain number, which is read as `anchorDay`
- * (the previous signature: `addOneCycle(ts, 'monthly', 31)`).
  */
 export function addOneCycle(fromTs: number, recurring: string, options?: CycleOptions | number): number {
   const base = new Date(fromTs);

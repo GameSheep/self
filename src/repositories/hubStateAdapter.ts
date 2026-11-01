@@ -130,14 +130,11 @@ function baseRow(libraryId: string, id: string, source: Record<string, unknown>,
 export interface ToRecordsOptions {
   libraryId: string;
   now?: () => number;
-  /**
-   * Proceed even when some rows fail runtime validation.
-   *
-   * Default is `false`, and that is the important part for a switch: a row that cannot
-   * be represented must stop the whole write, because "switched to v3, silently minus
-   * one bookmark" is a data-loss event nobody would notice. Passing `true` is a
-   * deliberate "I have read the report" decision.
-   */
+/**
+ * Proceed even when some rows fail runtime validation.
+ * Default is `false`, and that is the important part for a switch: a row that cannot
+ * be represented must stop the whole write, because "switched to v3, silently minus
+ */
   allowDrop?: boolean;
 }
 

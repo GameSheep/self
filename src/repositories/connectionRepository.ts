@@ -298,14 +298,11 @@ export class ConnectionRepository {
     }
   }
 
-  /**
-   * Store a secret for a connection.
-   *
-   * Requires the master password: the envelope is encrypted here with the audited
-   * Web Crypto path (§10.3 reuses the existing implementation rather than
-   * inventing one). The plaintext never reaches storage, and the call fails with
-   * `LOCKED` when the vault is locked instead of falling back to plain text.
-   */
+/**
+ * Store a secret for a connection.
+ * Requires the master password: the envelope is encrypted here with the audited
+ * inventing one). The plaintext never reaches storage, and the call fails with
+ */
   async saveCredential(connectionId: string, secret: string, masterPassword: string): Promise<Result<{ credentialId: string }>> {
     if (!masterPassword) {
       return fail(
@@ -442,14 +439,10 @@ export class ConnectionRepository {
     }
   }
 
-  /**
-   * Enable or pause one purpose.
-   *
-   * Enabling requires a verification of the *current* configuration. That one rule
-   * keeps three failure modes out at once: a task cannot start against a changed
-   * target, cannot start against an untested connection, and cannot inherit a green
-   * result from a configuration the user has since edited (§8.2).
-   */
+/**
+ * Enable or pause one purpose.
+ * Enabling requires a verification of the *current* configuration. That one rule
+ */
   async setPurposeEnabled(connectionId: string, purpose: PurposeId, enabled: boolean): Promise<Result<{ binding: PurposeBinding }>> {
     try {
       const current = await this.getConnection(connectionId);

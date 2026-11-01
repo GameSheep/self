@@ -4,20 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 
 /**
- * P2-04: the extension's single write entry point, verified in a **real
- * extension context**.
- *
- * The dev doc is explicit that a mocked page cannot stand in for this (§15.1:
- * "扩展生命周期需真实扩展上下文验证，普通网页 mock 不能替代"), so this spec loads
- * the unpacked extension into Chromium, talks to the live MV3 service worker and
- * checks what actually lands in the extension-origin database.
- *
- * Three claims:
- *  1. A page-driven capture really is written to the extension store (one writer).
- *  2. The command whitelist and sender rules reject what they should — a content
- *     script cannot read the whole library, and a page cannot use an unknown
- *     command.
- *  3. A repeated `operationId` does not create a second record.
+ * P2-04: the extension's single write entry point, verified in a **real extension
+ * context** (a mocked page cannot stand in for this, §15.1). Three claims: a
+ * page-driven capture really lands in the extension store (one writer); the
+ * command whitelist and sender rules reject what they should; a repeated
+ * `operationId` does not create a second record.
  */
 
 const EXT_PATH = path.join(process.cwd(), 'extension');
@@ -458,15 +449,10 @@ test.describe('P2-04 扩展单写入口（真实扩展上下文）', () => {
     await page.close();
   });
 
-  /**
-   * The packaged workspace inside the extension (`extension/app/`).
-   *
-   * `npm run package:extension` copies the production build here, and this is the page a
-   * user opens from the extension — but nothing tested that it actually boots. A build change
-   * (extra chunks, tree-shaking metadata, lazy imports) can break it while `vite preview`
-   * still looks perfect, because the two serve the bundle from different origins and with
-   * different CSP.
-   */
+/**
+ * The packaged workspace inside the extension (`extension/app/`).
+ * `npm run package:extension` copies the production build here, and this is the page a
+ */
   test('扩展内嵌的工作台页面能启动并保存一条记录', async () => {
     const page = await context!.newPage();
     const errors: string[] = [];
@@ -497,17 +483,10 @@ test.describe('P2-04 扩展单写入口（真实扩展上下文）', () => {
     await page.close();
   });
 
-  /**
-   * MV3 lifecycle, as far as this harness can honestly take it.
-   *
-   * The design's concern is that the worker is disposable: a *fresh* worker must find its
-   * state in storage and enforce the same rules. Stopping the worker through CDP
-   * (`ServiceWorker.stopWorker`) is attempted here, but Chromium does not always report a
-   * `running` version for an idle MV3 worker, so the assertions below do not depend on it:
-   * they close every page (nothing survives in a renderer) and replay the same
-   * `operationId` from a brand-new one. True worker termination on a real profile remains
-   * a manual acceptance item — recorded in the progress notes rather than implied here.
-   */
+/**
+ * MV3 lifecycle, as far as this harness can honestly take it.
+ * The design's concern is that the worker is disposable: a *fresh* worker must find its
+ */
   test('状态与幂等规则不依赖页面：关闭全部页面后重放同一 operationId 仍只有一条', async () => {
     const operationId = `lifecycle-${Date.now()}`;
 
@@ -772,15 +751,11 @@ test.describe('P2-04 扩展单写入口（真实扩展上下文）', () => {
     await page.close();
   });
 
-  /**
-   * The pane's manual 「从扩展同步」 button, in the real extension context.
-   *
-   * This is the diagnostic path for when the automatic imports *appear* to have
-   * done nothing: the result line must say the extension answered, how many
-   * annotations it holds, and how many were new — never a silent no-op. (The
-   * store is shared across this spec's tests, so the exact counts vary; the
-   * contract is "connected and accounted for".)
-   */
+/**
+ * The pane's manual 「从扩展同步」 button, in the real extension context.
+ * This is the diagnostic path for when the automatic imports *appear* to have
+ * done nothing: the result line must say the extension answered, how many
+ */
   test('网页批注面板的手动「从扩展同步」报告扩展侧状态', async () => {
     test.setTimeout(60_000);
     const page = await context!.newPage();

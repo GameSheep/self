@@ -319,14 +319,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   };
 
   return (
-    /**
-     * Right-side drawer, not a centred full-cover modal.
-     *
-     * Filling in a server or a credential usually means *referencing* the list behind
-     * (existing groups, similar entries, which site a key belongs to) — a dark blurred
-     * overlay hid all of it. The page stays fully visible here; only the drawer panel
-     * intercepts clicks, and clicking the page (or ESC) closes the form.
-     */
+/**
+ * Right-side drawer, not a centred full-cover modal.
+ * Filling in a server or a credential usually means *referencing* the list behind
+ */
     <div onClick={requestClose} className="fixed inset-0 z-50 flex justify-end animate-in fade-in">
       <div
         onClick={(e) => e.stopPropagation()}

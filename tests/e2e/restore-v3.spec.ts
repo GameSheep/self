@@ -3,15 +3,8 @@ import { resetApp, STORAGE_KEY } from './helpers';
 
 /**
  * P2-06: restore from a v3 batch.
- *
  * The rules this spec pins down are the ones §10.4 exists for, and each of them is
- * a way a restore can quietly destroy data:
- *
  * - previewing must not change anything,
- * - an edit made after the preview must stop the restore instead of being overwritten,
- * - same-id conflicts are decided by the user, never by "last write wins",
- * - a package from another library gets remapped ids instead of merging by accident,
- * - connection secrets stripped from the package must not blank the local ones.
  */
 
 const ENDPOINT = 'oss-cn-beijing.aliyuncs.com';

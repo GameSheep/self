@@ -109,11 +109,7 @@ export function newOperationId(prefix: string): string {
 
 /**
  * Push the bookmark list to the extension so the new-tab grid stays accurate.
- *
  * Only the bookmarks are sent, and only as an ordered list; the background owns
- * the write. Annotations are *not* mirrored any more: they now flow
- * content-script → background → store, and the app imports them explicitly
- * instead of overwriting them.
  */
 export function syncBookmarksToExtension(state: HubState): void {
   if (!isExtensionContext()) return;
@@ -144,14 +140,10 @@ export function syncBookmarksToExtension(state: HubState): void {
 export interface ExtensionAnnotationImport {
   rows: Array<{ id: string; pageUrl: string; pageTitle?: string; text: string; note?: string; color?: string; anchor?: unknown; createdAt?: number; updatedAt?: number }>;
   totalCount: number;
-  /**
-   * Rows the extension returned but the shape check rejected (missing id/text).
-   *
-   * Zero in every healthy path; a positive value means the extension holds
-   * annotations this build cannot read — data written by an older/other shape.
-   * Surfaced so "the pane is empty" can distinguish "extension is empty" from
-   * "extension has rows we silently dropped".
-   */
+/**
+ * Rows the extension returned but the shape check rejected (missing id/text).
+ * Zero in every healthy path; a positive value means the extension holds
+ */
   dropped: number;
 }
 
@@ -266,11 +258,7 @@ export interface ExtensionInboxRecord {
 
 /**
  * Rows the workbench has not taken yet.
- *
  * Asks for `status === 'inbox'` only, so a capture that was already imported
- * (and marked below) cannot come back on the next boot. Anything that goes wrong
- * — older extension build without `QUERY_INBOX`, worker asleep, plain web page —
- * degrades to an empty list rather than a failed import.
  */
 export async function readExtensionInbox(): Promise<ExtensionInboxRecord[]> {
   try {
@@ -436,11 +424,7 @@ export async function acknowledgeQuickNoteImported(): Promise<void> {
 
 /**
  * A note written in the new tab's 「文本框」 module.
- *
  * The new tab cannot write the library itself: the app is the only writer of the
- * v2 payload / v3 library, and a second writer is exactly what produced lost
- * updates before. So the new tab appends to a queue in `chrome.storage.local`
- * (idempotent by id) and the app drains it here.
  */
 export interface PendingNote {
   id: string;

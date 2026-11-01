@@ -1,10 +1,6 @@
 /**
  * v3 IndexedDB provisioning (P2-01).
- *
  * Kept separate from the repository so the upgrade path is one auditable place:
- * §13.4 requires that a future rollback know exactly which stores this version
- * created, and §6.4 requires that the old mirror stores survive the upgrade so
- * the running app keeps working while the migration is prepared.
  */
 import { V3_STORES, isLibraryScoped } from '../../repositories/schema';
 import { closeDb, getDb } from '../../lib/indexedDb';
@@ -75,11 +71,7 @@ export interface TxContext {
 
 /**
  * Run one IndexedDB transaction and resolve **only after `oncomplete`**.
- *
  * This is the single place that decides what "written" means. §6.4 is explicit:
- * a request's `onsuccess` is not a commit, so the promise here is tied to the
- * transaction's `complete` event. `abort()` on either an error or an explicit
- * `abortRequested` guarantees a failed callback cannot leave a partial record.
  */
 export async function runV3Transaction<T>(
   stores: string[],

@@ -34,11 +34,7 @@ export const LOCAL_LIBRARY_ID = 'local-v2';
 
 /**
  * Labels for both vocabularies the panel receives.
- *
  * The boot/migration path counts by *collection* (from `readLibrary`), a write reports
- * *store* names (from `writeLibrary`). Showing whichever arrived would make the same
- * library describe itself differently depending on what happened last, so both are
- * mapped to one label set.
  */
 const COUNT_LABELS: Record<string, string> = {
   notes: '笔记',

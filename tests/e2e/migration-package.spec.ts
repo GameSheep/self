@@ -4,18 +4,8 @@ import { mockOss } from './ossMock';
 
 /**
  * P2-06: the credentials migration package (§10.3).
- *
  * A migration package is the one artefact allowed to contain connection secrets, so
- * the rules around it are the point of this spec:
- *
- * - exporting needs a deliberate confirmation and states its scope,
  * - it is written under its own root, so it can never be listed as a backup,
- *   counted by the status panel or pruned by retention,
- * - a normal backup still contains no secrets,
- * - importing adopts a package's (config + secret) *pair*, and refuses when this
- *   device is configured for a different account — the "don't bind A's credential
- *   to B's service" rule,
- * - imported connections are marked untested on this device.
  */
 
 const ENDPOINT = 'oss-cn-beijing.aliyuncs.com';

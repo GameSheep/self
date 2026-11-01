@@ -313,14 +313,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   /** 加密备份导入时无会话主密码：先存文件内容，等遮蔽的密码框而不是明文 prompt()。 */
   const [pendingEncryptedRestore, setPendingEncryptedRestore] = useState<string | null>(null);
   const [restorePassword, setRestorePassword] = useState('');
-  /**
-   * Damaged payloads kept aside by `loadHubState`.
-   *
-   * P0-02 found that a corrupt `self_hub_data_v2` was copied to a
-   * `...__corrupt_<ts>` key with no way to reach it except DevTools, so the data
-   * was technically preserved and practically lost. These are the list, the
-   * export and the delete for it.
-   */
+/**
+ * Damaged payloads kept aside by `loadHubState`.
+ * P0-02 found that a corrupt `self_hub_data_v2` was copied to a
+ */
   const [salvage, setSalvage] = useState<Array<{ key: string; at: number; bytes: number }>>([]);
   const [salvageToDelete, setSalvageToDelete] = useState<string | null>(null);
 
@@ -627,14 +623,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const resolvedTarget = backupTarget ?? resolveBackupTarget(state);
   /** Size of the stored payload, for the diagnostics row and the capacity warning. */
   const storageHealth = React.useMemo(() => getStorageHealth(), [state]);
-  /**
-   * True only when the application's own snapshot task would actually run.
-   *
-   * The extension-overlap warning says "站点/批注会被写两次". Using `configured`
-   * here meant a saved-but-paused (or destination-less) backup still produced
-   * that warning — a claim about the app's behaviour that is not true at that
-   * moment. `canRun` folds in "there is a destination" and "the task is on".
-   */
+/**
+ * True only when the application's own snapshot task would actually run.
+ * The extension-overlap warning says "站点/批注会被写两次". Using `configured`
+ */
   const backupTargetActive = resolvedTarget.canRun;
   const backupPolicy: BackupPolicy =
     state.backupPolicy ?? { provider: 'auto', enabled: resolvedTarget.enabled, format: 'legacy' };

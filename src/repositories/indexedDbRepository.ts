@@ -483,14 +483,10 @@ export class IndexedDbRepository implements HubRepository {
     }
   }
 
-  /**
-   * Bump the library's content revision in its own transaction.
-   *
-   * Deliberately a separate commit: the revision is a *notification* that a write
-   * landed, and folding it into the business transaction would mean a revision
-   * could be observed for a write that was later aborted. A reader that sees a
-   * revision only ever sees it after the data is durable.
-   */
+/**
+ * Bump the library's content revision in its own transaction.
+ * Deliberately a separate commit: the revision is a *notification* that a write
+ */
   private async bumpContentRevision(id: string): Promise<Result<number>> {
     try {
       const result = await runV3Transaction([LIBRARY_META], 'readwrite', async (ctx) => {

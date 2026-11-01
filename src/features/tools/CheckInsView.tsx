@@ -18,10 +18,7 @@ export interface CheckInsViewProps {
 
 /**
  * 签到网站 (P1-07, simplified 2026-10).
- *
  * Not an automation feature any more: this is a list of sites the user wants to
- * visit daily. The card opens the site; the user checks in there and comes back
- * to tap 「标记今天已签」. The app records what it observed and what the user
  * confirmed — it never fires requests on anyone's behalf.
  */
 export const CheckInsView: React.FC<CheckInsViewProps> = ({

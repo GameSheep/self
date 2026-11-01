@@ -2,14 +2,7 @@ import type { Page } from '@playwright/test';
 
 /**
  * Minimal mocked OSS bucket for backup/restore specs.
- *
  * Serves the four things the P1 OSS client actually does — bucket listing with
- * `prefix`, object GET, PUT, DELETE and HEAD — and records what it saw, so a spec
- * can assert on the requests instead of only on the app's own status text.
- *
- * Deliberately a plain object store: no signing validation. `backup-providers.spec`
- * covers the request shape (signed headers, prefix-scoped keys); the specs that use
- * this helper care about *behaviour* (what ends up where, what is read back).
  */
 export interface OssMock {
   files: Map<string, string>;

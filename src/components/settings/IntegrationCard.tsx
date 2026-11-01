@@ -72,14 +72,11 @@ export const IntegrationCard: React.FC<IntegrationCardProps> = ({
   const draftCb = useRef(onDraftChange);
   draftCb.current = onDraftChange;
 
-  /**
-   * Re-sync when the saved values change from elsewhere (restore, another tab).
-   *
-   * The old version re-synced on every `state` identity change, which would now
-   * silently throw away an unsaved draft whenever an unrelated part of the app
-   * state moved (a backup status update, a reminder tick). Only a real change to
-   * *these* values resyncs, and only when the user has nothing unsaved.
-   */
+/**
+ * Re-sync when the saved values change from elsewhere (restore, another tab).
+ * The old version re-synced on every `state` identity change, which would now
+ * silently throw away an unsaved draft whenever an unrelated part of the app
+ */
   useEffect(() => {
     if (lastSigRef.current === persistedSig) return;
     const wasDirty = changedKeys(def, draftRef.current, persistedRef.current).length > 0;

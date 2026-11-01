@@ -3,11 +3,7 @@ import { resetApp, seedState, baseState, gotoTab, readState } from './helpers';
 
 /**
  * 域名 (6.2) — the bug this replaces.
- *
  * 域名 used to be a *projection* over 提醒, so the page's only action was 「新建到期提醒」 and
- * pressing it navigated to the reminders page. Domains are now their own records: name, when it
- * started, when it expires, who sold it, and optionally its nameservers. Existing
- * `category: 'domain'` reminders are copied across on boot and the reminder is left alone.
  */
 test.describe('域名', () => {
   test.beforeEach(async ({ page }) => {

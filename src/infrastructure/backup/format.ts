@@ -13,10 +13,7 @@ export const BACKUP_SCHEMA_VERSION = 3;
 export const BACKUP_ROOT_SEGMENT = '.selfhub/v3';
 /**
  * Migration packages live under their own root (§10.3).
- *
  * "为迁移设备提供单独'包含连接凭据的加密迁移包'…不进入日常备份默认路径." A separate
- * root is what makes that structural rather than a promise: retention, the daily
- * status panel and the automatic trigger all list the backup root only, so a
  * credentials package can never be counted as a backup or pruned as one.
  */
 export const MIGRATION_ROOT_SEGMENT = '.selfhub/migration';
@@ -105,14 +102,10 @@ export interface CompletionMarker {
   manifestPath: string;
   /** SHA-256 of the stored manifest envelope. */
   manifestHash: string;
-  /**
-   * PBKDF2 salt for this generation.
-   *
-   * The salt also lives in the manifest, but the manifest is encrypted — so a
-   * reader cannot get it from there before deriving the key. A KDF salt is a
-   * public parameter, not a secret, so the marker carries it; without this the
-   * package would be unreadable by anyone, including its owner.
-   */
+/**
+ * PBKDF2 salt for this generation.
+ * The salt also lives in the manifest, but the manifest is encrypted — so a
+ */
   salt: string;
   objectCount: number;
   totalBytes: number;

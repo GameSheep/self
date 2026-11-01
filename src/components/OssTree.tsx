@@ -61,11 +61,7 @@ function formatSize(bytes: number): string {
 
 /**
  * Tree view over the whole OSS bucket.
- *
  * The previous UI showed a flat list of the first 200 objects under a single
- * prefix, so a multi-level vault was effectively invisible. Nodes are rendered
- * lazily (folders collapsed by default, per-folder paging) so a 2000-object
- * bucket does not mount thousands of rows at once.
  */
 export const OssTree: React.FC<OssTreeProps> = ({
   root,

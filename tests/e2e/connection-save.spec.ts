@@ -3,11 +3,7 @@ import { seedState, baseState, readState, expandAllIntegrations } from './helper
 
 /**
  * Connection drafts (P1-08).
- *
  * The behaviour under test is the whole point of the task: a connection form is
- * a *draft*. Editing it changes nothing until 「保存连接」; 「取消」 restores what is
- * saved; 「测试连接」 probes the draft without persisting it; and a green result
- * dies the moment the address, key or path changes.
  */
 
 const SAVED_URL = 'https://old.example.com/dav/';

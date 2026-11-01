@@ -131,11 +131,7 @@ export interface ContractBridge {
 
 /**
  * Backup format surface (P2-05).
- *
  * `run` executes the in-page self-check suite against the real Web Crypto stack
- * with an in-memory transport. Providers are not involved on purpose: the format's
- * guarantees (write order, completion marker, hash verification, retention) are
- * what is under test.
  */
 export interface BackupBridge {
   run(runId: string): Promise<BackupCheckResult[]>;
@@ -287,11 +283,7 @@ export interface RestoreBridge {
 
 /**
  * Durable job queue surface (P2-05).
- *
  * `run` executes the in-page self-check suite. The individual calls exist so a
- * spec can prove durability across a **real page reload** — a fresh JS context
- * with no memory of the previous one is the closest a browser test gets to an
- * MV3 worker being terminated and restarted.
  */
 export interface JobsBridge {
   run(runId: string): Promise<JobCheckResult[]>;

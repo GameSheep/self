@@ -35,11 +35,7 @@ export interface Route {
 
 /**
  * Settings sections that may appear in the URL (whitelist).
- *
  * The first seven are the redesigned panes (see SettingsModal). The trailing
- * five are the pre-redesign ids, kept addressable because they are in existing
- * bookmarks, notifications and tests: they resolve to the pane that now holds
- * their content instead of 404-ing (`#/settings/data` → 数据与备份, …).
  */
 export const SETTINGS_SECTIONS = [
   'overview',

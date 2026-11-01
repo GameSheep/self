@@ -4,16 +4,7 @@ import { seedState, baseState, STORAGE_KEY, gotoTab } from './helpers';
 
 /**
  * Aliyun OSS V1 signature over fetch().
- *
  * `Date` is a forbidden header name in the Fetch spec, so the browser drops it
- * silently and OSS answers 403 AccessDenied "OSS authentication requires a valid
- * Date.". curl / PowerShell DO send `Date`, so this failure is invisible to
- * command-line testing — hence these assertions on the real outbound request.
- *
- * The live service confirmed the working scheme:
- *   VERB \n Content-MD5 \n Content-Type \n <x-oss-date> \n
- *   x-oss-date:<x-oss-date>\n
- *   /<bucket>/
  */
 
 const KEY_ID = 'LTAI5tEXAMPLE000000000';

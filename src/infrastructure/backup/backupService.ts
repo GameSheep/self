@@ -423,11 +423,7 @@ export async function listMigrationPackages(
 
 /**
  * Delete one migration package.
- *
  * Deliberately an explicit, one-at-a-time action: retention never touches the
- * migration root (§10.3), so without this a credentials package would sit in the
- * user's bucket forever with no way to remove it. Objects are deleted one by one and
- * the count is reported, so a partial failure is visible rather than silent.
  */
 export async function removeMigrationPackage(
   options: InspectOptions & { generationId: string }
