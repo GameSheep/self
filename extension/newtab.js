@@ -813,19 +813,27 @@
         var row = el('button', 'list-item');
         row.type = 'button';
         row.setAttribute('data-annotation-id', item.id);
-        var title = snippetOf(item.pageTitle, 40) || snippetOf(item.text, 40) || '未命名批注';
-        var subParts = [snippetOf(item.text, 60), snippetOf(item.note, 60)].filter(Boolean);
+        // 原文是主行，页面标题退到副行——同一篇文章划多条时，标题全一样，
+        // 真正区分它们的是划了什么（工作台批注列表同款口径）。
+        var title = snippetOf(item.text, 60) || snippetOf(item.note, 60) || snippetOf(item.pageTitle, 40) || '未命名批注';
+        var subParts = [snippetOf(item.note, 60) || snippetOf(item.pageTitle, 40)];
         var when = relTime(item.updatedAt || item.createdAt);
         if (when) subParts.push(when);
 
         var dotWrap = el('span', 'list-dot');
         var dot = el('span', 'hl-dot');
-        dot.style.backgroundColor = HL_COLORS[item.color] || HL_COLORS.yellow;
+        var hl = HL_COLORS[item.color] || HL_COLORS.yellow;
+        dot.style.backgroundColor = hl;
         dotWrap.appendChild(dot);
         row.appendChild(dotWrap);
 
         var main = el('span', 'list-main');
-        main.appendChild(el('span', 'list-title', title));
+        // 原文带荧光底（和工作台批注列表同款），一眼看出「划的是哪句」。
+        var titleSpan = el('span', 'list-title', title);
+        titleSpan.style.backgroundColor = hl + '1f';
+        titleSpan.style.borderRadius = '3px';
+        titleSpan.style.padding = '0 3px';
+        main.appendChild(titleSpan);
         var sub = subParts.join(' · ');
         if (sub) main.appendChild(el('span', 'list-sub', sub));
         row.appendChild(main);

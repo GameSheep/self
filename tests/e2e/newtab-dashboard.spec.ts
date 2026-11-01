@@ -56,7 +56,7 @@ const SEED = {
  */
 const freshBuild = () => assertPackagedAppFresh(EXT_PATH);
 
-async function openNewTab(seed: typeof SEED = SEED): Promise<Page> {
+async function openNewTab(seed: typeof SEED & Record<string, unknown> = SEED): Promise<Page> {
   const page = await context!.newPage();
   await page.goto(`chrome-extension://${extensionId}/newtab.html`);
   await page.evaluate((payload) => {
@@ -578,4 +578,48 @@ test.describe('模块面板：自定义与数据来源', () => {
     await expect(page.locator('.dash-col')).toHaveCount(3);
     await page.close();
   });
+
+  test('批注模块主行是划词原文，不是千篇一律的页面标题', async () => {
+    const now = Date.now();
+    const page = await openNewTab({
+      ...SEED,
+      annotations: [
+        {
+          id: 'an-1',
+          pageTitle: 'DeepSeek 开放平台',
+          pageUrl: 'https://api-docs.deepseek.com/zh-cn/',
+          text: '深度求索模型接口的调用方式',
+          note: '记得看限流说明',
+          color: 'yellow',
+          createdAt: now,
+          updatedAt: now
+        },
+        {
+          id: 'an-2',
+          pageTitle: 'DeepSeek 开放平台',
+          pageUrl: 'https://api-docs.deepseek.com/zh-cn/',
+          text: '余额查询接口的返回格式',
+          color: 'purple',
+          createdAt: now - 1000,
+          updatedAt: now - 1000
+        }
+      ]
+    });
+
+    const mod = page.locator('.module', { hasText: '网页批注' }).first();
+    await expect(mod).toBeVisible();
+    const rows = mod.locator('.list-item');
+    await expect(rows).toHaveCount(2);
+
+    // 主行 = 原文；两条同一页面的划词不再长得一模一样。
+    await expect(rows.nth(0).locator('.list-title')).toContainText('深度求索模型接口的调用方式');
+    await expect(rows.nth(1).locator('.list-title')).toContainText('余额查询接口的返回格式');
+    // 副行 = 我的批注 / 页面标题 + 时间。
+    await expect(rows.nth(0).locator('.list-sub')).toContainText('记得看限流说明');
+    // 原文带荧光底色（工作台同款），保证「标注的内容」看得见。
+    const bg = await rows.nth(0).locator('.list-title').evaluate((el) => el.style.backgroundColor);
+    expect(bg).toContain('0.12');
+    await page.close();
+  });
+
 });
