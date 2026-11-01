@@ -4,7 +4,7 @@
  * own "saving / saved / failed" text — so "did that save?" looked different in
  * · engine. They only fix the vocabulary (tone, size, feedback state) so that a
  */
-import React from 'react';
+import React, { useDeferredValue, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { AlertTriangle, Check, Info, Loader2, X } from 'lucide-react';
 /* -------------------------------------------------------------------------- */
@@ -576,4 +576,23 @@ export function useConfirmDialog(): {
   );
 
   return { confirm, dialog };
+}
+
+/* -------------------------------------------------------------------------- */
+/* useDeferredSearch                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 检索输入的标准接法：小防抖（默认 150ms，把连续击键合并成一次检索）
+ * + useDeferredValue（检索在低优先级 lane 里追）。输入框绑原值立即回显。
+ * 万条级实测：只用 defer 时逐字符仍会被整列表渲染追逐（1800ms/4 字符），
+ * 加防抖后合并为停顿后的一次。
+ */
+export function useDeferredSearch(value: string, delayMs = 150): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return useDeferredValue(debounced);
 }

@@ -6,7 +6,16 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
  * The dev doc sets targets and says to "记录设备/浏览器和构建版本后测量，不把本节目标当
  */
 
-const FIXTURE = { notes: 2000, annotations: 4000, sites: 600, reminders: 200 };
+// PERF_SCALE 环境变量可放大夹具做万条级测量（默认 1）：如
+// `PERF_SCALE=2.5 npx playwright test tests/e2e/performance.spec.ts`。
+// 注意 v2 载荷受 localStorage ~5MB 配额约束，放大时先看 payloadKb。
+const SCALE = Number(process.env.PERF_SCALE ?? 1);
+const FIXTURE = {
+  notes: Math.round(2000 * SCALE),
+  annotations: Math.round(4000 * SCALE),
+  sites: Math.round(600 * SCALE),
+  reminders: Math.round(200 * SCALE)
+};
 const ARTIFACT = 'docs/perf-baseline.json';
 
 function buildLargeState() {
@@ -166,6 +175,35 @@ test.describe('P2-07 性能基线', () => {
     await expect(page.getByTestId('global-search-input')).toHaveValue('性能测试');
     const paletteTypingMs = Date.now() - typingStart;
 
+    // 整包持久化成本：每次 updateState 提交后，App 都同步执行
+    // JSON.stringify(1.8MB) + localStorage.setItem——这是每一个动作（点一次
+    // 完成、存一次笔记）都要付的价格。在页面里直接测两段的真实耗时。
+    const saveLatency = await page.evaluate(() => {
+      const KEY = 'self_hub_data_v2';
+      const raw = localStorage.getItem(KEY) || '';
+      const state = JSON.parse(raw);
+      const samples: Array<{ stringifyMs: number; setItemMs: number }> = [];
+      for (let i = 0; i < 20; i++) {
+        state.notes[0].title = `笔记 性能 ${i}`;
+        const t0 = performance.now();
+        const serialized = JSON.stringify(state);
+        const t1 = performance.now();
+        localStorage.setItem(KEY, serialized);
+        const t2 = performance.now();
+        samples.push({ stringifyMs: t1 - t0, setItemMs: t2 - t1 });
+      }
+      localStorage.setItem(KEY, raw);
+      const pct = (arr: number[], q: number) => [...arr].sort((a, b) => a - b)[Math.min(arr.length - 1, Math.floor(arr.length * q))];
+      return {
+        payloadKb: Math.round(raw.length / 1024),
+        stringifyP95: +pct(samples.map((x) => x.stringifyMs), 0.95).toFixed(1),
+        setItemP95: +pct(samples.map((x) => x.setItemMs), 0.95).toFixed(1),
+        totalP95: +pct(samples.map((x) => x.stringifyMs + x.setItemMs), 0.95).toFixed(1),
+        median: +pct(samples.map((x) => x.stringifyMs + x.setItemMs), 0.5).toFixed(1)
+      };
+    });
+    console.log('[perf:save]', JSON.stringify(saveLatency));
+
     await page.keyboard.press('Escape');
 
     const report = {
@@ -177,6 +215,7 @@ test.describe('P2-07 性能基线', () => {
       },
       fixture: {
         ...FIXTURE,
+        scale: SCALE,
         payloadKb,
         note: '开发文档的压测夹具是 1 万条元数据 / 2 千篇笔记 / 10 万条批注；这里批注数为 4 千以避免夹具本身成为瓶颈，因此数值是下界。'
       },
@@ -196,7 +235,8 @@ test.describe('P2-07 性能基线', () => {
           max: Math.max(...paletteMs),
           values: paletteMs
         },
-        paletteTypingMs: paletteTypingMs
+        paletteTypingMs: paletteTypingMs,
+        saveLatency: saveLatency
       },
       docTargets: {
         homeInteractive: '≤ 2000ms',

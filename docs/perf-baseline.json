@@ -1,5 +1,5 @@
 {
-  "measuredAt": "2026-11-01T06:03:18.347Z",
+  "measuredAt": "2026-11-01T06:17:11.356Z",
   "environment": {
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.8010.12 Safari/537.36",
     "viewport": {
@@ -10,34 +10,42 @@
     "browser": "chromium (Playwright)"
   },
   "fixture": {
-    "notes": 2000,
-    "annotations": 4000,
-    "sites": 600,
-    "reminders": 200,
-    "payloadKb": 1841,
+    "notes": 5000,
+    "annotations": 10000,
+    "sites": 1500,
+    "reminders": 500,
+    "scale": 2.5,
+    "payloadKb": 4616,
     "note": "开发文档的压测夹具是 1 万条元数据 / 2 千篇笔记 / 10 万条批注；这里批注数为 4 千以避免夹具本身成为瓶颈，因此数值是下界。"
   },
   "measurements": {
-    "mainVisibleMs": 738,
-    "homeInteractiveMs": 760,
-    "libraryVisibleMs": 576,
+    "mainVisibleMs": 1050,
+    "homeInteractiveMs": 1081,
+    "libraryVisibleMs": 963,
     "libraryInitialRows": 100,
     "libraryRowsAfterShowMore": 200,
     "searchMs": {
-      "p50": 105,
-      "p95": 627,
-      "max": 627
+      "p50": 67,
+      "p95": 766,
+      "max": 766
     },
     "paletteMs": {
       "queries": 3,
-      "max": 316,
+      "max": 1032,
       "values": [
-        316,
-        149,
-        140
+        1032,
+        93,
+        132
       ]
     },
-    "paletteTypingMs": 885
+    "paletteTypingMs": 265,
+    "saveLatency": {
+      "payloadKb": 4617,
+      "stringifyP95": 17.4,
+      "setItemP95": 33.7,
+      "totalP95": 49.4,
+      "median": 42.2
+    }
   },
   "docTargets": {
     "homeInteractive": "≤ 2000ms",

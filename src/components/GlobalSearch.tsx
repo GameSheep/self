@@ -1,4 +1,4 @@
-import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   BookOpen,
@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { HubState, SecretItem } from '../types';
 import { loadIndex, type IndexedDoc } from '../lib/vaultIndex';
+import { useDeferredSearch } from '../shared/ui';
 import { searchEverything, type SearchHit, type SearchKind, type SearchResult } from '../domain/search';
 
 /**
@@ -79,11 +80,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({
   onCopySecret
 }) => {
   const [query, setQuery] = useState('');
-  /**
-   * 检索在统一索引上做全集合扫描（大库单次 P95 数百 ms），不能阻塞打字：
-   * 输入框仍绑 query 立即回显，结果列表用 deferred 值在低优先级 lane 里追。
-   */
-  const deferredQuery = useDeferredValue(query);
+  const deferredQuery = useDeferredSearch(query);
   const isStale = deferredQuery !== query;
   const [activeKind, setActiveKind] = useState<'all' | SearchKind>('all');
   const [selectedIndex, setSelectedIndex] = useState(0);
