@@ -1292,6 +1292,86 @@ test.describe('模块面板：自定义与数据来源', () => {
       await page.close();
     });
 
+    test('窄卡片拖到哪就停在哪：落点由指针算，不再只有左右两档', async () => {
+      const page = await openNewTab();
+      const capture = page.locator('[data-module-id="m-capture"]');
+
+      // 先改成半栏（宽度不变，位置才是这次要验的东西）
+      await capture.locator('.module-menu-btn').click();
+      await page.locator('.pop .pop-item', { hasText: '半栏并排' }).click();
+
+      const col = page.locator('.dash-col[data-col="1"]');
+      const colBox = (await col.boundingBox())!;
+      const capBox = (await capture.boundingBox())!;
+      const pinnedBox = (await page.locator('[data-module-id="m-pinned"]').boundingBox())!;
+
+      await page.mouse.move(capBox.x + 30, capBox.y + 12);
+      await page.mouse.down();
+      const dropX = colBox.x + colBox.width * 0.35;
+      const dropY = pinnedBox.y + pinnedBox.height * 0.5;
+      await page.mouse.move(dropX, dropY, { steps: 12 });
+      await page.waitForTimeout(150);
+
+      // 虚线槽本身就落在指针那一列（x=1 → 第 2 条网格线起），不是非 0 即 6
+      const gapColumn = await page.evaluate(() => {
+        const gap = document.querySelector('.drop-gap') as HTMLElement | null;
+        return gap ? gap.style.gridColumn : '';
+      });
+      expect(gapColumn, `虚线槽在第 ${gapColumn} 列，应该跟着指针走`).toMatch(/^[2-6] \/ span 6$/);
+
+      await page.mouse.up();
+      await page.waitForTimeout(200);
+
+      const stored = await page.evaluate(
+        () =>
+          new Promise<{ modules: Array<{ id: string; x: number; y: number; w: number; free?: boolean }> }>((resolve) => {
+            chrome.storage.local.get(['selfhub_newtab_layout'], (res) =>
+              resolve(res.selfhub_newtab_layout as { modules: Array<{ id: string; x: number; y: number; w: number }> })
+            );
+          })
+      );
+      const mod = stored.modules.find((item) => item.id === 'm-capture')!;
+      expect(mod.free, '松手后要记成"我亲手放的位置"').toBe(true);
+      expect(mod.x).toBeGreaterThan(0);
+      expect(mod.x).toBeLessThan(6);
+
+      const afterBox = (await capture.boundingBox())!;
+      const expectedLeft = colBox.x + (colBox.width * mod.x) / 12;
+      expect(Math.abs(afterBox.x - expectedLeft), '卡片应该落在指针算出来的那一列').toBeLessThan(3);
+
+      // 刷新后还在原地（不是重新排到左上角）
+      await page.reload();
+      const reBox = (await page.locator('[data-module-id="m-capture"]').boundingBox())!;
+      expect(Math.abs(reBox.x - afterBox.x)).toBeLessThan(3);
+      await page.close();
+    });
+
+    test('整栏卡片拖到窄卡片上：跟它并排、宽度也跟它一样', async () => {
+      const page = await openNewTab();
+      const notes = page.locator('[data-module-id="m-notes"]');
+      await notes.locator('.module-menu-btn').click();
+      await page.locator('.pop .pop-item', { hasText: '1/3 三分之一' }).click();
+
+      const notesBox = (await notes.boundingBox())!;
+      const pinned = page.locator('[data-module-id="m-pinned"]');
+      const pinnedBox = (await pinned.boundingBox())!;
+
+      // 把整栏的「常用网站」拖到「笔记」的右半部分
+      await page.mouse.move(pinnedBox.x + 40, pinnedBox.y + 12);
+      await page.mouse.down();
+      await page.mouse.move(notesBox.x + notesBox.width * 0.85, notesBox.y + notesBox.height * 0.5, { steps: 14 });
+      await page.waitForTimeout(150);
+      await page.mouse.up();
+      await page.waitForTimeout(250);
+
+      const afterPinned = (await pinned.boundingBox())!;
+      const afterNotes = (await notes.boundingBox())!;
+      expect(Math.abs(afterPinned.y - afterNotes.y), '两张卡在同一行').toBeLessThan(12);
+      expect(afterPinned.x, '落在「笔记」右边').toBeGreaterThan(afterNotes.x + 20);
+      expect(Math.abs(afterPinned.width - afterNotes.width), '宽度跟着邻居走').toBeLessThan(6);
+      await page.close();
+    });
+
     test('宽度拖动随意自由控制，不强制限制在 25/33/50/67/75，支持任意自定义连续宽度', async () => {
       const page = await openNewTab();
       const module = page.locator('[data-module-id="m-capture"]');

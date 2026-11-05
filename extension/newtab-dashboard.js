@@ -340,63 +340,76 @@
           }
         }
       }
+      function canPlace(r, c, w, h) {
+        for (var row = r; row < r + h; row += 1) {
+          for (var col = c; col < c + w; col += 1) {
+            if (isOccupied(row, col)) return false;
+          }
+        }
+        return true;
+      }
 
+      /**
+       * 第一遍：**用户亲手放下的卡片先落位**，位置就是它被放下的地方。
+       *
+       * 旧版一律按"从左上角找第一个能塞下的空"重排，所以哪怕拖到指定位置，
+       * 一松手也会被重新排到别处 —— 拖到哪都"不算数"，观感就是完全不自由。
+       * 现在带 `free` 标记的卡片按 (x, y) 直接落，被占就往下让一行（宁可挪一点，
+       * 也不甩到别的地方）。剩下的卡片再按老规则填空，这样既自由又不会互相盖住。
+       */
+      var pending = [];
       mods.forEach(function (m) {
         var w = widthToCols(m.width);
         m.w = w;
         var h = m.h && m.h > 1 ? m.h : 1;
         m.h = h;
+        if (!m.free || m.x == null || m.y == null) {
+          pending.push(m);
+          return;
+        }
+        var fx = m.w >= 12 ? 0 : clamp(Math.round(m.x), 0, 12 - m.w);
+        var fy = Math.max(0, Math.round(m.y));
+        while (fy < 400 && !canPlace(fy, fx, m.w, h)) fy += 1;
+        m.x = fx;
+        m.y = fy;
+        markOccupied(fy, fx, m.w, h);
+      });
 
-        if (w >= 12) {
+      // 第二遍：没被亲手放过的卡片从顶部找第一个能放下的位置
+      pending.forEach(function (m) {
+        if (m.w >= 12) {
           // 整栏单卡片：寻找第一个完全空闲的整行
           var r = 0;
-          while (grid[r] && grid[r].some(function (occupied) { return occupied; })) {
-            r += 1;
-          }
+          while (r < 400 && !canPlace(r, 0, 12, m.h)) r += 1;
           m.x = 0;
           m.y = r;
-          markOccupied(r, 0, 12, h);
+          markOccupied(r, 0, 12, m.h);
           return;
         }
 
         // 分栏卡片（半栏、1/3、1/4 等）：
         // 如果卡片有显式指定的列（如通过拖拽指定的 x: 6），优先尝试放在指定列
-        var targetCol = (m.explicitSide && m.x != null && m.x + w <= 12) ? m.x : null;
+        var targetCol = (m.explicitSide && m.x != null && m.x + m.w <= 12) ? m.x : null;
         var placed = false;
-        for (var r = 0; r < 200 && !placed; r += 1) {
+        for (var r2 = 0; r2 < 400 && !placed; r2 += 1) {
           if (targetCol != null) {
-            var canFitTarget = true;
-            for (var row = r; row < r + h; row += 1) {
-              for (var col = targetCol; col < targetCol + w; col += 1) {
-                if (isOccupied(row, col)) { canFitTarget = false; break; }
-              }
-              if (!canFitTarget) break;
-            }
-            if (canFitTarget) {
+            if (canPlace(r2, targetCol, m.w, m.h)) {
               m.x = targetCol;
-              m.y = r;
-              markOccupied(r, targetCol, w, h);
+              m.y = r2;
+              markOccupied(r2, targetCol, m.w, m.h);
               placed = true;
-              break;
             }
             // 显式指定列时，本行放不下继续看下一行，不滑到其它列
             continue;
           }
 
           // 否则从左向右寻找第一个能容纳当前卡片 w * h 的空闲区间
-          var step = (w === 3 ? 3 : (w === 4 ? 4 : (w === 6 ? 6 : 1)));
-          for (var c = 0; c <= 12 - w; c += step) {
-            var canFit = true;
-            for (var row = r; row < r + h; row += 1) {
-              for (var col = c; col < c + w; col += 1) {
-                if (isOccupied(row, col)) { canFit = false; break; }
-              }
-              if (!canFit) break;
-            }
-            if (canFit) {
+          var step = (m.w === 3 ? 3 : (m.w === 4 ? 4 : (m.w === 6 ? 6 : 1)));
+          for (var c = 0; c <= 12 - m.w; c += step) {
+            if (canPlace(r2, c, m.w, m.h)) {
               m.x = c;
-              m.y = r;
-              markOccupied(r, c, w, h);
+              m.y = r2;
+              markOccupied(r2, c, m.w, m.h);
               placed = true;
               break;
             }
@@ -851,7 +864,52 @@
       });
     }
 
+    /**
+     * 「拖到哪就停在哪」：窄卡片（< 12 栏）的落点直接由指针算。
+     *
+     * 旧版无论拖到哪，x 只可能是 0 或 6（左半 / 右半），所以想把一张卡放在
+     * "偏左三分之一"或者"紧贴着某张卡右边"根本做不到 —— 一松手就被吸走。
+     *
+     * - x：指针在 12 栏里的位置，减去卡片半宽（指针代表卡片中心），夹到 [0, 12-w]
+     * - y：指针压在谁身上就落在谁那一行；压在上半截插到它前面，下半截插到它后面
+     */
+    function freeSpot(x, y, colRect, list, w) {
+      var frac = clamp((x - colRect.left) / Math.max(1, colRect.width), 0, 1);
+      var gx = clamp(Math.round(frac * 12 - w / 2), 0, 12 - w);
+      var byTop = list.slice().sort(function (a, b) {
+        return a.top - b.top;
+      });
+      var gy = null;
+      for (var i = 0; i < byTop.length; i += 1) {
+        var it = byTop[i];
+        var baseY = it.mod && it.mod.y != null ? it.mod.y : i;
+        var span = Math.max(1, (it.mod && it.mod.h) || 1);
+        if (y <= it.bottom) {
+          gy = y < it.mid ? baseY : baseY + span;
+          break;
+        }
+        gy = baseY + span;
+      }
+      return { x: gx, y: gy };
+    }
+
     function computeTarget(x, y, fallback) {
+      var target = computeTargetHeuristic(x, y, fallback);
+      if (!target || !drag) return target;
+      var draggedW = drag.mod.w != null ? drag.mod.w : widthToCols(drag.mod.width);
+      // 整栏卡片保持老规则（拖到别人侧边就劈成两半），窄卡片才走自由落点。
+      if (draggedW >= 12) return target;
+      var cache = drag.rects && drag.rects.col === target.colEl ? drag.rects : null;
+      var colRect = (cache && cache.rect) || target.colEl.getBoundingClientRect();
+      var list = (cache && cache.list) || measureColumn(target.colEl);
+      var spot = freeSpot(x, y, colRect, list, draggedW);
+      target.x = spot.x;
+      target.w = draggedW;
+      if (spot.y != null) target.y = spot.y;
+      return target;
+    }
+
+    function computeTargetHeuristic(x, y, fallback) {
       // 优先用事件里的 target（浏览器已经做过命中测试，不用重复算）；
       // 只有当它不是栏的后代时才按坐标补一次 —— 比如拖到两栏之间的分隔条、
       // 栏的 padding 上。幽灵卡片是 pointer-events:none，不会被命中。
@@ -884,7 +942,7 @@
       if (!isFinite(column)) return null;
       // 同一栏连续划过时复用上次量好的中线，避免每个事件都读一遍布局。
       if (!drag.rects || drag.rects.col !== colEl) {
-        drag.rects = { col: colEl, list: measureColumn(colEl) };
+        drag.rects = { col: colEl, list: measureColumn(colEl), rect: colEl.getBoundingClientRect() };
       }
       var list = drag.rects.list;
       var colRect = colEl.getBoundingClientRect();
@@ -951,6 +1009,26 @@
             position: candidates.indexOf(hitCard) + 1,
             x: useFullRowBottom ? 0 : (hitW === 6 ? hitX : 0),
             w: useFullRowBottom ? 12 : (hitW === 6 ? 6 : 12),
+            splitPartner: null,
+            splitSide: null
+          };
+        }
+
+        // 整栏卡片压到窄卡片身上：跟它并排、宽度也跟它一样。
+        // 「我想把这两个并一起」最常见的就是这个动作，旧版会把它铺成整行盖在下面。
+        if (hitW < 12 && isDraggedFull) {
+          var besideX = x < hitCard.midX ? hitX - hitW : hitX + hitW;
+          if (besideX < 0) besideX = hitX + hitW;
+          if (besideX + hitW > 12) besideX = hitX - hitW;
+          return {
+            colEl: colEl,
+            column: column,
+            before: null,
+            position: candidates.indexOf(hitCard),
+            x: clamp(besideX, 0, 12 - hitW),
+            y: hitMod && hitMod.y != null ? hitMod.y : null,
+            w: hitW,
+            h: (hitMod && hitMod.h) || 1,
             splitPartner: null,
             splitSide: null
           };
@@ -1223,7 +1301,8 @@
       );
       if (target.w === 6) {
         drag.gap.classList.add('is-half-width');
-        drag.gap.style.gridColumn = (target.x === 6 ? 7 : 1) + ' / span 6';
+        // x 可能是 0..6 之间任意值（自由落点），不再只有左右两档。
+        drag.gap.style.gridColumn = (clamp(target.x || 0, 0, 6) + 1) + ' / span 6';
       } else if (target.w === 3) {
         drag.gap.classList.add('is-quarter-width');
         drag.gap.style.gridColumn = (target.x + 1) + ' / span 3';
@@ -1506,6 +1585,7 @@
               partner.x = target.splitSide === 'right' ? 0 : 6;
               partner.y = partner.y != null ? partner.y : 0;
               partner.explicitSide = true;
+              partner.free = true;
             }
             if (target.oppositeNeighbor && target.oppositeNeighbor.mod) {
               target.oppositeNeighbor.mod.h = Math.max(2, (target.y || 1) + (target.h || 1));
@@ -1514,6 +1594,8 @@
             state.mod.y = target.y != null ? target.y : null;
             state.mod.w = target.w != null ? target.w : widthToCols(state.mod.width);
             state.mod.explicitSide = state.mod.w < 12;
+            // 记下"这是我亲手放的位置"：排版时直接按 (x, y) 落位，不再被自动重排走。
+            state.mod.free = true;
             state.mod.h = target.h != null ? target.h : 1;
             if (state.mod.w === 6) state.mod.width = 'half';
             else if (state.mod.w === 3) state.mod.width = 'quarter';
@@ -2097,6 +2179,22 @@
             })
           );
         }
+        container.appendChild(
+          menuItem('本栏自动整理', function () {
+            // 自由摆放会留空（这就是"停在原地"的代价）。这里把这栏的卡片交还给
+            // 自动排版：按顺序从左上角重新排紧，空隙收回。
+            layout.modules.forEach(function (item) {
+              if (item.column !== column) return;
+              item.free = false;
+              item.explicitSide = false;
+              item.y = null;
+              item.x = null;
+            });
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { hint: '把这一栏的卡片重新排紧，收回空隙' })
+        );
         container.appendChild(
           menuItem('删除模块', function () {
             layout.modules = layout.modules.filter(function (item) {
