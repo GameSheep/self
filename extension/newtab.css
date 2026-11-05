@@ -131,6 +131,35 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 }
 .ghost-btn:hover { color: var(--fg); border-color: var(--line-strong); }
 
+/* 列数控制：增减栏数（1~6栏），基础三栏默认居中 */
+.col-count-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  padding: 2px 4px;
+}
+.col-count-btn {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+.col-count-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.col-count-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 2.2rem;
+  text-align: center;
+  user-select: none;
+}
+
 /* ── 搜索（全宽，固定，不参与模块自定义）──────────────────── */
 .search-row {
   position: relative;
@@ -257,8 +286,12 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   /* 宽度只由 flex-basis 决定（JS 拖拽时只写这一个属性，写一次就够）。 */
   flex: 0 0 auto;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-flow: row dense;
+  grid-auto-rows: min-content;
+  align-content: flex-start;
+  align-items: stretch;
   gap: 12px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -266,6 +299,36 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   scrollbar-width: thin;
   /* 栏内布局自成一体，改一栏的宽度不会把外面的东西拖下水。 */
   contain: layout;
+  transition: background-color 0.2s ease;
+}
+
+/* 拖拽或调整宽度时显示 Grafana 风格 12 栏参考辅助虚网格 */
+body.is-module-dragging .dash-col,
+body.is-module-resizing-x .dash-col,
+body.is-module-resizing-xy .dash-col {
+  outline: 1px dashed color-mix(in srgb, var(--accent) 30%, transparent);
+  outline-offset: -1px;
+  border-radius: 0.85rem;
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent,
+    transparent calc((100% - 11 * 12px) / 12),
+    color-mix(in srgb, var(--accent) 5%, transparent) calc((100% - 11 * 12px) / 12),
+    color-mix(in srgb, var(--accent) 5%, transparent) calc((100% - 11 * 12px) / 12 + 12px)
+  );
+}
+
+/* 拖动中指针所在的栏单独点亮：参考虚网格每栏都有，不把"当前会落进哪栏"
+   挑出来，跨栏拖动时眼睛没有落点。 */
+body.is-module-dragging .dash-col.is-drop-col {
+  background-color: color-mix(in srgb, var(--accent) 7%, transparent);
+  outline: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -1px;
+}
+
+.dash-add {
+  grid-column: 1 / -1;
+  width: 100%;
 }
 
 .dash-col::-webkit-scrollbar { width: 8px; }
@@ -292,17 +355,65 @@ body.is-col-resizing .col-resizer::after { background: var(--accent); }
 
 body.is-col-resizing { cursor: col-resize; user-select: none; }
 body.is-module-resizing { cursor: ns-resize; user-select: none; }
+body.is-module-resizing-x { cursor: ew-resize; user-select: none; }
+body.is-module-resizing-xy { cursor: nwse-resize; user-select: none; }
 
 /* ── 模块卡片 ─────────────────────────────────────────────── */
 .module {
+  position: relative;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 0.85rem;
   overflow: hidden;
+}
+
+/* 灵活宽度档位与自适应 */
+.module.is-quarter-width {
+  grid-column: span 3;
+  width: 100%;
+  min-width: 80px;
+}
+
+.module.is-third-width {
+  grid-column: span 4;
+  width: 100%;
+  min-width: 95px;
+}
+
+/* 半栏卡片：50% 宽度，单栏内两个半栏卡片自动左右并排 */
+.module.is-half-width {
+  grid-column: span 6;
+  width: 100%;
+  min-width: 110px;
+}
+
+.module.is-two-thirds-width {
+  grid-column: span 8;
+  width: 100%;
+  min-width: 140px;
+}
+
+.module.is-three-quarters-width {
+  grid-column: span 9;
+  width: 100%;
+  min-width: 150px;
+}
+
+/* 全宽卡片：横跨整个面板（顶部/通栏展示） */
+.module.is-span-full {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.module.is-custom-width {
+  min-width: 80px;
 }
 
 html[data-theme='light'] .module { box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04); }
@@ -332,7 +443,7 @@ html[data-theme='light'] .module { box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
   letter-spacing: -0.12em;
   transition: opacity 0.15s ease;
 }
-.module:hover .module-grip { opacity: 0.7; }
+.module:hover .module-grip { opacity: 1; }
 
 .module-icon { font-size: 0.92rem; line-height: 1; }
 
@@ -370,9 +481,11 @@ html[data-theme='light'] .module { box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 .module-body {
   padding: 0.6rem 0.7rem 0.7rem;
   min-height: 0;
+  flex: 1;
 }
 
-.module.has-fixed-height .module-body {
+.module.has-fixed-height .module-body,
+.module[style*="grid-row"] .module-body {
   flex: 1;
   overflow-y: auto;
   scrollbar-width: thin;
@@ -401,35 +514,169 @@ html[data-theme='light'] .module { box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 .module-resize:focus-visible::after { opacity: 1; }
 .module-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
+/* 右侧宽度拖拽条：左右拖动可调半栏/整栏/通栏，Grafana 手感。 */
+.module-resize-x {
+  position: absolute;
+  right: 0;
+  top: 38px;
+  bottom: 12px;
+  width: 10px;
+  cursor: ew-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  z-index: 5;
+}
+.module-resize-x::after {
+  content: '';
+  width: 3px;
+  height: 28px;
+  border-radius: 3px;
+  background: var(--line-strong);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.module:hover .module-resize-x::after,
+.module-resize-x:hover::after,
+.module-resize-x:focus-visible::after {
+  opacity: 0.75;
+}
+.module-resize-x:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 右下角对角线拖拽手柄：同时调整宽度和高度 */
+.module-resize-xy {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  z-index: 6;
+  touch-action: none;
+}
+.module-resize-xy::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--line-strong);
+  border-bottom: 2px solid var(--line-strong);
+  opacity: 0.35;
+  transition: opacity 0.15s ease;
+}
+.module:hover .module-resize-xy::after,
+.module-resize-xy:hover::after {
+  opacity: 1;
+  border-color: var(--accent);
+}
+
 .module.is-dragging { opacity: 0.28; }
 .module.is-dragging .module-head { cursor: grabbing; }
 
-/* 拖动时跟着指针走的幽灵卡片：只做 transform，走合成层，不触发回流。 */
+/* 拖动时跟着指针走的幽灵卡片：外层只做 transform（合成层，不触发回流）。
+   视觉外壳放在 .drag-ghost-inner 上 —— "抓起来"的入场缩放动画跑在内层，
+   不会和外层每帧都在写的 transform 互相覆盖。 */
 .drag-ghost {
   position: fixed;
   left: 0;
   top: 0;
   z-index: 90;
   pointer-events: none;
-  background: var(--surface);
-  border: 1px solid var(--accent);
-  border-radius: 0.85rem;
-  box-shadow: 0 18px 40px rgba(16, 24, 40, 0.28);
-  opacity: 0.96;
-  overflow: hidden;
   will-change: transform;
   transform: translate3d(-9999px, -9999px, 0);
 }
+.drag-ghost-inner {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--surface);
+  border: 1.5px solid var(--accent);
+  border-radius: 0.85rem;
+  box-shadow: 0 20px 48px -8px rgba(16, 24, 40, 0.35), 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  opacity: 0.96;
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+}
 .drag-ghost .module-head { border-bottom: 0; cursor: grabbing; }
 .drag-ghost .module-grip { opacity: 0.7; }
+/* 幽灵卡片的身体：不克隆内容 DOM，只留一个虚线占位，让影子的轮廓和真卡片一致。 */
+.drag-ghost-body {
+  flex: 1;
+  min-height: 0;
+  margin: 0.4rem 0.55rem 0.55rem;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
 
-/* 目标位置的虚线槽：告诉用户"松手就落这儿"。 */
+/* 目标位置的落点预览卡：告诉用户"松手就落这儿"，里面写明是谁、多宽。 */
 .drop-gap {
-  flex-shrink: 0;
+  grid-column: 1 / -1;
   border: 2px dashed var(--accent);
   border-radius: 0.85rem;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  opacity: 0.75;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 0 0 16px color-mix(in srgb, var(--accent) 15%, transparent);
+  opacity: 0.85;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.7rem;
+}
+
+.drop-gap-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+
+.drop-gap-icon { font-size: 0.92rem; line-height: 1; }
+
+.drop-gap-label { font-weight: 600; color: var(--accent); }
+
+.drop-gap-hint {
+  font-size: 0.72rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.drop-gap.is-quarter-width {
+  grid-column: span 3;
+}
+
+.drop-gap.is-third-width {
+  grid-column: span 4;
+}
+
+.drop-gap.is-half-width {
+  grid-column: span 6;
+}
+
+.drop-gap.is-two-thirds-width {
+  grid-column: span 8;
+}
+
+.drop-gap.is-three-quarters-width {
+  grid-column: span 9;
+}
+
+.drop-gap.is-custom-width {
+  min-width: 80px;
 }
 
 /* 拖动/缩放时显示当前尺寸，像 Grafana 那样。 */
@@ -439,13 +686,17 @@ html[data-theme='light'] .module { box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
   top: 0;
   z-index: 95;
   pointer-events: none;
-  padding: 0.15rem 0.45rem;
-  border-radius: 0.4rem;
-  background: var(--fg);
-  color: var(--bg);
-  font-size: 0.7rem;
+  padding: 0.22rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(18, 20, 24, 0.92);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, rgba(255, 255, 255, 0.2));
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
   font-weight: 600;
+  backdrop-filter: blur(8px);
   will-change: transform;
   transform: translate3d(-9999px, -9999px, 0);
 }
@@ -784,45 +1035,19 @@ html[data-theme='light'] .tile-mark {
 }
 .chip:hover { color: var(--fg); border-color: var(--line-strong); }
 
-/* ── 记一笔 ───────────────────────────────────────────────── */
-.capture {
+/* ── 记一笔：收件箱 / 笔记，同一个输入框 ───────────────────── */
+.composer {
   display: flex;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.45rem;
+  height: 100%;
+  min-height: 0;
 }
 
-.capture input {
-  flex: 1;
-  min-width: 0;
-  background: var(--surface2);
-  border: 1px solid var(--line);
-  border-radius: 0.55rem;
-  padding: 0.5rem 0.7rem;
-  color: var(--fg);
-  font-size: 0.85rem;
-  outline: none;
-}
-.capture input::placeholder { color: var(--subtle); }
-.capture input:focus { border-color: var(--line-strong); }
-
-.capture button {
-  padding: 0.5rem 0.85rem;
-  border-radius: 0.55rem;
-  background: var(--surface2);
-  border: 1px solid var(--line);
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-.capture button:hover { color: var(--fg); border-color: var(--line-strong); }
-
-.capture-status { font-size: 0.74rem; margin-top: 0.3rem; min-height: 1rem; }
-
-/* ── 文本框（直接存进笔记）───────────────────────────────── */
-.quicknote { display: flex; flex-direction: column; gap: 0.45rem; height: 100%; min-height: 0; }
-
-.quicknote-input {
+.composer-input {
   width: 100%;
   flex: 1;
-  min-height: 4.5rem;
+  min-height: 4.2rem;
   resize: none;
   background: var(--surface2);
   border: 1px solid var(--line);
@@ -834,13 +1059,46 @@ html[data-theme='light'] .tile-mark {
   line-height: 1.6;
   outline: none;
 }
-.quicknote-input::placeholder { color: var(--subtle); }
-.quicknote-input:focus { border-color: var(--line-strong); }
+.composer-input::placeholder { color: var(--subtle); }
+.composer-input:focus { border-color: var(--line-strong); }
 
-.quicknote-bar { display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
 
-.quicknote-folder {
-  max-width: 8rem;
+/* 去处开关：两档，选中的那档吃强调色，一眼看出这条会存到哪。 */
+.composer-dest {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 0.5rem;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.composer-dest-btn {
+  padding: 0.2rem 0.55rem;
+  border: 0;
+  border-radius: 0.36rem;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.composer-dest-btn:hover { color: var(--fg); }
+.composer-dest-btn.is-active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+
+.composer-folder {
+  max-width: 7rem;
   background: var(--surface2);
   border: 1px solid var(--line);
   border-radius: 0.45rem;
@@ -850,12 +1108,17 @@ html[data-theme='light'] .tile-mark {
   outline: none;
 }
 
-.quicknote-status { font-size: 0.72rem; color: var(--subtle); flex: 1; min-width: 0; }
-.quicknote-status.is-ok { color: var(--ok); }
-.quicknote-status.is-warn { color: var(--warn); }
-.quicknote-status.is-danger { color: var(--danger); }
+.composer-status {
+  font-size: 0.72rem;
+  color: var(--subtle);
+  flex: 1;
+  min-width: 0;
+}
+.composer-status.is-ok { color: var(--ok); }
+.composer-status.is-warn { color: var(--warn); }
+.composer-status.is-danger { color: var(--danger); }
 
-.quicknote-save {
+.composer-submit {
   flex-shrink: 0;
   padding: 0.3rem 0.7rem;
   border-radius: 0.45rem;
@@ -864,8 +1127,8 @@ html[data-theme='light'] .tile-mark {
   font-size: 0.76rem;
   font-weight: 600;
 }
-.quicknote-save:hover { filter: brightness(1.08); }
-.quicknote-save:disabled { opacity: 0.6; cursor: default; }
+.composer-submit:hover { filter: brightness(1.08); }
+.composer-submit:disabled { opacity: 0.6; cursor: default; }
 
 /* ── 主题切换 ─────────────────────────────────────────────── */
 .theme-toggle {
@@ -917,6 +1180,16 @@ html[data-theme='light'] .results { box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04)
   }
 
   .col-resizer { display: none; }
+  .module-resize-x, .module-resize-xy { display: none; }
+  .module.is-quarter-width,
+  .module.is-third-width,
+  .module.is-half-width,
+  .module.is-two-thirds-width,
+  .module.is-three-quarters-width,
+  .module.is-custom-width {
+    flex: 0 0 100% !important;
+    width: 100% !important;
+  }
 
   .module.has-fixed-height { height: auto !important; }
   .module.has-fixed-height .module-body { max-height: 60vh; }

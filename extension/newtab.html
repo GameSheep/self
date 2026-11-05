@@ -19,6 +19,11 @@
         </span>
       </div>
       <div class="top-actions">
+        <div class="col-count-control" id="col-count-control" title="调整面板列数（1 ~ 6 栏，保留基础左中右）">
+          <button class="ghost-btn col-count-btn" id="col-dec" type="button" aria-label="减少一栏">－ 栏</button>
+          <span class="col-count-label" id="col-count-label">3 栏</span>
+          <button class="ghost-btn col-count-btn" id="col-inc" type="button" aria-label="增加一栏">＋ 栏</button>
+        </div>
         <button class="ghost-btn" id="reset-layout" type="button" title="把模块布局恢复成默认三栏">重置布局</button>
         <button class="theme-toggle" id="theme-toggle" type="button" aria-label="切换深浅色">☀️</button>
         <a class="btn-primary" id="open-workspace" href="app/index.html#/home">进入工作台 →</a>
@@ -42,7 +47,7 @@
 
     <!-- 模块面板：每个卡片都能拖拽调大小、换数据来源、增删。 -->
     <div class="dash-hint" id="dash-hint" hidden>
-      <span>拖动模块标题换位置 · 拖底边改高度 · 拖两栏之间的细线改列宽 · 点 ⋯ 换数据来源</span>
+      <span>按住卡片任意处拖动换位置 · 拖底边改高度 · 拖右边缘/右下角改宽度（半栏并排/全宽）· 顶栏增减栏数 · 拖两栏细线调列宽 · 点 ⋯ 换数据来源</span>
       <button type="button" id="dash-hint-close">知道了</button>
     </div>
     <main class="dash" id="dash" aria-label="模块面板"></main>

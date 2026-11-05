@@ -72,6 +72,11 @@ async function openNewTab(seed: typeof SEED & Record<string, unknown> = SEED): P
   );
   await page.reload();
   await expect(page.locator('#dash .module').first()).toBeVisible();
+  // 同一条上下文里前面可能开过工作台标签页，`fill` 走原生输入，页面在后台
+  // （visibilityState === 'hidden'）时文字会静默丢掉 —— 输入框空着、DOM 也没
+  // 任何重画，看起来像"草稿被清空"。切到前台并确认真的可见再返回。
+  await page.bringToFront();
+  await page.waitForFunction(() => document.visibilityState === 'visible');
   return page;
 }
 
@@ -153,83 +158,84 @@ test.describe('模块面板：可拖拽大小', () => {
   });
 });
 
-test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () => {
-  /**
-   * 拖拽排序走 pointer events，所以这里合成 `PointerEvent`。
-   * 用合成事件而不是鼠标 API，是因为要能停在"拖到一半"的状态上断言。
-   */
-  async function startDrag(page: Page, moduleId: string) {
-    await page.evaluate((id) => {
-      const head = document.querySelector(`[data-module-id="${id}"] .module-head`) as HTMLElement;
-      const rect = head.getBoundingClientRect();
-      const base = {
-        bubbles: true,
-        cancelable: true,
-        pointerId: 1,
-        pointerType: 'mouse',
-        isPrimary: true,
-        button: 0,
-        buttons: 1
-      };
-      head.dispatchEvent(
-        new PointerEvent('pointerdown', {
-          ...base,
-          clientX: rect.left + 20,
-          clientY: rect.top + 10
-        })
-      );
-      // 越过 3px 阈值，正式进入拖动。
+/**
+ * 拖拽排序走 pointer events，所以这里合成 `PointerEvent`。
+ * 用合成事件而不是鼠标 API，是因为要能停在"拖到一半"的状态上断言。
+ */
+async function startDrag(page: Page, moduleId: string) {
+  await page.evaluate((id) => {
+    const head = document.querySelector(`[data-module-id="${id}"] .module-head`) as HTMLElement;
+    const rect = head.getBoundingClientRect();
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: 1
+    };
+    head.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        ...base,
+        clientX: rect.left + 20,
+        clientY: rect.top + 10
+      })
+    );
+    // 越过 3px 阈值，正式进入拖动。
+    window.dispatchEvent(
+      new PointerEvent('pointermove', {
+        ...base,
+        clientX: rect.left + 26,
+        clientY: rect.top + 16
+      })
+    );
+  }, moduleId);
+}
+
+async function hoverAt(page: Page, x: number, y: number) {
+  await page.evaluate(
+    ({ x: px, y: py }) => {
       window.dispatchEvent(
         new PointerEvent('pointermove', {
-          ...base,
-          clientX: rect.left + 26,
-          clientY: rect.top + 16
+          bubbles: true,
+          cancelable: true,
+          pointerId: 1,
+          pointerType: 'mouse',
+          isPrimary: true,
+          buttons: 1,
+          clientX: px,
+          clientY: py
         })
       );
-    }, moduleId);
-  }
+    },
+    { x, y }
+  );
+  // 插槽更新被合并到 rAF 里，等一帧再断言。
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+}
 
-  async function hoverAt(page: Page, x: number, y: number) {
-    await page.evaluate(
-      ({ x: px, y: py }) => {
-        window.dispatchEvent(
-          new PointerEvent('pointermove', {
-            bubbles: true,
-            cancelable: true,
-            pointerId: 1,
-            pointerType: 'mouse',
-            isPrimary: true,
-            buttons: 1,
-            clientX: px,
-            clientY: py
-          })
-        );
-      },
-      { x, y }
-    );
-    // 插槽更新被合并到 rAF 里，等一帧再断言。
-    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
-  }
+async function releaseDrag(page: Page, x: number, y: number) {
+  await page.evaluate(
+    ({ x: px, y: py }) => {
+      window.dispatchEvent(
+        new PointerEvent('pointerup', {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 1,
+          pointerType: 'mouse',
+          isPrimary: true,
+          button: 0,
+          clientX: px,
+          clientY: py
+        })
+      );
+    },
+    { x, y }
+  );
+}
 
-  async function releaseDrag(page: Page, x: number, y: number) {
-    await page.evaluate(
-      ({ x: px, y: py }) => {
-        window.dispatchEvent(
-          new PointerEvent('pointerup', {
-            bubbles: true,
-            cancelable: true,
-            pointerId: 1,
-            pointerType: 'mouse',
-            isPrimary: true,
-            button: 0,
-            clientX: px,
-            clientY: py
-          })
-        );
-      },
-      { x, y }
-    );
-  }
+test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () => {
 
   test('拖动中出现幽灵卡片和虚线槽，松手前数据不动', async () => {
     const page = await openNewTab();
@@ -265,6 +271,37 @@ test.describe('拖动反馈：幽灵卡片 + 虚线槽（Grafana 手感）', () 
     // 真的落盘了，刷新还在。
     await page.reload();
     await expect(page.locator('.dash-col[data-col="1"] [data-module-id="m-notes"]')).toHaveCount(1);
+    await page.close();
+  });
+
+  test('拖拽卡片挤位触发 FLIP 动画：被挤开的卡片平滑下移，不是生硬突变', async () => {
+    const page = await openNewTab();
+    const capture = page.locator('[data-module-id="m-capture"]');
+    const pinned = page.locator('[data-module-id="m-pinned"]');
+    const beforeCaptureBox = (await capture.boundingBox())!;
+    const beforePinnedBox = (await pinned.boundingBox())!;
+
+    // 拖动左栏的 m-notes 到中间栏 m-capture 上方
+    await startDrag(page, 'm-notes');
+    await hoverAt(page, beforeCaptureBox.x + 60, beforeCaptureBox.y + 10);
+
+    // 验证 drop-gap 插入并占位
+    const gap = page.locator('.dash-col[data-col="1"] .drop-gap');
+    await expect(gap).toBeVisible();
+    const gapBox = (await gap.boundingBox())!;
+
+    // 等待 FLIP 动画完成（150ms）
+    await page.waitForTimeout(200);
+
+    // 验证 m-capture 和 m-pinned 被自然推下，而不是留在原地与 gap 重叠
+    const duringCaptureBox = (await capture.boundingBox())!;
+    expect(duringCaptureBox.y).toBeGreaterThanOrEqual(beforeCaptureBox.y + gapBox.height - 5);
+
+    // 验证被挤开卡片在 DOM 中没有硬编码行号重叠
+    const duringPinnedBox = (await pinned.boundingBox())!;
+    expect(duringPinnedBox.y).toBeGreaterThanOrEqual(beforePinnedBox.y + gapBox.height - 5);
+
+    await releaseDrag(page, beforeCaptureBox.x + 60, beforeCaptureBox.y + 10);
     await page.close();
   });
 
@@ -382,26 +419,34 @@ test.describe('模块面板：自定义与数据来源', () => {
     const input = page.locator('[data-module-id="m-capture"] #capture-input');
     const draft = `写了一半的速记-${Date.now()}`;
     await input.fill(draft);
+    // 先确认字真的进了框：填不进去和"被重画清空"是两件事，混在一条断言里
+    // 排查时分不清是产品丢了草稿还是测试没打上字。
+    await expect(input).toHaveValue(draft);
 
     // 点分类 chip 会走 dashboard.render()，整页 DOM 重建 —— 这是用户会遇到的
     // "我明明打了字，它自己没了"。工作台恢复备份后 adopt() 也是同一条路。
     await page.locator('[data-module-id="m-sites"] .bucket-chip').first().click();
     await expect(input).toHaveValue(draft);
+    await page.close();
   });
 
-  test('加一个文本框，写的内容直接变成一条笔记', async () => {
+  test('记一笔切到「笔记」，写的内容直接变成一条笔记', async () => {
     const page = await openNewTab();
 
-    // 左栏底部「＋ 添加模块」→ 文本框
+    // 左栏底部「＋ 添加模块」→ 记一笔（默认去处是收件箱）
     await page.locator('[data-add-col="0"]').click();
-    await page.locator('.pop [data-add-type="quicknote"]').click();
+    await page.locator('.pop [data-add-type="capture"]').click();
 
-    const box = page.locator('[data-module-type="quicknote"]').last();
+    const box = page.locator('.dash-col[data-col="0"] [data-module-type="capture"]');
     await expect(box).toBeVisible();
+    await expect(box.locator('.composer-dest-btn[data-dest="inbox"]')).toHaveClass(/is-active/);
+    await box.locator('.composer-dest-btn[data-dest="note"]').click();
+    await expect(box.locator('.composer-dest-btn[data-dest="note"]')).toHaveClass(/is-active/);
+
     const text = `新标签页写的想法-${Date.now()}`;
-    await box.locator('#quicknote-input').fill(text);
-    await box.locator('#quicknote-save').click();
-    await expect(box.locator('#quicknote-status')).toHaveText('已存进笔记');
+    await box.locator('#capture-input').fill(text);
+    await box.locator('#capture-submit').click();
+    await expect(box.locator('#capture-status')).toHaveText('已存进笔记');
 
     // 立刻出现在笔记模块里（不用等打开工作台）
     await expect(page.locator('#notes-list')).toContainText(text);
@@ -416,6 +461,92 @@ test.describe('模块面板：自定义与数据来源', () => {
         })
     );
     expect(queued.some((note) => note.content === text)).toBe(true);
+    await page.close();
+  });
+
+  test('记一笔的去处可切：收件箱 ↔ 笔记，刷新后记得', async () => {
+    const page = await openNewTab();
+    // 合并后默认布局里只有一个输入框（以前是「文本框」+「记一笔」两个）
+    await expect(page.locator('.composer')).toHaveCount(1);
+
+    const box = page.locator('[data-module-id="m-capture"]');
+    await expect(box.locator('.composer-dest-btn[data-dest="inbox"]')).toHaveClass(/is-active/);
+    await expect(box.locator('#capture-folder')).toBeHidden();
+
+    await box.locator('.composer-dest-btn[data-dest="note"]').click();
+    await expect(box.locator('.composer-dest-btn[data-dest="note"]')).toHaveClass(/is-active/);
+    // 存成笔记才需要问「存到哪个文件夹」
+    await expect(box.locator('#capture-folder')).toBeVisible();
+
+    await page.reload();
+    await expect(page.locator('[data-module-id="m-capture"] .composer-dest-btn[data-dest="note"]')).toHaveClass(
+      /is-active/
+    );
+    await expect(page.locator('[data-module-id="m-capture"] #capture-folder')).toBeVisible();
+    await page.close();
+  });
+
+  test('老布局里的「文本框」并进「记一笔」，不会留两个一样的输入框', async () => {
+    const page = await openNewTab();
+
+    const seedLayout = (modules: unknown[]) =>
+      page.evaluate(
+        (payload) =>
+          new Promise<void>((resolve) => {
+            chrome.storage.local.set(
+              {
+                selfhub_newtab_layout: {
+                  v: 1,
+                  columns: [{ id: 'c1', fr: 1 }],
+                  modules: payload
+                }
+              },
+              () => resolve()
+            );
+          }),
+        modules
+      );
+
+    const readLayout = () =>
+      page.evaluate(
+        () =>
+          new Promise<{ modules: Array<{ type: string; source?: { mode?: string; value?: string } }> }>((resolve) => {
+            chrome.storage.local.get(['selfhub_newtab_layout'], (res) =>
+              resolve(res.selfhub_newtab_layout as { modules: Array<{ type: string }> })
+            );
+          })
+      );
+
+    // ① 两个盒子都在：只留「记一笔」，「文本框」被并掉
+    await seedLayout([
+      { id: 'm-notes', type: 'notes', column: 0, height: null, source: { mode: 'recent' } },
+      { id: 'm-quick', type: 'quicknote', column: 0, height: 232, source: { mode: 'folder', value: '工作' } },
+      { id: 'm-capture', type: 'capture', column: 0, height: null, source: {} }
+    ]);
+    await page.reload();
+    await expect(page.locator('.composer')).toHaveCount(1);
+    await expect(page.locator('[data-module-type="quicknote"]')).toHaveCount(0);
+    // 合并结果要落盘，否则每次开新标签页又冒出来
+    await page.reload();
+    await expect(page.locator('.composer')).toHaveCount(1);
+    let stored = await readLayout();
+    expect(stored.modules.filter((mod) => mod.type === 'capture')).toHaveLength(1);
+    expect(stored.modules.filter((mod) => mod.type === 'quicknote')).toHaveLength(0);
+
+    // ② 只有「文本框」：改写成「记一笔」，去处是笔记，文件夹跟着走
+    await seedLayout([
+      { id: 'm-notes', type: 'notes', column: 0, height: null, source: { mode: 'recent' } },
+      { id: 'm-quick', type: 'quicknote', column: 0, height: 232, source: { mode: 'folder', value: '工作' } }
+    ]);
+    await page.reload();
+    await expect(page.locator('.composer')).toHaveCount(1);
+    await expect(page.locator('.composer-dest-btn[data-dest="note"]')).toHaveClass(/is-active/);
+    await expect(page.locator('#capture-folder')).toHaveValue('工作');
+    stored = await readLayout();
+    expect(stored.modules.filter((mod) => mod.type === 'quicknote')).toHaveLength(0);
+    const composer = stored.modules.find((mod) => mod.type === 'capture');
+    expect(composer?.source?.mode).toBe('note');
+    expect(composer?.source?.value).toBe('工作');
     await page.close();
   });
 
@@ -529,17 +660,18 @@ test.describe('模块面板：自定义与数据来源', () => {
     await page.close();
   });
 
-  test('文本框写的笔记，打开工作台就在笔记里（队列导入一次即清空）', async () => {
+  test('记一笔存成笔记，打开工作台就在笔记里（队列导入一次即清空）', async () => {
     test.setTimeout(90_000);
     freshBuild();
     const page = await openNewTab();
     await page.locator('[data-add-col="0"]').click();
-    await page.locator('.pop [data-add-type="quicknote"]').click();
-    const box = page.locator('[data-module-type="quicknote"]').last();
+    await page.locator('.pop [data-add-type="capture"]').click();
+    const box = page.locator('.dash-col[data-col="0"] [data-module-type="capture"]');
+    await box.locator('.composer-dest-btn[data-dest="note"]').click();
     const text = `跨页面笔记-${Date.now()}`;
-    await box.locator('#quicknote-input').fill(text);
-    await box.locator('#quicknote-save').click();
-    await expect(box.locator('#quicknote-status')).toHaveText('已存进笔记');
+    await box.locator('#capture-input').fill(text);
+    await box.locator('#capture-submit').click();
+    await expect(box.locator('#capture-status')).toHaveText('已存进笔记');
 
     // 工作台是唯一的写入方：它把队列里的笔记收进库里。
     const app = await context!.newPage();
@@ -579,6 +711,9 @@ test.describe('模块面板：自定义与数据来源', () => {
 
     const text = `记一笔-${Date.now()}`;
     const page = await openNewTab();
+    // 这条用例先开了工作台，新标签页可能不是活动标签页。`fill` 走的是原生输入，
+    // 页面在后台时文字进不去（DOM 没有任何重画，输入框就是空的）。切到前台再填。
+    await page.bringToFront();
     await page.locator('[data-module-id="m-capture"] #capture-input').fill(text);
     // 同步点：确认输入框真的拿到了这段文字再点提交。少了这一句，万一输入被
     // 重绘清空，`send()` 会静默 return，症状是"状态一直空着"——排查时看不出
@@ -823,6 +958,368 @@ test.describe('模块面板：自定义与数据来源', () => {
       const after = view.locator('[data-module-type="pomodoro"]').first();
       await expect(after.locator('.pomodoro-clock')).toHaveText(/2[0-9]:[0-9]{2}/);
       await view.close();
+    });
+  });
+
+  test.describe('Grafana 双向灵活布局：水平调宽、半栏并排与自由增减栏', () => {
+    test('卡片可以通过菜单切换为半栏并排（50%），并在单栏内左右并排', async () => {
+      const page = await openNewTab();
+      const col1 = page.locator('.dash-col[data-col="1"]');
+      const first = col1.locator('[data-module-id="m-capture"]');
+      const second = col1.locator('[data-module-id="m-pinned"]');
+
+      // 两张卡片原本都是整栏（纵向叠放）
+      const beforeFirst = (await first.boundingBox())!;
+      const beforeSecond = (await second.boundingBox())!;
+      expect(beforeSecond.y).toBeGreaterThanOrEqual(beforeFirst.y + beforeFirst.height - 10);
+
+      // 把第一张设为半栏
+      await first.locator('.module-menu-btn').click();
+      await page.locator('.pop .pop-item', { hasText: '半栏并排' }).click();
+
+      // 把第二张也设为半栏
+      await second.locator('.module-menu-btn').click();
+      await page.locator('.pop .pop-item', { hasText: '半栏并排' }).click();
+
+      // 验证现在两张卡片在同一行并排（Y 坐标相近，X 坐标不同）
+      const afterFirst = (await first.boundingBox())!;
+      const afterSecond = (await second.boundingBox())!;
+      expect(Math.abs(afterFirst.y - afterSecond.y)).toBeLessThan(10);
+      expect(afterSecond.x).toBeGreaterThan(afterFirst.x + afterFirst.width - 10);
+
+      // 刷新后依然保持半栏并排
+      await page.reload();
+      const reFirst = (await page.locator('.dash-col[data-col="1"] [data-module-id="m-capture"]').boundingBox())!;
+      const reSecond = (await page.locator('.dash-col[data-col="1"] [data-module-id="m-pinned"]').boundingBox())!;
+      expect(Math.abs(reFirst.y - reSecond.y)).toBeLessThan(10);
+      await page.close();
+    });
+
+    test('右侧手柄左右拖拽显示 Grafana 尺寸气泡并可调整宽度', async () => {
+      const page = await openNewTab();
+      const module = page.locator('[data-module-id="m-notes"]');
+      const handleW = module.locator('.module-resize-x');
+      await expect(handleW).toBeAttached();
+
+      const box = (await handleW.boundingBox())!;
+      const beforeWidth = (await module.boundingBox())!.width;
+
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      // 向左拖动使其进入半栏阈值
+      await page.mouse.move(box.x - 100, box.y + box.height / 2, { steps: 8 });
+
+      // 验证 Grafana 风格尺寸气泡可见且含有半栏提示
+      const badge = page.locator('.drag-badge');
+      await expect(badge).toBeVisible();
+      const text = await badge.textContent();
+      expect(text).toContain('半栏');
+
+      // 验证卡片在鼠标未松开时就已经实时动态改变宽度，有平滑的拖拽过程
+      const liveWidth = (await module.boundingBox())!.width;
+      expect(liveWidth).toBeLessThan(beforeWidth - 40);
+
+      await page.mouse.up();
+      await expect(badge).toBeHidden();
+      await expect(module).toHaveClass(/is-half-width/);
+      await page.close();
+    });
+
+    test('顶栏可以自由增加至最多 6 栏或减少至最少 1 栏，重置可恢复默认 3 栏', async () => {
+      const page = await openNewTab();
+      const colCountLabel = page.locator('#col-count-label');
+      await expect(colCountLabel).toHaveText('3 栏');
+      await expect(page.locator('.dash-col')).toHaveCount(3);
+
+      // 点 ＋ 栏增加到 6 栏
+      await page.locator('#col-inc').click();
+      await expect(colCountLabel).toHaveText('4 栏');
+      await page.locator('#col-inc').click();
+      await expect(colCountLabel).toHaveText('5 栏');
+      await page.locator('#col-inc').click();
+      await expect(colCountLabel).toHaveText('6 栏');
+      await expect(page.locator('.dash-col')).toHaveCount(6);
+      await expect(page.locator('#col-inc')).toBeDisabled();
+
+      // 刷新后记得 6 栏
+      await page.reload();
+      await expect(page.locator('#col-count-label')).toHaveText('6 栏');
+      await expect(page.locator('.dash-col')).toHaveCount(6);
+
+      // 点 － 栏减到 1 栏
+      for (let i = 5; i >= 1; i--) {
+        await page.locator('#col-dec').click();
+        await expect(page.locator('#col-count-label')).toHaveText(`${i} 栏`);
+      }
+      await expect(page.locator('.dash-col')).toHaveCount(1);
+      await expect(page.locator('#col-dec')).toBeDisabled();
+
+      // 刷新后记得 1 栏
+      await page.reload();
+      await expect(page.locator('#col-count-label')).toHaveText('1 栏');
+      await expect(page.locator('.dash-col')).toHaveCount(1);
+
+      // 点击重置布局恢复默认三栏
+      page.once('dialog', (dialog) => dialog.accept());
+      await page.locator('#reset-layout').click();
+      await expect(page.locator('#col-count-label')).toHaveText('3 栏');
+      await expect(page.locator('.dash-col')).toHaveCount(3);
+      await page.close();
+    });
+
+    test('卡片支持 1/4、1/3、2/3、3/4 多档精细比例及自定义精确百分比', async () => {
+      const page = await openNewTab();
+      const module = page.locator('[data-module-id="m-capture"]');
+
+      // 打开菜单，检查丰富的宽度档位
+      await module.locator('.module-menu-btn').click();
+      await expect(page.locator('.pop .pop-item', { hasText: '1/4 四分之一' })).toBeVisible();
+      await expect(page.locator('.pop .pop-item', { hasText: '1/3 三分之一' })).toBeVisible();
+      await expect(page.locator('.pop .pop-item', { hasText: '半栏并排' })).toBeVisible();
+      await expect(page.locator('.pop .pop-item', { hasText: '2/3 三分之二' })).toBeVisible();
+      await expect(page.locator('.pop .pop-item', { hasText: '3/4 四分之三' })).toBeVisible();
+      await expect(page.locator('.pop .pop-item', { hasText: '自定义百分比' })).toBeVisible();
+
+      // 点击 1/3 三分之一
+      await page.locator('.pop .pop-item', { hasText: '1/3 三分之一' }).click();
+      await expect(module).toHaveClass(/is-third-width/);
+
+      // 点击自定义百分比，输入 40%
+      page.once('dialog', (dialog) => dialog.accept('40%'));
+      await module.locator('.module-menu-btn').click();
+      await page.locator('.pop .pop-item', { hasText: '自定义百分比' }).click();
+
+      await expect(module).toHaveClass(/is-custom-width/);
+      const style = await module.getAttribute('style');
+      expect(style).toContain('40%');
+
+      // 刷新后自定义宽度保持生效
+      await page.reload();
+      const reModule = page.locator('[data-module-id="m-capture"]');
+      await expect(reModule).toHaveClass(/is-custom-width/);
+      const reStyle = await reModule.getAttribute('style');
+      expect(reStyle).toContain('40%');
+      await page.close();
+    });
+
+    test('拖动「记一笔」卡片横向手柄改变大小，松开后保持宽度且不回弹，刷新后依然生效', async () => {
+      const page = await openNewTab();
+      const module = page.locator('[data-module-id="m-capture"]');
+      const handleW = module.locator('.module-resize-x');
+      await expect(handleW).toBeAttached();
+
+      const beforeBox = (await module.boundingBox())!;
+      const handleBox = (await handleW.boundingBox())!;
+
+      // 拖拽手柄向左移动 200px
+      await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(handleBox.x - 200, handleBox.y + handleBox.height / 2, { steps: 8 });
+
+      // 验证气泡显示宽度且未松开前实时变化
+      const badge = page.locator('.drag-badge');
+      await expect(badge).toBeVisible();
+      const liveWidth = (await module.boundingBox())!.width;
+      expect(liveWidth).toBeLessThan(beforeBox.width - 50);
+
+      // 松开鼠标
+      await page.mouse.up();
+      await expect(badge).toBeHidden();
+
+      // 验证松开后卡片保持缩小后的尺寸，没有回弹变回去
+      const afterBox = (await module.boundingBox())!;
+      expect(afterBox.width).toBeLessThan(beforeBox.width - 50);
+
+      // 刷新后依然保持宽度，不会变回去
+      await page.reload();
+      const reModule = page.locator('[data-module-id="m-capture"]');
+      const reBox = (await reModule.boundingBox())!;
+      expect(reBox.width).toBeLessThan(beforeBox.width - 50);
+
+      await page.close();
+    });
+
+    test('Grafana 级 2D 布局：支持左面一个、右面上下堆叠两个卡片', async () => {
+      const page = await openNewTab();
+      const col1 = page.locator('.dash-col[data-col="1"]');
+      const capture = col1.locator('[data-module-id="m-capture"]');
+      const pinned = col1.locator('[data-module-id="m-pinned"]');
+      const sites = col1.locator('[data-module-id="m-sites"]');
+
+      // 将 capture 设置在左侧
+      await capture.locator('.module-menu-btn').click();
+      await page.locator('.pop .pop-item', { hasText: '排在左侧' }).click();
+
+      // 将 pinned 设置在右侧
+      await pinned.locator('.module-menu-btn').click();
+      await page.locator('.pop .pop-item', { hasText: '排在右侧' }).click();
+
+      // 将 sites 也设置在右侧（堆叠在 pinned 下方）
+      await sites.locator('.module-menu-btn').click();
+      await page.locator('.pop .pop-item', { hasText: '排在右侧' }).click();
+
+      const captureBox = (await capture.boundingBox())!;
+      const pinnedBox = (await pinned.boundingBox())!;
+      const sitesBox = (await sites.boundingBox())!;
+
+      // 验证右侧上下堆叠：pinned 在 sites 上方，且水平 X 坐标一致
+      expect(Math.abs(pinnedBox.x - sitesBox.x)).toBeLessThan(10);
+      expect(sitesBox.y).toBeGreaterThan(pinnedBox.y + 30);
+
+      // 验证左侧 capture：水平 X 位于左侧，与右侧两张卡片并排
+      expect(captureBox.x).toBeLessThan(pinnedBox.x - 20);
+      expect(Math.abs(captureBox.y - pinnedBox.y)).toBeLessThan(10);
+
+      // 验证 capture 自动跨行跨高，高度覆盖右侧两张堆叠卡片
+      expect(captureBox.y + captureBox.height).toBeGreaterThan(sitesBox.y + 10);
+
+      // 刷新后保持左面一个、右面上下堆叠两个的 Grafana 布局
+      await page.reload();
+      const reCaptureBox = (await page.locator('.dash-col[data-col="1"] [data-module-id="m-capture"]').boundingBox())!;
+      const rePinnedBox = (await page.locator('.dash-col[data-col="1"] [data-module-id="m-pinned"]').boundingBox())!;
+      const reSitesBox = (await page.locator('.dash-col[data-col="1"] [data-module-id="m-sites"]').boundingBox())!;
+
+      expect(Math.abs(rePinnedBox.x - reSitesBox.x)).toBeLessThan(10);
+      expect(reSitesBox.y).toBeGreaterThan(rePinnedBox.y + 30);
+      expect(reCaptureBox.x).toBeLessThan(rePinnedBox.x - 20);
+      expect(Math.abs(reCaptureBox.y - rePinnedBox.y)).toBeLessThan(10);
+      expect(reCaptureBox.y + reCaptureBox.height).toBeGreaterThan(reSitesBox.y + 10);
+
+      await page.close();
+    });
+
+    test('像板子一样自由拖拽：无需菜单，直接拖拽即可将卡片拖到右侧并排，再拖一张在右侧下层堆叠', async () => {
+      const page = await openNewTab();
+      const col0 = page.locator('.dash-col[data-col="0"]');
+      const notes = col0.locator('[data-module-id="m-notes"]');
+      // 默认左栏只有「笔记」，先加一张卡片当第二张
+      await page.locator('[data-add-col="0"]').click();
+      await page.locator('.pop [data-add-type="hitokoto"]').click();
+      const second = col0.locator('[data-module-type="hitokoto"]');
+      const secondId = (await second.getAttribute('data-module-id'))!;
+
+      const beforeNotesBox = (await notes.boundingBox())!;
+
+      // 直接把第二张拖到 notes 的右半侧（不点任何菜单）
+      await startDrag(page, secondId);
+      await hoverAt(page, beforeNotesBox.x + beforeNotesBox.width * 0.8, beforeNotesBox.y + beforeNotesBox.height * 0.5);
+
+      // 验证 drop-gap 呈半栏形式吸附在右侧
+      const gap = col0.locator('.drop-gap');
+      await expect(gap).toBeVisible();
+      await expect(gap).toHaveClass(/is-half-width/);
+
+      // 松开鼠标，完成并排
+      await releaseDrag(page, beforeNotesBox.x + beforeNotesBox.width * 0.8, beforeNotesBox.y + beforeNotesBox.height * 0.5);
+
+      // 验证两者现在左右并排在同一水平行
+      const afterNotesBox = (await notes.boundingBox())!;
+      const afterSecondBox = (await second.boundingBox())!;
+      expect(afterNotesBox.x).toBeLessThan(afterSecondBox.x - 20);
+      expect(Math.abs(afterNotesBox.y - afterSecondBox.y)).toBeLessThan(15);
+      expect(afterNotesBox.width).toBeLessThan(beforeNotesBox.width * 0.65);
+      expect(afterSecondBox.width).toBeLessThan(beforeNotesBox.width * 0.65);
+
+      // 刷新后保持自由拖拽后的并排布局
+      await page.reload();
+      const reNotesBox = (await page.locator('.dash-col[data-col="0"] [data-module-id="m-notes"]').boundingBox())!;
+      const reSecondBox = (await page.locator('.dash-col[data-col="0"] [data-module-type="hitokoto"]').boundingBox())!;
+      expect(reNotesBox.x).toBeLessThan(reSecondBox.x - 20);
+      expect(Math.abs(reNotesBox.y - reSecondBox.y)).toBeLessThan(15);
+
+      await page.close();
+    });
+
+    test('单栏或多卡模式下，直接将「记一笔」拖入上方空白区域，自动填满空白并在右侧卡片旁堆叠', async () => {
+      const page = await openNewTab();
+      // 减至 1 栏模拟用户的真实使用场景
+      await page.locator('#col-dec').click();
+      await page.locator('#col-dec').click();
+      await expect(page.locator('#col-count-label')).toHaveText('1 栏');
+
+      const col0 = page.locator('.dash-col[data-col="0"]');
+      const notes = col0.locator('[data-module-id="m-notes"]');
+      const tall = col0.locator('[data-module-id="m-pinned"]');
+      const capture = col0.locator('[data-module-id="m-capture"]');
+
+      // 将 notes 设为半栏（左侧），pinned 设为半栏（右侧，并拉高）
+      await notes.locator('.module-menu-btn').click();
+      await page.locator('.pop .pop-item', { hasText: '排在左侧' }).click();
+
+      await tall.locator('.module-menu-btn').click();
+      await page.locator('.pop .pop-item', { hasText: '排在右侧' }).click();
+
+      // 拉大 tall 高度制造下方空白
+      const tallHandleH = tall.locator('.module-resize');
+      const qBox = (await tallHandleH.boundingBox())!;
+      await page.mouse.move(qBox.x + qBox.width / 2, qBox.y + qBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(qBox.x + qBox.width / 2, qBox.y + qBox.height / 2 + 250, { steps: 10 });
+      await page.mouse.up();
+
+      const notesBox = (await notes.boundingBox())!;
+      const tallBoxAfter = (await tall.boundingBox())!;
+
+      // 直接将位于下方的 capture 拖动到左半侧空白区域（位于 notes 下方、quick 左侧）
+      const blankTargetX = notesBox.x + notesBox.width * 0.5;
+      const blankTargetY = notesBox.y + notesBox.height + 60;
+
+      await startDrag(page, 'm-capture');
+      await hoverAt(page, blankTargetX, blankTargetY);
+
+      // 验证 drop-gap 准确呈半栏并吸附在左侧空白区域
+      const gap = col0.locator('.drop-gap');
+      await expect(gap).toBeVisible();
+      await expect(gap).toHaveClass(/is-half-width/);
+
+      // 松手完成放置
+      await releaseDrag(page, blankTargetX, blankTargetY);
+
+      // 验证 capture 已经成功落入左侧空白区域：与 notes 左右 X 坐标一致，且紧跟在 notes 下方
+      const afterCaptureBox = (await capture.boundingBox())!;
+      expect(Math.abs(afterCaptureBox.x - notesBox.x)).toBeLessThan(15);
+      expect(afterCaptureBox.y).toBeGreaterThanOrEqual(notesBox.y + notesBox.height - 10);
+      // 同时 capture 位于 tall 的左侧
+      expect(afterCaptureBox.x).toBeLessThan(tallBoxAfter.x - 20);
+
+      // 刷新后依然保持
+      await page.reload();
+      const reNotes = (await page.locator('.dash-col[data-col="0"] [data-module-id="m-notes"]').boundingBox())!;
+      const reCapture = (await page.locator('.dash-col[data-col="0"] [data-module-id="m-capture"]').boundingBox())!;
+      expect(Math.abs(reCapture.x - reNotes.x)).toBeLessThan(15);
+      expect(reCapture.y).toBeGreaterThanOrEqual(reNotes.y + reNotes.height - 10);
+
+      await page.close();
+    });
+
+    test('宽度拖动随意自由控制，不强制限制在 25/33/50/67/75，支持任意自定义连续宽度', async () => {
+      const page = await openNewTab();
+      const module = page.locator('[data-module-id="m-capture"]');
+      const handleW = module.locator('.module-resize-x');
+
+      const beforeBox = (await module.boundingBox())!;
+      const hBox = (await handleW.boundingBox())!;
+
+      // 向左拖动 120px（产生非标准的随意百分比，如 ~60% 左右）
+      await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(hBox.x - 120, hBox.y + hBox.height / 2, { steps: 8 });
+
+      // 气泡能显示动态百分比，卡片宽度实时跟随
+      const badge = page.locator('.drag-badge');
+      await expect(badge).toBeVisible();
+      await page.mouse.up();
+
+      // 松手后卡片宽度不会回弹变回去
+      const afterBox = (await module.boundingBox())!;
+      expect(afterBox.width).toBeLessThan(beforeBox.width - 60);
+
+      // 刷新后依然记住该随意大小
+      await page.reload();
+      const reBox = (await page.locator('[data-module-id="m-capture"]').boundingBox())!;
+      expect(reBox.width).toBeLessThan(beforeBox.width - 60);
+
+      await page.close();
     });
   });
 

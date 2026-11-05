@@ -19,8 +19,8 @@
   'use strict';
 
   var LAYOUT_KEY = 'selfhub_newtab_layout';
-  var MIN_COL_PX = 190;
-  var MIN_MODULE_PX = 120;
+  var MIN_COL_PX = 150;
+  var MIN_MODULE_PX = 60;
   var RESIZER_PX = 12;
 
   var DEFAULT_LAYOUT = {
@@ -32,8 +32,7 @@
     ],
     modules: [
       { id: 'm-notes', type: 'notes', column: 0, height: null, source: { mode: 'recent' } },
-      { id: 'm-quick', type: 'quicknote', column: 0, height: 232, source: { folder: '' } },
-      { id: 'm-capture', type: 'capture', column: 1, height: null, source: {} },
+      { id: 'm-capture', type: 'capture', column: 1, height: 200, source: { mode: 'inbox' } },
       { id: 'm-pinned', type: 'pinned', column: 1, height: null, source: {} },
       { id: 'm-sites', type: 'sites', column: 1, height: null, source: { mode: 'all' } },
       { id: 'm-checkins', type: 'checkins', column: 1, height: null, source: {} },
@@ -62,7 +61,7 @@
   function normalize(raw) {
     if (!raw || typeof raw !== 'object') return null;
     var columns = Array.isArray(raw.columns) ? raw.columns : [];
-    if (columns.length < 1 || columns.length > 4) return null;
+    if (columns.length < 1 || columns.length > 7) return null;
     var cleanColumns = [];
     for (var i = 0; i < columns.length; i += 1) {
       var fr = Number(columns[i] && columns[i].fr);
@@ -80,11 +79,33 @@
       if (!id || seen[id]) continue;
       seen[id] = true;
       var column = Number(mod.column);
+      var width = mod.width;
+      if (['quarter', 'third', 'half', 'two-thirds', 'three-quarters', 'full', 'span-full'].indexOf(width) >= 0) {
+        // 合法预设档位
+      } else if (typeof width === 'string' && /^\d+[%]?$/.test(width)) {
+        var num = parseInt(width, 10);
+        width = isFinite(num) && num >= 15 && num <= 100 ? num : 'full';
+      } else if (isFinite(Number(width)) && Number(width) >= 15 && Number(width) <= 100) {
+        width = Math.round(Number(width));
+      } else {
+        width = 'full';
+      }
+      var x = Number(mod.x);
+      var y = Number(mod.y);
+      var w = Number(mod.w);
+      var h = Number(mod.h);
+
       cleanModules.push({
         id: id,
         type: mod.type,
         column: isFinite(column) ? clamp(column, 0, cleanColumns.length - 1) : 0,
         height: isFinite(Number(mod.height)) && Number(mod.height) > 0 ? Math.round(Number(mod.height)) : null,
+        width: width,
+        x: isFinite(x) && x >= 0 && x <= 11 ? Math.round(x) : null,
+        y: isFinite(y) && y >= 0 ? Math.round(y) : null,
+        w: isFinite(w) && w >= 1 && w <= 12 ? Math.round(w) : null,
+        h: isFinite(h) && h >= 1 && h <= 10 ? Math.round(h) : 1,
+        explicitSide: Boolean(mod.explicitSide),
         source: mod.source && typeof mod.source === 'object' ? mod.source : {}
       });
     }
@@ -259,11 +280,237 @@
     function applyHeight(moduleEl, mod) {
       if (mod.height) {
         moduleEl.style.height = mod.height + 'px';
+        moduleEl.style.minHeight = mod.height + 'px';
         moduleEl.classList.add('has-fixed-height');
       } else {
         moduleEl.style.height = '';
+        moduleEl.style.minHeight = '';
         moduleEl.classList.remove('has-fixed-height');
       }
+    }
+
+    function widthToCols(width) {
+      if (width === 'quarter') return 3;
+      if (width === 'third') return 4;
+      if (width === 'half') return 6;
+      if (width === 'two-thirds') return 8;
+      if (width === 'three-quarters') return 9;
+      if (width === 'full') return 12;
+      if (typeof width === 'number' || (isFinite(Number(width)) && Number(width) > 0)) {
+        return clamp(Math.round((Number(width) / 100) * 12), 2, 12);
+      }
+      return 12;
+    }
+
+    function applyGridPos(moduleEl, mod) {
+      var w = mod.w != null ? mod.w : widthToCols(mod.width);
+      var x = mod.x;
+      if (x != null && w != null && w < 12) {
+        moduleEl.style.gridColumn = (x + 1) + ' / span ' + w;
+      } else if (w === 6 && x === 6) {
+        moduleEl.style.gridColumn = '7 / span 6';
+      } else if (w === 6) {
+        moduleEl.style.gridColumn = '1 / span 6';
+      } else if (w != null && w < 12) {
+        moduleEl.style.gridColumn = 'span ' + w;
+      } else {
+        moduleEl.style.gridColumn = '1 / -1';
+      }
+      if (w < 12 && mod.y != null) {
+        var spanH = mod.h && mod.h > 1 ? mod.h : 1;
+        moduleEl.style.gridRow = (mod.y + 1) + ' / span ' + spanH;
+      } else if (mod.h != null && mod.h > 1) {
+        moduleEl.style.gridRow = 'span ' + mod.h;
+      } else {
+        moduleEl.style.gridRow = '';
+      }
+    }
+
+    function packColumnModules(mods) {
+      // 占用矩阵 grid[row][col]，按 12 栏跟踪哪一格被占用（Grafana 级 2D 紧凑排版）
+      var grid = [];
+      function isOccupied(r, c) {
+        return Boolean(grid[r] && grid[r][c]);
+      }
+      function markOccupied(r, c, w, h) {
+        for (var row = r; row < r + h; row += 1) {
+          if (!grid[row]) grid[row] = [];
+          for (var col = c; col < c + w; col += 1) {
+            grid[row][col] = true;
+          }
+        }
+      }
+
+      mods.forEach(function (m) {
+        var w = widthToCols(m.width);
+        m.w = w;
+        var h = m.h && m.h > 1 ? m.h : 1;
+        m.h = h;
+
+        if (w >= 12) {
+          // 整栏单卡片：寻找第一个完全空闲的整行
+          var r = 0;
+          while (grid[r] && grid[r].some(function (occupied) { return occupied; })) {
+            r += 1;
+          }
+          m.x = 0;
+          m.y = r;
+          markOccupied(r, 0, 12, h);
+          return;
+        }
+
+        // 分栏卡片（半栏、1/3、1/4 等）：
+        // 如果卡片有显式指定的列（如通过拖拽指定的 x: 6），优先尝试放在指定列
+        var targetCol = (m.explicitSide && m.x != null && m.x + w <= 12) ? m.x : null;
+        var placed = false;
+        for (var r = 0; r < 200 && !placed; r += 1) {
+          if (targetCol != null) {
+            var canFitTarget = true;
+            for (var row = r; row < r + h; row += 1) {
+              for (var col = targetCol; col < targetCol + w; col += 1) {
+                if (isOccupied(row, col)) { canFitTarget = false; break; }
+              }
+              if (!canFitTarget) break;
+            }
+            if (canFitTarget) {
+              m.x = targetCol;
+              m.y = r;
+              markOccupied(r, targetCol, w, h);
+              placed = true;
+              break;
+            }
+            // 显式指定列时，本行放不下继续看下一行，不滑到其它列
+            continue;
+          }
+
+          // 否则从左向右寻找第一个能容纳当前卡片 w * h 的空闲区间
+          var step = (w === 3 ? 3 : (w === 4 ? 4 : (w === 6 ? 6 : 1)));
+          for (var c = 0; c <= 12 - w; c += step) {
+            var canFit = true;
+            for (var row = r; row < r + h; row += 1) {
+              for (var col = c; col < c + w; col += 1) {
+                if (isOccupied(row, col)) { canFit = false; break; }
+              }
+              if (!canFit) break;
+            }
+            if (canFit) {
+              m.x = c;
+              m.y = r;
+              markOccupied(r, c, w, h);
+              placed = true;
+              break;
+            }
+          }
+        }
+      });
+
+      // 第二阶段：2D 纵向自适应跨行（Grafana 级并排卡片高度补齐）
+      // 当一侧为单张卡片，而相邻另一侧上下堆叠了多张卡片时，单张卡片自动 span 覆盖相应行数（无限制多行 1 对多）
+      mods.forEach(function (m) {
+        if (m.w < 12) {
+          var sideCol = m.x === 0 ? 6 : (m.x === 6 ? 0 : -1);
+          if (sideCol >= 0) {
+            var stacked = mods.filter(function (other) {
+              return other !== m && other.x === sideCol && other.y >= m.y;
+            });
+            if (stacked.length >= 2) {
+              var count = stacked.length;
+              var targetSpan = Math.max(m.h || 1, count);
+              var canSpan = true;
+              for (var row = m.y + 1; row < m.y + targetSpan; row += 1) {
+                if (isOccupied(row, m.x)) { canSpan = false; break; }
+              }
+              if (canSpan) {
+                m.h = targetSpan;
+                for (var r = m.y + 1; r < m.y + targetSpan; r += 1) {
+                  markOccupied(r, m.x, m.w, 1);
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function applyWidth(moduleEl, mod) {
+      moduleEl.classList.remove(
+        'is-quarter-width',
+        'is-third-width',
+        'is-half-width',
+        'is-two-thirds-width',
+        'is-three-quarters-width',
+        'is-span-full',
+        'is-custom-width'
+      );
+      moduleEl.style.flex = '';
+      moduleEl.style.width = '';
+      if (mod.width === 'quarter') {
+        moduleEl.classList.add('is-quarter-width');
+      } else if (mod.width === 'third') {
+        moduleEl.classList.add('is-third-width');
+      } else if (mod.width === 'half') {
+        moduleEl.classList.add('is-half-width');
+      } else if (mod.width === 'two-thirds') {
+        moduleEl.classList.add('is-two-thirds-width');
+      } else if (mod.width === 'three-quarters') {
+        moduleEl.classList.add('is-three-quarters-width');
+      } else if (mod.width === 'span-full') {
+        moduleEl.classList.add('is-span-full');
+      } else if (typeof mod.width === 'number' || (isFinite(Number(mod.width)) && Number(mod.width) > 0)) {
+        var pct = clamp(Math.round(Number(mod.width)), 15, 100);
+        moduleEl.classList.add('is-custom-width');
+        moduleEl.style.setProperty('--custom-pct', pct + '%');
+        if (pct >= 48 && pct <= 52) moduleEl.classList.add('is-half-width');
+        else if (pct >= 23 && pct <= 27) moduleEl.classList.add('is-quarter-width');
+        else if (pct >= 31 && pct <= 35) moduleEl.classList.add('is-third-width');
+        else if (pct >= 65 && pct <= 69) moduleEl.classList.add('is-two-thirds-width');
+        else if (pct >= 73 && pct <= 77) moduleEl.classList.add('is-three-quarters-width');
+      }
+      applyGridPos(moduleEl, mod);
+    }
+
+    function labelOfWidth(wState, px, hPx) {
+      var wStr = '整栏 (100%)';
+      if (wState === 'quarter') wStr = '1/4 (25%)';
+      else if (wState === 'third') wStr = '1/3 (33%)';
+      else if (wState === 'half') wStr = '半栏 (50%)';
+      else if (wState === 'two-thirds') wStr = '2/3 (67%)';
+      else if (wState === 'three-quarters') wStr = '3/4 (75%)';
+      else if (wState === 'span-full') wStr = '全宽通栏';
+      else if (typeof wState === 'number' || isFinite(Number(wState))) {
+        var pNum = Math.round(Number(wState));
+        if (pNum === 50) wStr = '半栏 (50%)';
+        else if (pNum === 25) wStr = '1/4 (25%)';
+        else if (pNum === 33) wStr = '1/3 (33%)';
+        else if (pNum === 67) wStr = '2/3 (67%)';
+        else if (pNum === 75) wStr = '3/4 (75%)';
+        else wStr = pNum + '%';
+      }
+      var pxStr = Math.round(px) + ' px';
+      if (hPx != null) pxStr += ' × ' + Math.round(hPx) + ' px';
+      return wStr + ' · ' + pxStr;
+    }
+
+    function resolveSnapWidth(nextW, colW, isAltOrShift) {
+      if (nextW > colW * 1.15 && layout.columns.length > 1) {
+        return 'span-full';
+      }
+      var pct = clamp(Math.round((nextW / colW) * 100), 15, 100);
+      if (pct >= 90) return 'full';
+      if (!isAltOrShift) {
+        if (pct >= 72 && pct <= 80) return 'three-quarters';
+        if (pct >= 63 && pct <= 71) return 'two-thirds';
+        if (pct >= 44 && pct <= 60) return 'half';
+        if (pct >= 29 && pct <= 38) return 'third';
+        if (pct >= 21 && pct <= 28) return 'quarter';
+      } else {
+        if (pct >= 48 && pct <= 52) return 'half';
+        if (pct >= 23 && pct <= 27) return 'quarter';
+        if (pct >= 31 && pct <= 35) return 'third';
+        if (pct >= 65 && pct <= 69) return 'two-thirds';
+        if (pct >= 73 && pct <= 77) return 'three-quarters';
+      }
+      return pct;
     }
 
     function beginHeightDrag(moduleEl, mod, event) {
@@ -306,6 +553,193 @@
       window.addEventListener('pointercancel', onUp);
     }
 
+    /* — 模块宽度（水平拖拽与角拖拽，Grafana 手感） — */
+
+    function beginWidthDrag(moduleEl, mod, event) {
+      event.preventDefault();
+      var startX = event.clientX;
+      var colEl = moduleEl.closest('.dash-col');
+      var colW = colEl ? colEl.clientWidth : Math.max(320, root.clientWidth);
+      var startW = moduleEl.getBoundingClientRect().width;
+      var moved = false;
+      var nextW = startW;
+      var targetWidth = mod.width || 'full';
+      var point = { x: event.clientX, y: event.clientY };
+      var isAltOrShift = event.altKey || event.shiftKey;
+
+      document.body.classList.add('is-module-resizing-x');
+      moduleEl.classList.add('is-live-resizing');
+
+      showBadge(labelOfWidth(targetWidth, startW), point.x, point.y);
+
+      var apply = nextFrame(function () {
+        var wClamped = Math.max(80, Math.round(nextW));
+        moduleEl.style.width = wClamped + 'px';
+        moduleEl.style.flexBasis = wClamped + 'px';
+
+        targetWidth = resolveSnapWidth(nextW, colW, isAltOrShift);
+        var snapCols = widthToCols(targetWidth);
+        if (targetWidth === 'span-full') {
+          moduleEl.style.gridColumn = '1 / -1';
+        } else if (snapCols < 12) {
+          moduleEl.style.gridColumn = (mod.x != null && mod.x + snapCols <= 12 ? (mod.x + 1) + ' / span ' : '1 / span ') + snapCols;
+        } else {
+          moduleEl.style.gridColumn = '1 / -1';
+        }
+        showBadge(labelOfWidth(targetWidth, nextW), point.x, point.y);
+      });
+
+      function onMove(moveEvent) {
+        var dx = moveEvent.clientX - startX;
+        point = { x: moveEvent.clientX, y: moveEvent.clientY };
+        isAltOrShift = moveEvent.altKey || moveEvent.shiftKey;
+        if (!moved && Math.abs(dx) < 3) return;
+        moved = true;
+        nextW = Math.max(80, startW + dx);
+        apply();
+      }
+
+      function onUp() {
+        document.body.classList.remove('is-module-resizing-x');
+        moduleEl.classList.remove('is-live-resizing');
+        hideBadge();
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        moduleEl.style.width = '';
+        moduleEl.style.flexBasis = '';
+        if (moved) {
+          targetWidth = resolveSnapWidth(nextW, colW, isAltOrShift);
+          mod.width = targetWidth;
+          mod.w = widthToCols(targetWidth);
+          if (mod.w >= 12) {
+            mod.x = 0;
+            mod.explicitSide = false;
+          } else if (mod.x != null && mod.x + mod.w > 12) {
+            mod.x = 12 - mod.w;
+          }
+          saveLayout(layout);
+          if (targetWidth === 'span-full' || moduleEl.classList.contains('is-span-full')) {
+            render();
+          } else if (colEl) {
+            var colMods = layout.modules.filter(function (m) {
+              return m.column === Number(colEl.getAttribute('data-col')) && m.width !== 'span-full';
+            });
+            packColumnModules(colMods);
+            colMods.forEach(function (m) {
+              var mEl = colEl.querySelector('[data-module-id="' + m.id + '"]');
+              if (mEl) {
+                applyWidth(mEl, m);
+              }
+            });
+          } else {
+            render();
+          }
+        }
+      }
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    }
+
+    function beginCornerDrag(moduleEl, mod, event) {
+      event.preventDefault();
+      var startX = event.clientX;
+      var startY = event.clientY;
+      var colEl = moduleEl.closest('.dash-col');
+      var colW = colEl ? colEl.clientWidth : Math.max(320, root.clientWidth);
+      var startW = moduleEl.getBoundingClientRect().width;
+      var startH = moduleEl.getBoundingClientRect().height;
+      var moved = false;
+      var nextW = startW;
+      var nextH = startH;
+      var targetWidth = mod.width || 'full';
+      var point = { x: event.clientX, y: event.clientY };
+      var isAltOrShift = event.altKey || event.shiftKey;
+
+      document.body.classList.add('is-module-resizing-xy');
+      moduleEl.classList.add('is-live-resizing');
+
+      showBadge(labelOfWidth(targetWidth, startW, startH), point.x, point.y);
+
+      var apply = nextFrame(function () {
+        var wClamped = Math.max(80, Math.round(nextW));
+        moduleEl.style.width = wClamped + 'px';
+        moduleEl.style.flexBasis = wClamped + 'px';
+
+        targetWidth = resolveSnapWidth(nextW, colW, isAltOrShift);
+        var snapCols = widthToCols(targetWidth);
+        if (targetWidth === 'span-full') {
+          moduleEl.style.gridColumn = '1 / -1';
+        } else if (snapCols < 12) {
+          moduleEl.style.gridColumn = (mod.x != null && mod.x + snapCols <= 12 ? (mod.x + 1) + ' / span ' : '1 / span ') + snapCols;
+        } else {
+          moduleEl.style.gridColumn = '1 / -1';
+        }
+        mod.height = Math.max(MIN_MODULE_PX, Math.round(nextH));
+        applyHeight(moduleEl, mod);
+        showBadge(labelOfWidth(targetWidth, nextW, mod.height), point.x, point.y);
+      });
+
+      function onMove(moveEvent) {
+        var dx = moveEvent.clientX - startX;
+        var dy = moveEvent.clientY - startY;
+        point = { x: moveEvent.clientX, y: moveEvent.clientY };
+        isAltOrShift = moveEvent.altKey || moveEvent.shiftKey;
+        if (!moved && Math.hypot(dx, dy) < 3) return;
+        moved = true;
+        nextW = Math.max(80, startW + dx);
+        nextH = startH + dy;
+        apply();
+      }
+
+      function onUp() {
+        document.body.classList.remove('is-module-resizing-xy');
+        moduleEl.classList.remove('is-live-resizing');
+        hideBadge();
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        moduleEl.style.width = '';
+        moduleEl.style.flexBasis = '';
+        if (moved) {
+          targetWidth = resolveSnapWidth(nextW, colW, isAltOrShift);
+          if (targetWidth !== mod.width) {
+            mod.width = targetWidth;
+            mod.w = widthToCols(targetWidth);
+            if (mod.w >= 12) {
+              mod.x = 0;
+              mod.explicitSide = false;
+            } else if (mod.x != null && mod.x + mod.w > 12) {
+              mod.x = 12 - mod.w;
+            }
+          }
+          saveLayout(layout);
+          if (targetWidth === 'span-full' || moduleEl.classList.contains('is-span-full')) {
+            render();
+          } else if (colEl) {
+            var colMods = layout.modules.filter(function (m) {
+              return m.column === Number(colEl.getAttribute('data-col')) && m.width !== 'span-full';
+            });
+            packColumnModules(colMods);
+            colMods.forEach(function (m) {
+              var mEl = colEl.querySelector('[data-module-id="' + m.id + '"]');
+              if (mEl) {
+                applyWidth(mEl, m);
+              }
+            });
+          } else {
+            render();
+          }
+        }
+      }
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    }
+
     /* — 拖拽排序 — */
 
     /**
@@ -327,6 +761,8 @@
 
     /** 位移超过这个距离才算"拖"，否则当成点了一下标题栏（px）。 */
     var DRAG_THRESHOLD = 3;
+    /** 从卡片身体起手的阈值放宽一点：身体上的误触比标题栏多，宁可迟疑半拍。 */
+    var BODY_DRAG_THRESHOLD = 6;
 
     function withFlip(nodes, mutate) {
       if (reducedMotion() || !nodes.length) {
@@ -334,18 +770,24 @@
         return;
       }
       var before = nodes.map(function (node) {
-        return node.getBoundingClientRect().top;
+        var r = node.getBoundingClientRect();
+        return { left: r.left, top: r.top };
       });
       mutate();
       for (var i = 0; i < nodes.length; i += 1) {
-        var dy = before[i] - nodes[i].getBoundingClientRect().top;
-        if (!dy) continue;
+        var r = nodes[i].getBoundingClientRect();
+        var dx = before[i].left - r.left;
+        var dy = before[i].top - r.top;
+        if (!dx && !dy) continue;
         // 快速拖动时同一个卡片会在一秒内被重新定位好几次。不掐掉上一段动画，
-        // 两段 translateY 会同时跑，卡片就"抖"起来了 —— 这是"卡"的观感来源之一。
+        // 两段 transform 会同时跑，卡片就"抖"起来了 —— 这是"卡"的观感来源之一。
         var running = nodes[i].getAnimations();
         for (var j = 0; j < running.length; j += 1) running[j].cancel();
         nodes[i].animate(
-          [{ transform: 'translateY(' + dy + 'px)' }, { transform: 'translateY(0px)' }],
+          [
+            { transform: 'translate3d(' + dx + 'px,' + dy + 'px,0)' },
+            { transform: 'translate3d(0,0,0)' }
+          ],
           { duration: 150, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
         );
       }
@@ -354,12 +796,21 @@
     function makeGhost(mod, rect) {
       var spec = specOf(mod.type);
       var ghost = el('div', 'drag-ghost');
+      // 和真实卡片同宽同高：抓取点锚定的前提是"影子轮廓 = 卡片轮廓"，
+      // 否则"按住卡片的哪个点"和"影子上被按住的点"对不上，影子还是漂的。
       ghost.style.width = Math.round(rect.width) + 'px';
+      ghost.style.height = Math.round(rect.height) + 'px';
+      // 视觉外壳单独包一层：外层只写 transform 跟指针（每帧都写，合成层），
+      // 一次性的"抓起来"入场动画跑在内层，两段 transform 互不覆盖。
+      var inner = el('div', 'drag-ghost-inner');
       var head = el('div', 'module-head');
       head.appendChild(el('span', 'module-grip', '⠿'));
       head.appendChild(el('span', 'module-icon', spec.icon || '▫'));
       head.appendChild(el('span', 'module-title', spec.label));
-      ghost.appendChild(head);
+      inner.appendChild(head);
+      // 身体不克隆内容 DOM，只留一个虚线占位：轻，但轮廓是真的。
+      inner.appendChild(el('div', 'drag-ghost-body'));
+      ghost.appendChild(inner);
       document.body.appendChild(ghost);
       return ghost;
     }
@@ -374,13 +825,29 @@
      */
     function followGhost(x, y) {
       if (!drag || !drag.ghost) return;
-      drag.ghost.style.transform = 'translate3d(' + (x + 14) + 'px,' + (y + 12) + 'px,0)';
+      // 抓取点锚定：按住卡片的哪个点，指针就钉在影子的哪个点上。
+      // 之前固定 +14/+12 的偏移让"看到的影子"和"判定落点用的指针"是两个位置，
+      // 影子明明悬在槽的右边，松手却落进槽里 —— 落点全靠猜。
+      drag.ghost.style.transform = 'translate3d(' + (x - drag.offX) + 'px,' + (y - drag.offY) + 'px,0)';
     }
 
     function measureColumn(colEl) {
       return Array.prototype.slice.call(colEl.querySelectorAll('.module')).map(function (node) {
         var rect = node.getBoundingClientRect();
-        return { el: node, mid: rect.top + rect.height / 2 };
+        var id = node.getAttribute('data-module-id');
+        return {
+          el: node,
+          id: id,
+          mod: moduleById(id),
+          mid: rect.top + rect.height / 2,
+          top: rect.top,
+          bottom: rect.bottom,
+          left: rect.left,
+          right: rect.right,
+          width: rect.width,
+          height: rect.height,
+          midX: rect.left + rect.width / 2
+        };
       });
     }
 
@@ -398,6 +865,20 @@
         }
         colEl = node && node.closest ? node.closest('.dash-col') : null;
       }
+      if (!colEl && cols.length) {
+        // 指针落在栏间缝隙 / 分隔条 / 面板两侧空白时，按"离哪栏最近归哪栏"。
+        // 旧版是"第一条右边缘 +12px 覆盖到的栏"，拖到最右栏右侧的空白会兜底回
+        // 第一栏 —— 明明贴着右栏放手，卡片却飞去了左边，跨栏经常"没反应"的根源。
+        var bestDist = Infinity;
+        for (var c = 0; c < cols.length; c += 1) {
+          var r = cols[c].getBoundingClientRect();
+          var dist = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+          if (dist < bestDist) {
+            bestDist = dist;
+            colEl = cols[c];
+          }
+        }
+      }
       if (!colEl) return null;
       var column = Number(colEl.getAttribute('data-col'));
       if (!isFinite(column)) return null;
@@ -406,12 +887,309 @@
         drag.rects = { col: colEl, list: measureColumn(colEl) };
       }
       var list = drag.rects.list;
-      for (var i = 0; i < list.length; i += 1) {
-        if (y < list[i].mid) {
-          return { colEl: colEl, column: column, before: list[i].el, position: i };
+      var colRect = colEl.getBoundingClientRect();
+
+      var relX = clamp(x - colRect.left, 0, colRect.width);
+      var fracX = relX / Math.max(1, colRect.width);
+
+      // 排除当前正在拖拽的卡片自身
+      var candidates = list.filter(function (it) { return it.el !== drag.el; });
+
+      if (candidates.length === 0) {
+        return {
+          colEl: colEl,
+          column: column,
+          before: null,
+          position: 0,
+          x: 0,
+          w: 12,
+          splitPartner: null,
+          splitSide: null
+        };
+      }
+
+      // 1. 直接命中测试：光标当前是否直接落在某张卡片的有效矩形边界内
+      var directHit = null;
+      for (var i = 0; i < candidates.length; i += 1) {
+        var it = candidates[i];
+        if (x >= it.left - 6 && x <= it.right + 6 && y >= it.top && y <= it.bottom) {
+          directHit = it;
+          break;
         }
       }
-      return { colEl: colEl, column: column, before: null, position: list.length };
+
+      if (directHit) {
+        var hitCard = directHit;
+        var hitMod = hitCard.mod;
+        var hitW = hitMod && hitMod.w != null ? hitMod.w : (hitMod ? widthToCols(hitMod.width) : 12);
+        var hitX = hitMod && hitMod.x != null ? hitMod.x : (hitMod && hitMod.explicitSide && hitW === 6 ? 6 : 0);
+        var isDraggedFull = (!drag.mod.width || drag.mod.width === 'full') && (!drag.mod.w || drag.mod.w >= 12);
+        var edgeZone = Math.max(32, Math.min(68, hitCard.height * 0.28));
+
+        // 顶边缘：上方插入
+        if (y < hitCard.top + edgeZone) {
+          var useFullRowTop = isDraggedFull && (fracX >= 0.30 && fracX <= 0.70);
+          return {
+            colEl: colEl,
+            column: column,
+            before: hitCard.el,
+            position: candidates.indexOf(hitCard),
+            x: useFullRowTop ? 0 : (hitW === 6 ? hitX : 0),
+            w: useFullRowTop ? 12 : (hitW === 6 ? 6 : 12),
+            splitPartner: null,
+            splitSide: null
+          };
+        }
+
+        // 底边缘：下方插入
+        if (y > hitCard.bottom - edgeZone) {
+          var useFullRowBottom = isDraggedFull && (fracX >= 0.30 && fracX <= 0.70);
+          return {
+            colEl: colEl,
+            column: column,
+            before: hitCard.el.nextElementSibling,
+            position: candidates.indexOf(hitCard) + 1,
+            x: useFullRowBottom ? 0 : (hitW === 6 ? hitX : 0),
+            w: useFullRowBottom ? 12 : (hitW === 6 ? 6 : 12),
+            splitPartner: null,
+            splitSide: null
+          };
+        }
+
+        // 卡片主体区域：
+        if (hitW === 6) {
+          // 当前命中的已经是半栏卡片，在同侧内根据中线上下堆叠
+          if (y < hitCard.mid) {
+            return {
+              colEl: colEl,
+              column: column,
+              before: hitCard.el,
+              position: candidates.indexOf(hitCard),
+              x: hitX,
+              w: 6,
+              splitPartner: null,
+              splitSide: null
+            };
+          } else {
+            return {
+              colEl: colEl,
+              column: column,
+              before: hitCard.el.nextElementSibling,
+              position: candidates.indexOf(hitCard) + 1,
+              x: hitX,
+              w: 6,
+              splitPartner: null,
+              splitSide: null
+            };
+          }
+        }
+
+        // hitW >= 12（当前卡片是全宽卡片）：
+        // 只有在光标明显偏向左边缘或右边缘时才触发拆分，中间宽裕区域自由上下纵向放置
+        if (fracX > 0.68) {
+          return {
+            colEl: colEl,
+            column: column,
+            before: hitCard.el.nextElementSibling,
+            position: candidates.indexOf(hitCard) + 1,
+            x: 6,
+            w: 6,
+            splitPartner: hitCard,
+            splitSide: 'right'
+          };
+        } else if (fracX < 0.32) {
+          return {
+            colEl: colEl,
+            column: column,
+            before: hitCard.el,
+            position: candidates.indexOf(hitCard),
+            x: 0,
+            w: 6,
+            splitPartner: hitCard,
+            splitSide: 'left'
+          };
+        } else {
+          // 中间区域：根据中线上下整行插入
+          if (y < hitCard.mid) {
+            return {
+              colEl: colEl,
+              column: column,
+              before: hitCard.el,
+              position: candidates.indexOf(hitCard),
+              x: 0,
+              w: 12,
+              splitPartner: null,
+              splitSide: null
+            };
+          } else {
+            return {
+              colEl: colEl,
+              column: column,
+              before: hitCard.el.nextElementSibling,
+              position: candidates.indexOf(hitCard) + 1,
+              x: 0,
+              w: 12,
+              splitPartner: null,
+              splitSide: null
+            };
+          }
+        }
+      }
+
+      // 2. 空白区域命中（光标落在卡片之间的空隙、单侧空白区域或边缘）：
+      var isRightSide = fracX >= 0.50;
+      var targetSideX = isRightSide ? 6 : 0;
+
+      // 寻找同侧分栏卡片与对侧分栏卡片
+      var sameSideCards = candidates.filter(function (it) {
+        var itX = it.mod && it.mod.x != null ? it.mod.x : (it.mod && it.mod.explicitSide ? 6 : 0);
+        var itW = it.mod && it.mod.w != null ? it.mod.w : widthToCols(it.mod && it.mod.width);
+        if (itW >= 12) return false;
+        return isRightSide ? (itX >= 4 || it.midX >= colRect.left + colRect.width * 0.48) : (itX < 6 || it.midX < colRect.left + colRect.width * 0.52);
+      });
+
+      var oppositeCards = candidates.filter(function (it) {
+        var itX = it.mod && it.mod.x != null ? it.mod.x : (it.mod && it.mod.explicitSide ? 6 : 0);
+        var itW = it.mod && it.mod.w != null ? it.mod.w : widthToCols(it.mod && it.mod.width);
+        if (itW >= 12) return false;
+        return isRightSide ? (itX < 6 || it.midX < colRect.left + colRect.width * 0.52) : (itX >= 4 || it.midX >= colRect.left + colRect.width * 0.48);
+      });
+
+      // 检查光标是否处于对侧卡片所在高度区间内的同侧空白区（消灭侧边死区）
+      var oppositeNeighbor = null;
+      for (var op = 0; op < oppositeCards.length; op += 1) {
+        if (y >= oppositeCards[op].top - 10 && y <= oppositeCards[op].bottom + 10) {
+          oppositeNeighbor = oppositeCards[op];
+          break;
+        }
+      }
+
+      if (oppositeNeighbor) {
+        var sameSideBlocking = sameSideCards.filter(function (it) {
+          return y >= it.top && y <= it.bottom;
+        });
+        if (sameSideBlocking.length === 0) {
+          var aboveCards = sameSideCards.filter(function (it) {
+            return it.bottom <= y + 10;
+          });
+          var aboveCard = aboveCards.length > 0 ? aboveCards[aboveCards.length - 1] : null;
+          var targetY = aboveCard && aboveCard.mod && aboveCard.mod.y != null ? aboveCard.mod.y + 1 : (oppositeNeighbor.mod && oppositeNeighbor.mod.y != null ? oppositeNeighbor.mod.y : 1);
+          var beforeEl = aboveCard ? aboveCard.el.nextElementSibling : oppositeNeighbor.el;
+          var pos = aboveCard ? candidates.indexOf(aboveCard) + 1 : candidates.indexOf(oppositeNeighbor);
+          return {
+            colEl: colEl,
+            column: column,
+            before: beforeEl,
+            position: pos,
+            x: targetSideX,
+            y: targetY,
+            w: 6,
+            h: 1,
+            oppositeNeighbor: oppositeNeighbor,
+            splitPartner: null,
+            splitSide: null
+          };
+        }
+      }
+
+      var sideCards = candidates.filter(function (it) {
+        var itX = it.mod && it.mod.x != null ? it.mod.x : (it.mod && it.mod.explicitSide ? 6 : 0);
+        var itW = it.mod && it.mod.w != null ? it.mod.w : widthToCols(it.mod && it.mod.width);
+        if (itW >= 12) return true;
+        return isRightSide ? (itX >= 4 || it.midX >= colRect.left + colRect.width * 0.48) : (itX < 6 || it.midX < colRect.left + colRect.width * 0.52);
+      });
+
+      if (sideCards.length > 0) {
+        var isDraggedFullSide = (!drag.mod.width || drag.mod.width === 'full') && (!drag.mod.w || drag.mod.w >= 12);
+        var useFullWSide = isDraggedFullSide && (fracX >= 0.30 && fracX <= 0.70);
+        var resSideW = useFullWSide ? 12 : 6;
+        var resSideX = useFullWSide ? 0 : targetSideX;
+
+        if (y < sideCards[0].top) {
+          return {
+            colEl: colEl,
+            column: column,
+            before: sideCards[0].el,
+            position: candidates.indexOf(sideCards[0]),
+            x: resSideX,
+            y: 0,
+            w: resSideW,
+            splitPartner: null,
+            splitSide: null
+          };
+        }
+        for (var s = 0; s < sideCards.length; s += 1) {
+          if (y < sideCards[s].mid) {
+            return {
+              colEl: colEl,
+              column: column,
+              before: sideCards[s].el,
+              position: candidates.indexOf(sideCards[s]),
+              x: resSideX,
+              y: sideCards[s].mod && sideCards[s].mod.y != null ? sideCards[s].mod.y : s,
+              w: resSideW,
+              splitPartner: null,
+              splitSide: null
+            };
+          }
+        }
+        var lastCard = sideCards[sideCards.length - 1];
+        return {
+          colEl: colEl,
+          column: column,
+          before: lastCard.el.nextElementSibling,
+          position: candidates.indexOf(lastCard) + 1,
+          x: resSideX,
+          y: lastCard.mod && lastCard.mod.y != null ? lastCard.mod.y + 1 : sideCards.length,
+          w: resSideW,
+          splitPartner: null,
+          splitSide: null
+        };
+      }
+
+      // 未命中卡片（在最上方、最下方或空白处）
+      if (y < candidates[0].top) {
+        var topW = (fracX < 0.40 || fracX > 0.60) ? 6 : 12;
+        var topX = fracX > 0.60 ? 6 : 0;
+        return {
+          colEl: colEl,
+          column: column,
+          before: candidates[0].el,
+          position: 0,
+          x: topX,
+          w: topW,
+          splitPartner: null,
+          splitSide: null
+        };
+      }
+
+      for (var k = 0; k < candidates.length; k += 1) {
+        if (y < candidates[k].mid) {
+          return {
+            colEl: colEl,
+            column: column,
+            before: candidates[k].el,
+            position: k,
+            x: fracX > 0.60 ? 6 : 0,
+            w: (fracX < 0.40 || fracX > 0.60 ? 6 : 12),
+            splitPartner: null,
+            splitSide: null
+          };
+        }
+      }
+
+      var bottomW = (fracX < 0.40 || fracX > 0.60) ? 6 : 12;
+      var bottomX = fracX > 0.60 ? 6 : 0;
+      return {
+        colEl: colEl,
+        column: column,
+        before: null,
+        position: candidates.length,
+        x: bottomX,
+        w: bottomW,
+        splitPartner: null,
+        splitSide: null
+      };
     }
 
     function updateGap(target, immediate) {
@@ -419,20 +1197,96 @@
       if (
         drag.target &&
         drag.target.colEl === target.colEl &&
-        drag.target.position === target.position
+        drag.target.position === target.position &&
+        drag.target.x === target.x &&
+        drag.target.y === target.y &&
+        drag.target.w === target.w &&
+        drag.target.splitPartner === target.splitPartner &&
+        drag.target.splitSide === target.splitSide
       ) {
         return;
       }
+
       if (!drag.gap) {
         drag.gap = el('div', 'drop-gap');
-        var h = drag.el.getBoundingClientRect().height;
-        drag.gap.style.height = Math.round(Math.min(Math.max(h, 56), 220)) + 'px';
+        // 高度就是这张卡片松手后的真实高度（旧版钳到 56–220px，预览会失真）。
+        drag.gap.style.height = Math.round(drag.h) + 'px';
       }
+      drag.gap.classList.remove(
+        'is-quarter-width',
+        'is-third-width',
+        'is-half-width',
+        'is-two-thirds-width',
+        'is-three-quarters-width',
+        'is-span-full',
+        'is-custom-width'
+      );
+      if (target.w === 6) {
+        drag.gap.classList.add('is-half-width');
+        drag.gap.style.gridColumn = (target.x === 6 ? 7 : 1) + ' / span 6';
+      } else if (target.w === 3) {
+        drag.gap.classList.add('is-quarter-width');
+        drag.gap.style.gridColumn = (target.x + 1) + ' / span 3';
+      } else if (target.w === 4) {
+        drag.gap.classList.add('is-third-width');
+        drag.gap.style.gridColumn = (target.x + 1) + ' / span 4';
+      } else if (target.w === 8) {
+        drag.gap.classList.add('is-two-thirds-width');
+        drag.gap.style.gridColumn = (target.x + 1) + ' / span 8';
+      } else if (target.w === 9) {
+        drag.gap.classList.add('is-three-quarters-width');
+        drag.gap.style.gridColumn = (target.x + 1) + ' / span 9';
+      } else {
+        drag.gap.style.gridColumn = '1 / -1';
+      }
+      if (target.w < 12 && target.y != null) {
+        drag.gap.style.gridRow = (target.y + 1) + ' / span ' + (target.h || 1);
+      } else {
+        drag.gap.style.gridRow = '';
+      }
+
+      // 槽里写上"松手后这里会出现什么"：图标 + 标题 + 宽度档位。
+      // 虚线框从"有个洞"变成"这张卡会落在这"，落点不再靠猜。
+      var gapSpec = specOf(drag.mod.type);
+      var gapRow = el('span', 'drop-gap-row');
+      gapRow.appendChild(el('span', 'drop-gap-icon', gapSpec.icon || '▫'));
+      gapRow.appendChild(el('span', 'drop-gap-label', gapSpec.label));
+      if (target.w < 12) {
+        var wLabel = target.w === 6 ? '半栏'
+          : target.w === 3 ? '1/4 栏'
+          : target.w === 4 ? '1/3 栏'
+          : target.w === 8 ? '2/3 栏'
+          : target.w === 9 ? '3/4 栏'
+          : target.w + ' 栏';
+        gapRow.appendChild(el('span', 'drop-gap-hint', wLabel + ' · ' + (target.x === 6 ? '右侧' : '左侧')));
+      } else {
+        gapRow.appendChild(el('span', 'drop-gap-hint', '整栏'));
+      }
+      drag.gap.textContent = '';
+      drag.gap.appendChild(gapRow);
+
+      if (drag.lastSpanPartner && drag.lastSpanPartner !== (target.oppositeNeighbor ? target.oppositeNeighbor.el : null)) {
+        drag.lastSpanPartner.style.gridRow = drag.lastSpanPartnerOrigRow || '';
+        drag.lastSpanPartner = null;
+      }
+      if (target.oppositeNeighbor && target.oppositeNeighbor.el) {
+        if (!drag.lastSpanPartner) {
+          drag.lastSpanPartner = target.oppositeNeighbor.el;
+          drag.lastSpanPartnerOrigRow = target.oppositeNeighbor.el.style.gridRow;
+        }
+        var spanCount = Math.max(2, (target.y || 1) + (target.h || 1));
+        target.oppositeNeighbor.el.style.gridRow = '1 / span ' + spanCount;
+      }
+
       var move = function () {
         var addBtn = target.colEl.querySelector('.dash-add');
-        if (target.before) target.colEl.insertBefore(drag.gap, target.before);
-        else if (addBtn) target.colEl.insertBefore(drag.gap, addBtn);
-        else target.colEl.appendChild(drag.gap);
+        if (target.before && target.before.parentNode === target.colEl) {
+          target.colEl.insertBefore(drag.gap, target.before);
+        } else if (addBtn) {
+          target.colEl.insertBefore(drag.gap, addBtn);
+        } else {
+          target.colEl.appendChild(drag.gap);
+        }
       };
       if (immediate || reducedMotion()) {
         // 自动滚动时不要 FLIP：内容本身在滚，再叠一层位移动画会看着发抖。
@@ -450,9 +1304,14 @@
         });
         withFlip(nodes, move);
       }
+      // 指针所在的栏单独点亮：拖动中所有栏都有参考虚网格，
+      // 不把"当前会落进哪栏"挑出来，跨栏时仍然分不清。
+      if (drag.colEl !== target.colEl) {
+        if (drag.colEl) drag.colEl.classList.remove('is-drop-col');
+        drag.colEl = target.colEl;
+        drag.colEl.classList.add('is-drop-col');
+      }
       drag.target = target;
-      // 槽位进了布局，各卡片中线全变了，下次划过要重量。
-      drag.rects = null;
     }
 
     /* — 拖到边缘自动滚动 — */
@@ -482,6 +1341,8 @@
       if (!drag.rects || drag.rects.col !== colEl) return;
       for (var i = 0; i < drag.rects.list.length; i += 1) {
         drag.rects.list[i].mid -= delta;
+        drag.rects.list[i].top -= delta;
+        drag.rects.list[i].bottom -= delta;
       }
     }
 
@@ -577,19 +1438,37 @@
       if (!state.frame) state.frame = requestAnimationFrame(stepEdgeScroll);
     }
 
-    function beginModuleDrag(mod, moduleEl, x, y) {
+    function beginModuleDrag(mod, moduleEl, x, y, offX, offY) {
       var rect = moduleEl.getBoundingClientRect();
       drag = {
         id: mod.id,
+        mod: mod,
         el: moduleEl,
         gap: null,
         ghost: makeGhost(mod, rect),
         target: null,
-        rects: null
+        rects: null,
+        h: rect.height,
+        colEl: null,
+        // 抓取点锚定：影子相对指针的偏移 = 起手那一刻指针在卡片上的位置。
+        // 不传就退回旧的右下偏移（理论上来不到这一步，防一手）。
+        offX: typeof offX === 'number' ? offX : 14,
+        offY: typeof offY === 'number' ? offY : 12
       };
       moduleEl.classList.add('is-dragging');
       document.body.classList.add('is-module-dragging');
       followGhost(x, y);
+      // "抓起来了"的确认感：影子从原卡片位置原地浮现（缩放 + 渐入），
+      // 而不是凭空出现在指针旁边 —— 起手那一瞬就知道已经攥在手里了。
+      if (!reducedMotion() && drag.ghost.firstChild && drag.ghost.firstChild.animate) {
+        drag.ghost.firstChild.animate(
+          [
+            { opacity: 0, transform: 'scale(0.92)' },
+            { opacity: 1, transform: 'scale(1)' }
+          ],
+          { duration: 130, easing: 'cubic-bezier(0.2, 0, 0, 1)' }
+        );
+      }
     }
 
     function endDrag(commit) {
@@ -601,16 +1480,64 @@
       document.body.classList.remove('is-module-dragging');
       if (state.ghost && state.ghost.parentNode) state.ghost.parentNode.removeChild(state.ghost);
       state.el.classList.remove('is-dragging');
+      if (state.colEl) state.colEl.classList.remove('is-drop-col');
+
+      if (state.lastSplitPartner && state.lastSplitPartner.el) {
+        state.lastSplitPartner.el.style.gridColumn = '';
+        state.lastSplitPartner.el.classList.remove('is-half-width');
+        state.lastSplitPartner = null;
+      }
+      if (state.lastSpanPartner) {
+        state.lastSpanPartner.style.gridRow = state.lastSpanPartnerOrigRow || '';
+        state.lastSpanPartner = null;
+      }
 
       if (commit && state.gap && state.gap.parentNode) {
         var colEl = state.gap.parentNode;
-        colEl.insertBefore(state.el, state.gap);
-        colEl.removeChild(state.gap);
         var column = Number(colEl.getAttribute('data-col'));
-        var position = Array.prototype.indexOf.call(colEl.querySelectorAll('.module'), state.el);
-        if (isFinite(column) && position >= 0) {
-          moveModule(state.id, column, position);
+        var target = state.target;
+        if (isFinite(column)) {
+          state.mod.column = column;
+          if (target) {
+            if (target.splitPartner && target.splitPartner.mod) {
+              var partner = target.splitPartner.mod;
+              partner.width = 'half';
+              partner.w = 6;
+              partner.x = target.splitSide === 'right' ? 0 : 6;
+              partner.y = partner.y != null ? partner.y : 0;
+              partner.explicitSide = true;
+            }
+            if (target.oppositeNeighbor && target.oppositeNeighbor.mod) {
+              target.oppositeNeighbor.mod.h = Math.max(2, (target.y || 1) + (target.h || 1));
+            }
+            state.mod.x = target.x != null ? target.x : 0;
+            state.mod.y = target.y != null ? target.y : null;
+            state.mod.w = target.w != null ? target.w : widthToCols(state.mod.width);
+            state.mod.explicitSide = state.mod.w < 12;
+            state.mod.h = target.h != null ? target.h : 1;
+            if (state.mod.w === 6) state.mod.width = 'half';
+            else if (state.mod.w === 3) state.mod.width = 'quarter';
+            else if (state.mod.w === 4) state.mod.width = 'third';
+            else if (state.mod.w === 8) state.mod.width = 'two-thirds';
+            else if (state.mod.w === 9) state.mod.width = 'three-quarters';
+            else if (state.mod.w >= 12) state.mod.width = 'full';
+          }
+          if (state.gap.parentNode) {
+            state.gap.parentNode.removeChild(state.gap);
+          }
+          var colMods = layout.modules.filter(function (item) {
+            return item.column === column && item !== state.mod;
+          });
+          var pos = target && target.position != null ? target.position : colMods.length;
+          var anchor = colMods[pos];
+          var removeIdx = layout.modules.indexOf(state.mod);
+          if (removeIdx >= 0) layout.modules.splice(removeIdx, 1);
+          var insertIdx = anchor ? layout.modules.indexOf(anchor) : layout.modules.length;
+          layout.modules.splice(insertIdx, 0, state.mod);
+
           saveLayout(layout);
+          render();
+          return;
         }
       } else if (state.gap && state.gap.parentNode) {
         state.gap.parentNode.removeChild(state.gap);
@@ -631,6 +1558,90 @@
      * 命中测试和插槽更新仍然合并到一帧一次：指针事件可能比屏幕刷新还密（高刷鼠标
      * 能到 1000Hz），每个都算一遍纯属浪费。幽灵卡片本身不合并（见 followGhost）。
      */
+    /**
+     * 起手之后的整条拖动流水线（arm → move → commit/cancel），标题栏和卡片身体
+     * 两条起手路径共用。差别只有两个：阈值（身体更容易误触，放宽到 6px）和
+     * 抓取点（身体起手时指针可能落在卡片中部，锚点要跟着算）。
+     */
+    function armCardDrag(startEvent, mod, moduleEl, threshold) {
+      var startX = startEvent.clientX;
+      var startY = startEvent.clientY;
+      // 抓取点必须在 pointerdown 这一刻量：拖到阈值才 arm，如果那时再量，
+      // 指针已经走了一段，锚点就带着这段误差（快速甩动时影子会跳）。
+      var grabRect = moduleEl.getBoundingClientRect();
+      var grabDX = clamp(startEvent.clientX - grabRect.left, 0, grabRect.width);
+      var grabDY = clamp(startEvent.clientY - grabRect.top, 0, grabRect.height);
+      var armed = false;
+      var frame = 0;
+
+      function flush() {
+        frame = 0;
+        if (!drag || !hoverPoint) return;
+        var target = computeTarget(hoverPoint.x, hoverPoint.y, hoverPoint.target);
+        updateGap(target);
+        updateEdgeScroll(target && target.colEl, hoverPoint.x, hoverPoint.y);
+      }
+
+      function onMove(moveEvent) {
+        if (!armed) {
+          var dx = moveEvent.clientX - startX;
+          var dy = moveEvent.clientY - startY;
+          if (dx * dx + dy * dy < threshold * threshold) return;
+          armed = true;
+          beginModuleDrag(mod, moduleEl, moveEvent.clientX, moveEvent.clientY, grabDX, grabDY);
+        }
+        if (!drag) return;
+        followGhost(moveEvent.clientX, moveEvent.clientY);
+        hoverPoint = { x: moveEvent.clientX, y: moveEvent.clientY, target: moveEvent.target };
+        if (!frame) frame = requestAnimationFrame(flush);
+      }
+
+      function detach() {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onCancel);
+        window.removeEventListener('keydown', onKey, true);
+        window.removeEventListener('blur', onCancel);
+        if (frame) {
+          cancelAnimationFrame(frame);
+          frame = 0;
+        }
+      }
+
+      function onUp() {
+        detach();
+        if (!armed) return; // 只是点了一下，什么都没发生
+        // 最后一段位移可能还没被 rAF 消化，落点以松手那一刻为准。
+        if (hoverPoint) {
+          var point = hoverPoint;
+          drag.rects = null;
+          updateGap(computeTarget(point.x, point.y, point.target));
+        }
+        endDrag(true);
+      }
+
+      // 放弃拖动：`pointercancel`（系统抢走指针）、窗口失焦、按 Esc。
+      // 这条路上不能提交，否则"拖到一半改主意"会把卡片留在半路。
+      function onCancel() {
+        detach();
+        if (armed) endDrag(false);
+      }
+
+      function onKey(keyEvent) {
+        if (keyEvent.key !== 'Escape') return;
+        keyEvent.preventDefault();
+        keyEvent.stopPropagation();
+        onCancel();
+      }
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onCancel);
+      // 指针跑到窗口外松手时可能收不到 pointerup，别让幽灵卡片留在屏幕上。
+      window.addEventListener('blur', onCancel);
+      window.addEventListener('keydown', onKey, true);
+    }
+
     function wireModuleDrag(mod, moduleEl, head) {
       head.addEventListener('pointerdown', function (event) {
         if (event.button !== 0 || event.isPrimary === false) return;
@@ -638,78 +1649,25 @@
         if (event.target && event.target.closest && event.target.closest('button')) return;
         // 挡掉文本选择：不然按住标题栏拖会顺手把标题选蓝。
         event.preventDefault();
+        armCardDrag(event, mod, moduleEl, DRAG_THRESHOLD);
+      });
 
-        var startX = event.clientX;
-        var startY = event.clientY;
-        var armed = false;
-        var frame = 0;
-
-        function flush() {
-          frame = 0;
-          if (!drag || !hoverPoint) return;
-          var target = computeTarget(hoverPoint.x, hoverPoint.y, hoverPoint.target);
-          updateGap(target);
-          updateEdgeScroll(target && target.colEl, hoverPoint.x, hoverPoint.y);
-        }
-
-        function onMove(moveEvent) {
-          if (!armed) {
-            var dx = moveEvent.clientX - startX;
-            var dy = moveEvent.clientY - startY;
-            if (dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
-            armed = true;
-            beginModuleDrag(mod, moduleEl, moveEvent.clientX, moveEvent.clientY);
-          }
-          if (!drag) return;
-          followGhost(moveEvent.clientX, moveEvent.clientY);
-          hoverPoint = { x: moveEvent.clientX, y: moveEvent.clientY, target: moveEvent.target };
-          if (!frame) frame = requestAnimationFrame(flush);
-        }
-
-        function detach() {
-          window.removeEventListener('pointermove', onMove);
-          window.removeEventListener('pointerup', onUp);
-          window.removeEventListener('pointercancel', onCancel);
-          window.removeEventListener('keydown', onKey, true);
-          window.removeEventListener('blur', onCancel);
-          if (frame) {
-            cancelAnimationFrame(frame);
-            frame = 0;
-          }
-        }
-
-        function onUp() {
-          detach();
-          if (!armed) return; // 只是点了一下标题栏，什么都没发生
-          // 最后一段位移可能还没被 rAF 消化，落点以松手那一刻为准。
-          if (hoverPoint) {
-            var point = hoverPoint;
-            drag.rects = null;
-            updateGap(computeTarget(point.x, point.y, point.target));
-          }
-          endDrag(true);
-        }
-
-        // 放弃拖动：`pointercancel`（系统抢走指针）、窗口失焦、按 Esc。
-        // 这条路上不能提交，否则"拖到一半改主意"会把卡片留在半路。
-        function onCancel() {
-          detach();
-          if (armed) endDrag(false);
-        }
-
-        function onKey(keyEvent) {
-          if (keyEvent.key !== 'Escape') return;
-          keyEvent.preventDefault();
-          keyEvent.stopPropagation();
-          onCancel();
-        }
-
-        window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup', onUp);
-        window.addEventListener('pointercancel', onCancel);
-        // 指针跑到窗口外松手时可能收不到 pointerup，别让幽灵卡片留在屏幕上。
-        window.addEventListener('blur', onCancel);
-        window.addEventListener('keydown', onKey, true);
+      // 卡片身体也能起手（仅鼠标）：不用再瞄准窄窄的标题栏。
+      // 触屏不走这条 —— 手指按在内容上仍以滚动为先，排序走标题栏或 ⋯ 菜单。
+      moduleEl.addEventListener('pointerdown', function (event) {
+        if (event.pointerType !== 'mouse' || event.button !== 0 || event.isPrimary === false) return;
+        var node = event.target;
+        if (!node || !node.closest) return;
+        // 标题栏（及其中的按钮）走上面那条路，这里别重复接手。
+        if (node === head || head.contains(node)) return;
+        // 交互元素和尺寸把手有自己的手势语义，让位。
+        if (node.closest('button, a, input, textarea, select, label, [contenteditable="true"], .module-resize, .module-resize-x, .module-resize-xy, .pop')) return;
+        // 滚动区里的按住拖动 = 滚动，别抢。pointerdown 只读这一次布局，无妨。
+        var bodyEl = node.closest('.module-body');
+        if (bodyEl && bodyEl.scrollHeight > bodyEl.clientHeight + 1) return;
+        // 阻止原生文本选择：一旦选区开始，后面的 pointermove 拦不住它。
+        event.preventDefault();
+        armCardDrag(event, mod, moduleEl, BODY_DRAG_THRESHOLD);
       });
     }
 
@@ -725,6 +1683,7 @@
       var mod = layout.modules[index];
       layout.modules.splice(index, 1);
       mod.column = column;
+      mod.y = null;
       var siblings = layout.modules.filter(function (item) {
         return item.column === column;
       });
@@ -942,6 +1901,161 @@
             applyHeight(moduleEl, mod);
           }, { active: !mod.height })
         );
+        container.appendChild(el('div', 'pop-group-title', '宽度与跨栏'));
+        container.appendChild(
+          menuItem('1/4 四分之一 (25%)', function () {
+            mod.width = 'quarter';
+            mod.w = 3;
+            mod.x = null;
+            mod.y = null;
+            mod.h = 1;
+            mod.explicitSide = false;
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: mod.width === 'quarter', hint: '单栏并排 4 个' })
+        );
+        container.appendChild(
+          menuItem('1/3 三分之一 (33%)', function () {
+            mod.width = 'third';
+            mod.w = 4;
+            mod.x = null;
+            mod.y = null;
+            mod.h = 1;
+            mod.explicitSide = false;
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: mod.width === 'third', hint: '单栏并排 3 个' })
+        );
+        container.appendChild(
+          menuItem('半栏并排 (50%)', function () {
+            mod.width = 'half';
+            mod.w = 6;
+            mod.x = null;
+            mod.y = null;
+            mod.h = 1;
+            mod.explicitSide = false;
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: mod.width === 'half', hint: '适合小卡片左右并排' })
+        );
+        container.appendChild(
+          menuItem('2/3 三分之二 (67%)', function () {
+            mod.width = 'two-thirds';
+            mod.w = 8;
+            mod.x = null;
+            mod.y = null;
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: mod.width === 'two-thirds', hint: '宽窄搭配' })
+        );
+        container.appendChild(
+          menuItem('3/4 四分之三 (75%)', function () {
+            mod.width = 'three-quarters';
+            mod.w = 9;
+            mod.x = null;
+            mod.y = null;
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: mod.width === 'three-quarters' })
+        );
+        container.appendChild(
+          menuItem('整栏 (100%)', function () {
+            mod.width = 'full';
+            mod.w = 12;
+            mod.x = 0;
+            mod.y = null;
+            mod.h = 1;
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: !mod.width || mod.width === 'full' })
+        );
+        container.appendChild(
+          menuItem('全宽通栏 (跨所有栏)', function () {
+            mod.width = 'span-full';
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: mod.width === 'span-full', hint: '横跨顶部通栏' })
+        );
+        container.appendChild(
+          menuItem('自定义百分比…', function () {
+            var curr = typeof mod.width === 'number' ? mod.width : (mod.width === 'half' ? 50 : (mod.width === 'quarter' ? 25 : (mod.width === 'third' ? 33 : 100)));
+            var val = window.prompt('请输入卡片在栏内的宽度百分比 (15 ~ 100)：', String(curr));
+            if (val == null) return;
+            var num = parseInt(val.replace(/%/g, '').trim(), 10);
+            if (isFinite(num) && num >= 15 && num <= 100) {
+              mod.width = num;
+              mod.w = clamp(Math.round((num / 100) * 12), 2, 12);
+              mod.x = null;
+              mod.y = null;
+              saveLayout(layout);
+              closePop();
+              render();
+            } else if (val.trim()) {
+              alert('请输入 15 到 100 之间的数字');
+            }
+          }, {
+            active: typeof mod.width === 'number',
+            hint: typeof mod.width === 'number' ? mod.width + '%' : '自由精确比例'
+          })
+        );
+        container.appendChild(el('div', 'pop-group-title', '2D 布局与堆叠 (Grafana)'));
+        container.appendChild(
+          menuItem('排在右侧 (并排下层堆叠)', function () {
+            mod.width = 'half';
+            mod.w = 6;
+            mod.x = 6;
+            mod.y = null;
+            mod.h = 1;
+            mod.explicitSide = true;
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: mod.x === 6, hint: '右半栏堆叠' })
+        );
+        container.appendChild(
+          menuItem('排在左侧 (并排下层堆叠)', function () {
+            mod.width = 'half';
+            mod.w = 6;
+            mod.x = 0;
+            mod.y = null;
+            mod.h = 1;
+            mod.explicitSide = true;
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: mod.x === 0 && mod.w === 6, hint: '左半栏堆叠' })
+        );
+        container.appendChild(
+          menuItem('跨双行高 (占满两侧高度)', function () {
+            mod.h = mod.h === 2 ? 1 : 2;
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: mod.h === 2, hint: '与上下堆叠卡片对齐' })
+        );
+        container.appendChild(
+          menuItem('跨三行高 (三倍高度)', function () {
+            mod.h = mod.h === 3 ? 1 : 3;
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: mod.h === 3, hint: '与 3 张堆叠卡片对齐' })
+        );
+        container.appendChild(
+          menuItem('自适应多行高 (自动对齐)', function () {
+            mod.h = null;
+            saveLayout(layout);
+            closePop();
+            render();
+          }, { active: !mod.h, hint: '自动对齐相邻堆叠卡片' })
+        );
         // 拖拽在触屏上不可用（HTML5 拖放不认 touch），所以位置也提供菜单入口。
         if (position > 0) {
           container.appendChild(
@@ -1021,7 +2135,7 @@
     }
 
     var ADD_GROUPS = [
-      { title: '记录', types: ['quicknote', 'capture'] },
+      { title: '记录', types: ['capture'] },
       { title: '浏览', types: ['notes', 'pinned', 'sites', 'annotations', 'weather', 'hitokoto', 'rates'] },
       { title: '管理', types: ['checkins', 'reminders', 'countdown', 'pomodoro'] }
     ];
@@ -1116,10 +2230,48 @@
         saveLayout(layout);
       });
 
+      var handleW = el('div', 'module-resize-x');
+      handleW.setAttribute('role', 'separator');
+      handleW.setAttribute('aria-orientation', 'vertical');
+      handleW.setAttribute('aria-label', spec.label + ' 宽度');
+      handleW.tabIndex = 0;
+      handleW.title = '左右拖动调整宽度（半栏 / 整栏 / 全宽）';
+      handleW.addEventListener('pointerdown', function (event) {
+        beginWidthDrag(moduleEl, mod, event);
+      });
+      handleW.addEventListener('keydown', function (event) {
+        if (event.key === 'ArrowLeft') {
+          mod.width = 'half';
+          mod.w = 6;
+          mod.x = null;
+          mod.y = null;
+          mod.explicitSide = false;
+        } else if (event.key === 'ArrowRight') {
+          mod.width = mod.width === 'full' ? 'span-full' : 'full';
+          mod.w = mod.width === 'full' ? 12 : null;
+          mod.x = null;
+          mod.y = null;
+          mod.explicitSide = false;
+        } else return;
+        event.preventDefault();
+        applyWidth(moduleEl, mod);
+        saveLayout(layout);
+        render();
+      });
+
+      var handleCorner = el('div', 'module-resize-xy');
+      handleCorner.title = '拖动同时调整宽高';
+      handleCorner.addEventListener('pointerdown', function (event) {
+        beginCornerDrag(moduleEl, mod, event);
+      });
+
       moduleEl.appendChild(head);
       moduleEl.appendChild(body);
       moduleEl.appendChild(handle);
+      moduleEl.appendChild(handleW);
+      moduleEl.appendChild(handleCorner);
       applyHeight(moduleEl, mod);
+      applyWidth(moduleEl, mod);
 
       try {
         renderBody(mod, body, moduleEl);
@@ -1138,12 +2290,29 @@
      * 用户正在写的速记被这类重画清掉，看起来就是"我明明打了字，它自己没了"。
      * 按 id 把值（和光标位置）存下来，画完填回去。
      */
+    /**
+     * 草稿的 key 要带上模块 id：同一个模块类型可以放两张（比如两个「记一笔」），
+     * 它们的输入框 id 相同，只按 id 存会把两份草稿写串。
+     */
+    function draftKey(field) {
+      var holder = field.closest ? field.closest('[data-module-id]') : null;
+      var moduleId = holder ? holder.getAttribute('data-module-id') : '';
+      return moduleId ? moduleId + '::' + field.id : field.id;
+    }
+
+    function fieldByDraftKey(key) {
+      var sep = key.indexOf('::');
+      if (sep <= 0) return document.getElementById(key);
+      var holder = root.querySelector('[data-module-id="' + key.slice(0, sep) + '"]');
+      return holder ? holder.querySelector('[id="' + key.slice(sep + 2) + '"]') : null;
+    }
+
     function snapshotDrafts() {
       var drafts = [];
       Array.prototype.forEach.call(root.querySelectorAll('input[id], textarea[id]'), function (field) {
         if (!field.value) return;
         var draft = {
-          id: field.id,
+          id: draftKey(field),
           value: field.value,
           start: null,
           end: null,
@@ -1163,7 +2332,7 @@
     function restoreDrafts(drafts) {
       if (!drafts || !drafts.length) return;
       drafts.forEach(function (draft) {
-        var field = document.getElementById(draft.id);
+        var field = fieldByDraftKey(draft.id);
         if (!field || !root.contains(field)) return;
         field.value = draft.value;
         if (!draft.focused || draft.start == null) return;
@@ -1184,12 +2353,20 @@
       cols = [];
       var columnCount = layout.columns.length;
 
+      var fullModules = layout.modules.filter(function (item) {
+        return item.width === 'span-full';
+      });
+      fullModules.forEach(function (mod) {
+        root.appendChild(buildModule(mod, mod.column));
+      });
+
       for (var i = 0; i < columnCount; i += 1) {
         var columnEl = el('section', 'dash-col');
         columnEl.setAttribute('data-col', String(i));
         var mods = layout.modules.filter(function (item) {
-          return item.column === i;
+          return item.column === i && item.width !== 'span-full';
         });
+        packColumnModules(mods);
         mods.forEach(function (mod) {
           columnEl.appendChild(buildModule(mod, i));
         });
@@ -1235,6 +2412,27 @@
       applyWidths();
     }
 
+    function addColumn() {
+      if (layout.columns.length >= 6) return false;
+      var newId = 'c' + (layout.columns.length + 1);
+      layout.columns.push({ id: newId, fr: 1.0 });
+      saveLayout(layout);
+      render();
+      return true;
+    }
+
+    function removeColumn() {
+      if (layout.columns.length <= 1) return false;
+      var lastIdx = layout.columns.length - 1;
+      layout.modules.forEach(function (m) {
+        if (m.column >= lastIdx) m.column = lastIdx - 1;
+      });
+      layout.columns.pop();
+      saveLayout(layout);
+      render();
+      return true;
+    }
+
     function refreshBodies(onlyTypes) {
       var wanted = onlyTypes && onlyTypes.length ? onlyTypes : null;
       // 和 render() 一样：局部重画也不能把没提交的输入清掉。
@@ -1271,6 +2469,11 @@
       getLayout: function () {
         return layout;
       },
+      getColumnCount: function () {
+        return layout.columns.length;
+      },
+      addColumn: addColumn,
+      removeColumn: removeColumn,
       render: render,
       /**
        * Take a layout that came from outside this page.

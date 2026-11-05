@@ -379,7 +379,7 @@
     var list = el('div', 'list');
     if (!notes.length) {
       list.appendChild(
-        el('div', 'empty', folder ? '「' + folder + '」里还没有笔记。' : '还没有笔记。左边「文本框」写一条，或进工作台写。')
+        el('div', 'empty', folder ? '「' + folder + '」里还没有笔记。' : '还没有笔记。用「记一笔」写一条，或进工作台写。')
       );
     } else {
       notes.forEach(function (note) {
@@ -400,7 +400,7 @@
     body.appendChild(moreLink('全部笔记 →', '#/library?view=notes'));
   }
 
-  /* ── 模块：文本框（直接存进笔记）─────────────────────────── */
+  /* ── 模块：记一笔（收件箱 / 笔记，同一个输入框）────────────── */
 
   function queuePendingNote(note) {
     return new Promise(function (resolve, reject) {
@@ -433,22 +433,57 @@
     return firstLine.length > 40 ? firstLine.slice(0, 39) + '…' : firstLine;
   }
 
-  function renderQuickNoteBody(mod, body, moduleEl) {
-    var folder = (mod.source && mod.source.mode === 'folder' && mod.source.value) || '';
-    var form = el('div', 'quicknote');
+  /**
+   * 「文本框」和「记一笔」原来是两个模块，做的事一模一样 —— 写一段字、存起来，
+   * 只是去处不同（直接成笔记 / 先进收件箱）。用户得先想清楚自己要哪个框，
+   * 而这两个框还各占一块地方。
+   *
+   * 现在只有一个输入框，去处是框里的一档开关：
+   * - 收件箱：先收着，回工作台再整理（可以是很碎的一句话、一个链接）
+   * - 笔记：直接成一条笔记，可选文件夹
+   *
+   * 开关状态落在 `mod.source.mode`（`inbox` / `note`），所以放两个「记一笔」也能
+   * 一个常驻收件箱、一个常驻笔记，不必再为了去处多记一个模块名字。
+   */
+  function composerDest(mod, fallback) {
+    var mode = mod && mod.source && mod.source.mode;
+    if (mode === 'inbox') return 'inbox';
+    // `folder` 是合并前「文本框」的写法，等价于「存成笔记」。
+    if (mode === 'note' || mode === 'folder') return 'note';
+    return fallback;
+  }
+
+  function renderComposerBody(mod, body, moduleEl, fallbackDest) {
+    var dest = composerDest(mod, fallbackDest);
+    var folder = (mod.source && typeof mod.source.value === 'string' && mod.source.value) || '';
+
+    var form = el('div', 'composer');
 
     var textarea = document.createElement('textarea');
-    textarea.className = 'quicknote-input';
-    textarea.id = 'quicknote-input';
-    textarea.rows = 4;
-    textarea.placeholder = '想到什么写下来，直接存成一条笔记…';
-    textarea.setAttribute('aria-label', '快速笔记');
+    textarea.className = 'composer-input';
+    textarea.id = 'capture-input';
+    textarea.rows = 2;
+    textarea.setAttribute('aria-label', '快速记录');
     form.appendChild(textarea);
 
-    var bar = el('div', 'quicknote-bar');
+    var bar = el('div', 'composer-bar');
+
+    var seg = el('div', 'composer-dest');
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', '存到哪里');
+    var inboxBtn = el('button', 'composer-dest-btn', '收件箱');
+    inboxBtn.type = 'button';
+    inboxBtn.setAttribute('data-dest', 'inbox');
+    var noteBtn = el('button', 'composer-dest-btn', '笔记');
+    noteBtn.type = 'button';
+    noteBtn.setAttribute('data-dest', 'note');
+    seg.appendChild(inboxBtn);
+    seg.appendChild(noteBtn);
+    bar.appendChild(seg);
+
     var select = document.createElement('select');
-    select.className = 'quicknote-folder';
-    select.id = 'quicknote-folder';
+    select.className = 'composer-folder';
+    select.id = 'capture-folder';
     select.setAttribute('aria-label', '存到哪个文件夹');
     var rootOption = document.createElement('option');
     rootOption.value = '';
@@ -461,131 +496,127 @@
       select.appendChild(option);
     });
     select.value = folder;
-    select.addEventListener('change', function () {
-      mod.source = { mode: 'folder', value: select.value };
-      if (dashboard) dashboard.save();
-      var label = moduleEl && moduleEl.querySelector('.module-source');
-      if (label) {
-        label.textContent = select.value || '根目录';
-        label.hidden = false;
-      }
-    });
     bar.appendChild(select);
 
-    var status = el('span', 'quicknote-status');
-    status.id = 'quicknote-status';
+    var status = el('span', 'composer-status');
+    status.id = 'capture-status';
     bar.appendChild(status);
 
-    var save = el('button', 'quicknote-save', '存进笔记');
-    save.type = 'button';
-    save.id = 'quicknote-save';
-    bar.appendChild(save);
+    var submit = el('button', 'composer-submit', '记录');
+    submit.id = 'capture-submit';
+    submit.type = 'button';
+    bar.appendChild(submit);
+
     form.appendChild(bar);
     body.appendChild(form);
 
-    function submit() {
-      var text = (textarea.value || '').trim();
-      if (!text) {
-        status.textContent = '写点什么再存';
-        status.className = 'quicknote-status is-warn';
-        return;
+    function persistSource() {
+      mod.source = dest === 'inbox' ? { mode: 'inbox' } : { mode: 'note', value: folder };
+      if (dashboard) dashboard.save();
+      var label = moduleEl && moduleEl.querySelector('.module-source');
+      if (label) {
+        label.textContent = dest === 'inbox' ? '收件箱' : '笔记';
+        label.hidden = false;
       }
-      var note = {
-        id: 'note-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
-        title: titleOf(text),
-        content: text,
-        folder: select.value || undefined,
-        tags: [],
-        updatedAt: Date.now()
-      };
-      status.className = 'quicknote-status';
-      status.textContent = '保存中…';
-      save.disabled = true;
-      queuePendingNote(note)
-        .then(function () {
-          pendingNotes.push(note);
-          textarea.value = '';
-          status.className = 'quicknote-status is-ok';
-          status.textContent = '已存进笔记';
-          save.disabled = false;
-          if (dashboard) dashboard.refreshBodies(['notes']);
-          setTimeout(function () {
-            if (status.textContent === '已存进笔记') status.textContent = '';
-          }, 2600);
-        })
-        .catch(function (err) {
-          save.disabled = false;
-          status.className = 'quicknote-status is-danger';
-          status.textContent = '保存失败：' + ((err && err.message) || '扩展未响应');
-        });
     }
 
-    save.addEventListener('click', submit);
-    textarea.addEventListener('keydown', function (event) {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-        event.preventDefault();
-        submit();
-      }
+    function paint() {
+      inboxBtn.classList.toggle('is-active', dest === 'inbox');
+      noteBtn.classList.toggle('is-active', dest === 'note');
+      inboxBtn.setAttribute('aria-pressed', dest === 'inbox' ? 'true' : 'false');
+      noteBtn.setAttribute('aria-pressed', dest === 'note' ? 'true' : 'false');
+      select.hidden = dest !== 'note';
+      submit.textContent = dest === 'inbox' ? '记录' : '存进笔记';
+      textarea.placeholder =
+        dest === 'inbox'
+          ? '记一笔，回工作台再整理（Enter 记录 / Shift+Enter 换行）'
+          : '想到什么写下来，直接存成笔记（Enter 保存 / Shift+Enter 换行）';
+    }
+
+    function setDest(next) {
+      if (next === dest) return;
+      dest = next;
+      status.textContent = '';
+      status.className = 'composer-status';
+      paint();
+      persistSource();
+      textarea.focus();
+    }
+
+    inboxBtn.addEventListener('click', function () {
+      setDest('inbox');
     });
-  }
+    noteBtn.addEventListener('click', function () {
+      setDest('note');
+    });
+    select.addEventListener('change', function () {
+      folder = select.value;
+      persistSource();
+    });
 
-  /* ── 模块：记一笔（进收件箱）─────────────────────────────── */
-
-  function renderCaptureBody(mod, body) {
-    var form = el('div', 'capture');
-    var input = document.createElement('input');
-    input.id = 'capture-input';
-    input.type = 'text';
-    input.placeholder = '记一笔：先进收件箱，回工作台再整理';
-    input.setAttribute('aria-label', '快速记录');
-    form.appendChild(input);
-
-    var submit = el('button', null, '记录');
-    submit.id = 'capture-submit';
-    submit.type = 'button';
-    form.appendChild(submit);
-    body.appendChild(form);
-
-    var status = el('div', 'capture-status');
-    status.id = 'capture-status';
-    body.appendChild(status);
-
-    function send() {
-      var text = (input.value || '').trim();
-      if (!text) return;
-      status.className = 'capture-status subtle';
-      status.style.color = '';
-      status.textContent = '保存中…';
-      var isUrl = /^https?:\/\//i.test(text);
+    function saveToInbox(text) {
       var payload = {
         text: text,
         operationId: 'newtab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
       };
-      if (isUrl) payload.url = text;
-      window.SelfHubClient.send('CAPTURE_ENTRY', payload)
+      if (/^https?:\/\//i.test(text)) payload.url = text;
+      return window.SelfHubClient.send('CAPTURE_ENTRY', payload);
+    }
+
+    function saveToNotes(text) {
+      var note = {
+        id: 'note-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7),
+        title: titleOf(text),
+        content: text,
+        folder: folder || undefined,
+        tags: [],
+        updatedAt: Date.now()
+      };
+      return queuePendingNote(note).then(function () {
+        pendingNotes.push(note);
+        if (dashboard) dashboard.refreshBodies(['notes']);
+      });
+    }
+
+    function submitText() {
+      var text = (textarea.value || '').trim();
+      if (!text) {
+        status.className = 'composer-status is-warn';
+        status.textContent = '写点什么再存';
+        return;
+      }
+      var target = dest; // 保存过程中用户可能切了开关，结果按按下的那一刻算
+      status.className = 'composer-status';
+      status.textContent = '保存中…';
+      submit.disabled = true;
+      var job = target === 'inbox' ? saveToInbox(text) : saveToNotes(text);
+      job
         .then(function () {
-          status.className = 'capture-status';
-          status.style.color = 'var(--ok)';
-          status.textContent = '已进收件箱';
-          input.value = '';
+          textarea.value = '';
+          submit.disabled = false;
+          status.className = 'composer-status is-ok';
+          status.textContent = target === 'inbox' ? '已进收件箱' : '已存进笔记';
           setTimeout(function () {
-            status.textContent = '';
+            if (status.textContent === '已进收件箱' || status.textContent === '已存进笔记') {
+              status.textContent = '';
+            }
           }, 2600);
         })
         .catch(function (err) {
-          status.className = 'capture-status';
-          status.style.color = 'var(--danger)';
+          submit.disabled = false;
+          status.className = 'composer-status is-danger';
           status.textContent = '保存失败：' + ((err && err.message) || '扩展未响应');
         });
     }
 
-    submit.addEventListener('click', send);
-    input.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        send();
-      }
+    submit.addEventListener('click', submitText);
+    textarea.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+      event.preventDefault();
+      submitText();
     });
+
+    paint();
   }
 
   /* ── 模块：常用网站 / 全部网站 ───────────────────────────── */
@@ -1442,9 +1473,11 @@
         }
       },
       quicknote: {
-        label: '文本框',
+        // 合并前的「文本框」，已经不在「添加模块」里出现；老布局会在启动时被
+        // mergeComposerModules() 改写成 capture，这里只兜底。
+        label: '记一笔',
         icon: '✍️',
-        desc: '随手写，直接存成一条笔记',
+        desc: '旧版文本框，已并入「记一笔」',
         defaultHeight: 232,
         defaultSource: { mode: 'folder', value: '' },
         sources: function () {
@@ -1457,8 +1490,15 @@
       capture: {
         label: '记一笔',
         icon: '📥',
-        desc: '先进收件箱，回工作台再整理',
-        sources: []
+        desc: '写一句：存进收件箱，或直接存成笔记',
+        defaultHeight: 200,
+        defaultSource: { mode: 'inbox' },
+        sources: function () {
+          return [
+            { mode: 'inbox', label: '收件箱' },
+            { mode: 'note', label: '笔记' }
+          ];
+        }
       },
       pinned: {
         label: '常用网站',
@@ -1567,16 +1607,54 @@
     };
   }
 
+  /**
+   * 老布局里「文本框」和「记一笔」是两个盒子。合并后只该留一个：
+   * 已经有「记一笔」就把「文本框」丢掉；只有「文本框」就把它改写成「记一笔 → 笔记」。
+   * 不去重的话，升级完用户会看到两个一模一样的输入框 —— 比原来更糟。
+   */
+  function mergeComposerModules(layout) {
+    if (!layout || !Array.isArray(layout.modules)) return { layout: layout, changed: false };
+    var modules = layout.modules;
+    var hasCapture = modules.some(function (mod) {
+      return mod && mod.type === 'capture';
+    });
+    var converted = false;
+    var kept = [];
+    modules.forEach(function (mod) {
+      if (!mod || mod.type !== 'quicknote') {
+        kept.push(mod);
+        return;
+      }
+      if (hasCapture) return; // 并进已有的「记一笔」
+      hasCapture = true;
+      converted = true;
+      var next = {
+        id: mod.id,
+        type: 'capture',
+        column: mod.column,
+        height: mod.height || 200,
+        source: { mode: 'note', value: (mod.source && mod.source.value) || '' }
+      };
+      ['width', 'w', 'h', 'x', 'y'].forEach(function (key) {
+        if (mod[key] != null) next[key] = mod[key];
+      });
+      kept.push(next);
+    });
+    if (!converted && kept.length === modules.length) return { layout: layout, changed: false };
+    return { layout: Object.assign({}, layout, { modules: kept }), changed: true };
+  }
+
   function renderBody(mod, body, moduleEl) {
     switch (mod.type) {
       case 'notes':
         renderNotesBody(mod, body);
         break;
       case 'quicknote':
-        renderQuickNoteBody(mod, body, moduleEl);
+        // 合并前的「文本框」= 「记一笔」的去处设成「笔记」，走同一套渲染。
+        renderComposerBody(mod, body, moduleEl, 'note');
         break;
       case 'capture':
-        renderCaptureBody(mod, body);
+        renderComposerBody(mod, body, moduleEl, 'inbox');
         break;
       case 'pinned':
         renderPinnedBody(mod, body);
@@ -1877,12 +1955,15 @@
           saveState.textContent = count ? '本机 · ' + (mode === 'v3' ? 'v3 库' : 'v2 负载') : '还没有数据 · 进工作台开始';
         }
 
+        var mergedLayout = mergeComposerModules(loaded[2]);
         dashboard = window.SelfHubDashboard.mount({
           root: document.getElementById('dash'),
-          layout: loaded[2],
+          layout: mergedLayout.layout,
           types: MODULE_TYPES(),
           renderBody: renderBody
         });
+        // 老布局里被合并掉的「文本框」要落盘，否则下次开新标签页又冒出来。
+        if (mergedLayout.changed) dashboard.save();
 
         /**
          * 布局和 ☆ 都可能被**工作台**改：恢复备份时它会把备份里的布局写回
@@ -1898,6 +1979,7 @@
             // adopt() 内部会整页重画（模块可能增删），不需要再 refreshBodies。
             if (nextLayout && JSON.stringify(nextLayout) !== JSON.stringify(dashboard.getLayout())) {
               dashboard.adopt(nextLayout);
+              updateColControl();
             }
           }
           if (changes.selfhub_newtab_pins) {
@@ -1921,11 +2003,45 @@
           /* 没有 storage.onChanged 也不影响使用 */
         }
 
+        function updateColControl() {
+          var label = document.getElementById('col-count-label');
+          var decBtn = document.getElementById('col-dec');
+          var incBtn = document.getElementById('col-inc');
+          if (!dashboard) return;
+          var count = typeof dashboard.getColumnCount === 'function' ? dashboard.getColumnCount() : 3;
+          if (label) label.textContent = count + ' 栏';
+          if (decBtn) decBtn.disabled = count <= 1;
+          if (incBtn) incBtn.disabled = count >= 6;
+        }
+
+        var colDec = document.getElementById('col-dec');
+        if (colDec) {
+          colDec.addEventListener('click', function () {
+            if (dashboard && typeof dashboard.removeColumn === 'function') {
+              dashboard.removeColumn();
+              updateColControl();
+            }
+          });
+        }
+
+        var colInc = document.getElementById('col-inc');
+        if (colInc) {
+          colInc.addEventListener('click', function () {
+            if (dashboard && typeof dashboard.addColumn === 'function') {
+              dashboard.addColumn();
+              updateColControl();
+            }
+          });
+        }
+
+        updateColControl();
+
         var reset = document.getElementById('reset-layout');
         if (reset) {
           reset.addEventListener('click', function () {
             if (!window.confirm('把模块布局恢复成默认的三栏？数据不会动。')) return;
             dashboard.reset();
+            updateColControl();
           });
         }
       });
