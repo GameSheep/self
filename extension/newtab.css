@@ -745,7 +745,17 @@ body.is-module-resizing .module-body { pointer-events: none; }
   position: fixed;
   z-index: 60;
   min-width: 12rem;
-  max-width: 20rem;
+  max-width: min(20rem, calc(100vw - 16px));
+  /* 模块多起来之后「添加模块」会比窗口还高：给个上限自己滚，
+     否则底下几项被窗口裁掉，用户以为模块列表就这么多。
+     28rem 是"一屏能看到十来项、又不会糊住整块面板"的高度。 */
+  max-height: min(calc(100vh - 16px), 28rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* 滚动条常显一点：macOS 的 overlay 滚动条不动就不出现，
+     用户会以为"列表就这么多"，其实下面还有。 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
   padding: 0.35rem;
   background: var(--surface);
   border: 1px solid var(--line-strong);

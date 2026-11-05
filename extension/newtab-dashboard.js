@@ -1800,9 +1800,14 @@
       var rect = anchor.getBoundingClientRect();
       var width = pop.offsetWidth;
       var height = pop.offsetHeight;
-      var left = clamp(rect.left + rect.width - width, 8, window.innerWidth - width - 8);
+      var left = clamp(rect.left + rect.width - width, 8, Math.max(8, window.innerWidth - width - 8));
       var top = rect.bottom + 6;
-      if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 6);
+      if (top + height > window.innerHeight - 8) {
+        // 下面放不下就翻到上面；上下都放不下（列表比窗口还长）就贴着视口底部，
+        // 由 .pop 的 max-height 自己滚 —— 总之不能被窗口裁掉。
+        var above = rect.top - height - 6;
+        top = above >= 8 ? above : Math.max(8, window.innerHeight - height - 8);
+      }
       pop.style.left = left + 'px';
       pop.style.top = top + 'px';
       setTimeout(function () {

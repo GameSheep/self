@@ -756,6 +756,26 @@ test.describe('模块面板：自定义与数据来源', () => {
     await page.close();
   });
 
+  test('添加模块弹层在窄窗口里不会被裁掉，能滚到最后一个模块', async () => {
+    const page = await openNewTab();
+    // 用户截图里的场景：窗口矮、模块列表比窗口还高，最后几项被窗口切掉
+    await page.setViewportSize({ width: 480, height: 700 });
+    await page.locator('[data-add-col="0"]').click();
+
+    const pop = page.locator('.pop');
+    await expect(pop).toBeVisible();
+    const box = (await pop.boundingBox())!;
+    expect(box.y, '弹层不能顶出视口上沿').toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height, '弹层不能超出视口下沿').toBeLessThanOrEqual(700);
+
+    // 列表比弹层长时要能滚，最后一项必须滚得出来
+    await pop.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    await expect(pop.locator('.pop-add-item').last()).toBeInViewport();
+    await page.close();
+  });
+
   test('删除模块会持久化，重置布局能恢复默认三栏', async () => {
     const page = await openNewTab();
     const reminders = page.locator('[data-module-id="m-reminders"]');
