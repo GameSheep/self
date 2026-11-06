@@ -1366,6 +1366,74 @@ test.describe('模块面板：自定义与数据来源', () => {
       await page.close();
     });
 
+    test('纵向也自由：拖到下面一行就停在下面，松手不回弹、刷新也还在', async () => {
+      const page = await openNewTab();
+      // 复刻用户的摆法：一栏，三张 1/3 卡片并排，然后把中间那张拖到下面。
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            chrome.storage.local.set(
+              {
+                selfhub_newtab_layout: {
+                  v: 1,
+                  columns: [{ id: 'c1', fr: 1 }],
+                  modules: [
+                    { id: 'm-sites', type: 'sites', column: 0, width: 'third', source: { mode: 'all' } },
+                    { id: 'm-capture', type: 'capture', column: 0, width: 'third', height: 200, source: { mode: 'inbox' } },
+                    { id: 'm-notes', type: 'notes', column: 0, width: 'third', source: { mode: 'recent' } }
+                  ]
+                }
+              },
+              () => resolve()
+            );
+          })
+      );
+      await page.reload();
+      const capture = page.locator('[data-module-id="m-capture"]');
+      await expect(capture).toBeVisible();
+      const before = (await capture.boundingBox())!;
+
+      const dropX = before.x + before.width / 2;
+      const dropY = before.y + before.height + 260;
+      await page.mouse.move(before.x + 30, before.y + 12);
+      await page.mouse.down();
+      await page.mouse.move(before.x + 38, before.y + 20);
+      await page.mouse.move(dropX, dropY, { steps: 14 });
+      await page.waitForTimeout(150);
+
+      // 虚线槽要真的落到下一行 —— 槽一直贴在第 1 行、松手又弹回顶部，就是这次要修的毛病。
+      const gapRow = await page.evaluate(() => {
+        const gap = document.querySelector('.drop-gap') as HTMLElement | null;
+        const match = gap ? /^(\d+)/.exec(gap.style.gridRow || '') : null;
+        return match ? Number(match[1]) : 0;
+      });
+      expect(gapRow, '虚线槽应该落在第 1 行以下').toBeGreaterThan(1);
+
+      await page.mouse.up();
+      await page.waitForTimeout(250);
+
+      const after = (await capture.boundingBox())!;
+      expect(after.y, '松手后要留在下面，不能弹回最上面').toBeGreaterThan(before.y + before.height * 0.5);
+
+      const stored = await page.evaluate(
+        () =>
+          new Promise<{ modules: Array<{ id: string; x: number; y: number; free?: boolean }> }>((resolve) => {
+            chrome.storage.local.get(['selfhub_newtab_layout'], (res) =>
+              resolve(res.selfhub_newtab_layout as { modules: Array<{ id: string; x: number; y: number; free?: boolean }> })
+            );
+          })
+      );
+      const mod = stored.modules.find((item) => item.id === 'm-capture')!;
+      expect(mod.free, '"我亲手放的"这个标记要跟着落盘，否则下次打开就被自动排版拽回顶部').toBe(true);
+      expect(mod.y, '落盘的 y 要大于 0').toBeGreaterThan(0);
+
+      await page.reload();
+      const reBox = (await page.locator('[data-module-id="m-capture"]').boundingBox())!;
+      expect(Math.abs(reBox.y - after.y), '刷新后还停在下面那一行').toBeLessThan(3);
+
+      await page.close();
+    });
+
     test('整栏卡片拖到窄卡片上：跟它并排、宽度也跟它一样', async () => {
       const page = await openNewTab();
       const notes = page.locator('[data-module-id="m-notes"]');

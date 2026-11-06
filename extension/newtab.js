@@ -1970,14 +1970,21 @@
          * `chrome.storage.local`。不接住的话，这一页还拿着启动时读到的旧布局，
          * 用户随后随手拖一下就会把恢复出来的布局覆盖掉。
          *
-         * 自己写进去的改动也会触发 onChanged，所以先比对一次再决定要不要重画。
+         * 自己写进去的改动也会触发 onChanged，所以要先认出来再决定要不要重画。
+         * 这里不能用 `JSON.stringify(next) !== JSON.stringify(内存布局)` 判重：
+         * 1. storage 读回来的键是按字母排的，和内存对象的插入顺序天然对不上，
+         *    这条比较**永远**是"不相等"；
+         * 2. 写盘之后 `render()` 还会继续微调坐标（撞位往下让、并排补跨行），
+         *    内存布局本来就和刚写下去的那份不完全一样。
+         * 于是每次拖拽松手都会触发一次"采纳自己"，而采纳要过 `normalize`，
+         * 手工落位的标记就在那一趟里被洗掉了 —— 卡片被自动排版拽回最上面。
+         * 改成和"最近一次写盘的快照"比（`isOwnWrite`），语义才对得上。
          */
         function adoptExternalChange(changes, area) {
           if (area !== 'local') return;
           if (changes.selfhub_newtab_layout) {
             var nextLayout = changes.selfhub_newtab_layout.newValue;
-            // adopt() 内部会整页重画（模块可能增删），不需要再 refreshBodies。
-            if (nextLayout && JSON.stringify(nextLayout) !== JSON.stringify(dashboard.getLayout())) {
+            if (nextLayout && !dashboard.isOwnWrite(nextLayout)) {
               dashboard.adopt(nextLayout);
               updateColControl();
             }

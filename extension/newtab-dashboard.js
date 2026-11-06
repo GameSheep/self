@@ -105,6 +105,15 @@
         y: isFinite(y) && y >= 0 ? Math.round(y) : null,
         w: isFinite(w) && w >= 1 && w <= 12 ? Math.round(w) : null,
         h: isFinite(h) && h >= 1 && h <= 10 ? Math.round(h) : 1,
+        /**
+         * `free` = "这张卡是我亲手放到 (x, y) 的"，排版时第一遍就按坐标落位。
+         *
+         * **必须跟着存盘一起往返。** 这里漏掉它，卡片就只有 x/y 没有"别动我"的标记，
+         * 下次开新标签页（或任何一次 normalize）都会退回自动排版 —— 表现就是
+         * "拖到下面，一松手 / 一刷新又回到最上面"。横向之所以看着还行，是因为
+         * 自动排版仍然认 `explicitSide` 的列，只是把行号归零了。
+         */
+        free: Boolean(mod.free),
         explicitSide: Boolean(mod.explicitSide),
         source: mod.source && typeof mod.source === 'object' ? mod.source : {}
       });
@@ -124,12 +133,47 @@
     });
   }
 
+  /**
+   * 键序无关的 JSON：`chrome.storage` 内部用有序字典存对象，读回来的键是**按字母排**的，
+   * 和内存里对象的插入顺序对不上。直接 `JSON.stringify` 比两次必然"不相等"，
+   * 于是页面会把自己刚写进去的布局当成"外部改的"再采纳一遍（见 isOwnWrite）。
+   */
+  function stableStringify(value) {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) {
+      return '[' + value.map(stableStringify).join(',') + ']';
+    }
+    var keys = Object.keys(value).sort();
+    var parts = [];
+    for (var i = 0; i < keys.length; i += 1) {
+      var v = value[keys[i]];
+      if (v === undefined) continue;
+      parts.push(JSON.stringify(keys[i]) + ':' + stableStringify(v));
+    }
+    return '{' + parts.join(',') + '}';
+  }
+
+  /**
+   * 本页最近一次写盘（或采纳）的布局快照。
+   *
+   * 用快照而不是"当前内存里的布局"来判重，是因为 `render()` 里的 `packColumnModules`
+   * 会在写盘之后继续微调 x/y/h（把撞位的卡片往下让、给并排卡片补跨行）——
+   * 拿内存对象去比，永远比不出"这是我写的"。
+   */
+  var lastSavedJson = null;
+
   function saveLayout(layout) {
     try {
+      lastSavedJson = stableStringify(layout);
       chrome.storage.local.set({ selfhub_newtab_layout: layout });
     } catch (err) {
       console.warn('[Self-Hub] new tab: cannot persist layout', err);
     }
+  }
+
+  /** 这条变更是不是本页自己写下去的回声？ */
+  function isOwnWrite(next) {
+    return lastSavedJson != null && stableStringify(next) === lastSavedJson;
   }
 
   /* ── 引擎 ───────────────────────────────────────────────── */
@@ -1337,7 +1381,10 @@
           : target.w === 8 ? '2/3 栏'
           : target.w === 9 ? '3/4 栏'
           : target.w + ' 栏';
-        gapRow.appendChild(el('span', 'drop-gap-hint', wLabel + ' · ' + (target.x === 6 ? '右侧' : '左侧')));
+        // 落点是任意 0..12-w 的列号，不再只有"左半 / 右半"两档，
+        // 所以这里说"靠左 / 居中 / 靠右"，比硬写"左侧"诚实。
+        var sideWord = target.x <= 0 ? '靠左' : (target.x + target.w >= 12 ? '靠右' : '居中');
+        gapRow.appendChild(el('span', 'drop-gap-hint', wLabel + ' · ' + sideWord));
       } else {
         gapRow.appendChild(el('span', 'drop-gap-hint', '整栏'));
       }
@@ -2569,6 +2616,10 @@
     render();
 
     return {
+      /**
+       * 内存里的布局（会被 `render()` 的自动排版就地改写）。
+       * 想判断"这条 storage 变更是不是自己写的"，用 `isOwnWrite`，别拿它比 —— 见那里的注释。
+       */
       getLayout: function () {
         return layout;
       },
@@ -2590,9 +2641,13 @@
         var clean = normalize(next);
         if (!clean) return false;
         layout = clean;
+        // 记成"已持有"：同一条外部变更重复派发时不必再重画一遍。
+        lastSavedJson = stableStringify(clean);
         render();
         return true;
       },
+      /** 这条 storage 变更是不是本页自己写的回声（见 stableStringify 的注释）。 */
+      isOwnWrite: isOwnWrite,
       refreshBodies: refreshBodies,
       save: function () {
         saveLayout(layout);
@@ -2611,6 +2666,7 @@
     loadLayout: loadLayout,
     saveLayout: saveLayout,
     normalize: normalize,
+    stableStringify: stableStringify,
     mount: mount
   };
 })();
